@@ -2,9 +2,13 @@
 
 Goal: get the user an address they can open, named honestly. What "release" means depends on the tier (from the PRD) — most guided apps stay happily on their preview; only a production-business app goes through the production launch.
 
-## Dev / experiment / real-but-lean → the preview is the release
+## Dev / experiment / real-but-lean → an address to try
 
-For experiment and real-but-lean tiers, there is no separate launch step. Each verified slice (phase 5) already runs on the dev runtime; that URL is the deliverable. Make it reachable: read the URL from `zerops_discover`, and if the runtime has no public subdomain yet, enable it with `zerops_subdomain` — never hand-author subdomain access into import YAML. Hand the user the URL as **their preview** — a copy for trying it, whose data is a test copy, never "online" or "live" and nothing to install or share — let them react, and re-narrate per slice as the app grows. When a milestone is worth a clean built-verification, promote to stage (phase 5) and hand over the stage half's URL instead — still their preview, never "stage".
+For experiment and real-but-lean tiers, there is no separate launch step.
+
+In a Mate, hand over the described change and point the person to the dev copy's Preview to try it. The Review build checks the described head on the stage; offer its address as a Review build only when it passed at the change's head, naming the head and time.
+
+Outside a Mate, each verified slice (phase 5) already runs on the dev runtime; that URL is the deliverable. Make it reachable: read the URL from `zerops_discover`, and if the runtime has no public subdomain yet, enable it with `zerops_subdomain` — never hand-author subdomain access into import YAML. Hand the user the URL as **their preview** — a copy for trying it, whose data is a test copy, never "online" or "live" and nothing to install or share — let them react, and re-narrate per slice as the app grows. When a milestone is worth a clean built-verification, promote to stage (phase 5) and hand over its URL as their preview instead.
 
 Tripwire exception: if Align flagged a tripwire, do **NOT** auto-enable the public subdomain — surface the scoped harm-gate question first (`phases/align.md`) and proceed only within what the user confirms.
 
@@ -12,7 +16,7 @@ Ask for targeted feedback, not a generic opinion: point the user at one acceptan
 
 ## Production-business → the launch-production flow
 
-When the PRD tier is production-business and the user wants to go live for real ("ship it", "customers will use this", "run the business on it"), drive `zerops_workflow` launch-production and **follow its guidance** — don't hand-author production YAML or pre-narrate the mechanics. The flow owns the whole sequence and hands you each step, its gate recovery, and the token contract at the point you need them; enter it at the right moment and drive it to a verified production URL. In a Mate, production is the application's: the person makes it with Put it live and releases to it with Release, in the conversation or on the project's card in Mate, and you never launch it yourself.
+When the PRD tier is production-business and the user wants to go live for real ("ship it", "customers will use this", "run the business on it"), outside a Mate drive `zerops_workflow` launch-production and **follow its guidance** — don't hand-author production YAML or pre-narrate the mechanics. The flow owns the whole sequence and hands you each step, its gate recovery, and the token contract at the point you need them; enter it at the right moment and drive it to a verified production URL. In a Mate, production is the application's: the person makes it with Put it live and releases to it with Release, in the conversation or on the project's card in Mate, and you never launch it yourself.
 
 The one judgment guided adds on top of the flow: **promote proportionately, on a signal.** Raise a managed dep to HA only when availability or criticality actually calls for it — HA is a type variant the flow's owners resolve, not a default you reach for because the tier reads "production".
 

@@ -4,6 +4,12 @@ Goal: build one serial slice, or a reviewed safe sibling lane, to working softwa
 
 ## The dev runtime is a live server — develop on it in place, deploy to make it durable
 
+### In a Mate
+
+Work in the selected dev copy and try the work on its Preview. Follow the develop guidance to commit, push and describe the change; its Review build checks the described head on the stage (phase 5).
+
+### Outside a Mate
+
 The dev service serves your **working tree** at the dev URL — the same tree you edit on the mount. So you iterate on it in place; **`zerops_deploy` is not how you preview a change:**
 
 - **Served / interpreted runtimes (php-nginx, static)** — edit a file and the running server reflects it at the URL within a second or two; nothing to start.

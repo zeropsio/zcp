@@ -1,6 +1,6 @@
-# Phase 5 — Review + verify (promote to stage at checkpoints)
+# Phase 5 — Review + verify
 
-Goal: prove the just-built slice is good and live before advancing. Review is yours (host subagents); the dev URL already serves it. A formal deploy to stage is a checkpoint, not a per-slice step.
+Goal: check the just-built slice before advancing. Review is yours (host subagents); the dev URL already serves it. Follow the handover for your environment below.
 
 ## Step 1 — review (read-only host subagents, parallel)
 
@@ -18,7 +18,7 @@ If the same test, verify failure, or review finding repeats twice, stop patching
 
 ## Step 2 — verify on the dev URL
 
-The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes the dev service for reachability + health, and the acceptance tests are green. Combined with a clean review, the slice is **verified** — a composite:
+The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes the dev service for reachability + health, and the acceptance tests are green. Combined with a clean review, these checks form a composite:
 
 | Check | Owner | Mechanism |
 |---|---|---|
@@ -27,13 +27,19 @@ The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes
 | Reachable / healthy | ZCP | `zerops_verify` on the dev URL |
 | Looks & feels right | you | rendering the dev URL against the design chapter + the floor (screenshot if you can) |
 
-Surface the composite to the user. State it as the composite ("acceptance tests green + reviewed + the dev URL serves it + I checked it looks right"), never as a bare "verified" that implies test quality. `zerops_verify` proves reachability only — it is not a design or test guarantee.
+Surface the composite to the user ("acceptance tests green + reviewed + the dev URL serves it + I checked it looks right"). Outside a Mate, call the slice verified only as that composite, never as a bare "verified" that implies test quality. In a Mate, report the change as verified only when its Review build passes at the described head. `zerops_verify` proves reachability only — it is not a design or test guarantee.
 
 **Delayed effects:** if the slice touched async work, cache, search indexing, webhook/email/notification, auth/session, or a migration, do not call it verified on the first HTTP response alone. Probe the delayed result explicitly after the expected delay: job result, notification record, searchable item, session behavior, migrated read path, or failure/status log. If there is no observable delayed path, add one before advancing.
 
-## Step 3 — promote to stage at a checkpoint (not per slice)
+## Step 3 — hand over the change or promote at a checkpoint
 
-A formal deploy promotes the dev work to the stage service — a production-shaped build (build commands + health-check start, the way production will). Do it at a checkpoint, not per slice: a milestone worth a clean built-verification, before showing the user something durable (to them, the stage half is their preview), before launch, or to prove the app builds from scratch (not just in the living dev runtime).
+### In a Mate
+
+Work in the selected dev copy and try the work on its Preview. Commit and push, then open the change with a description or describe the existing change. The Review build puts the described head on the stage as a check. Do not wait for it; you are told if it fails. Offer its address as a Review build only when it passed at the change's head, naming the head and time. Build the stage in your own turn only for an app's first pass, to work on a build or infrastructure change, or when the person asks; say why.
+
+### Outside a Mate
+
+A formal deploy promotes the dev work to the stage service — a production-shaped build (build commands + health-check start, the way production will). Do it at a checkpoint, not per slice: a milestone worth a clean built-verification, before showing the user something durable (call its address their preview), before launch, or to prove the app builds from scratch (not just in the living dev runtime).
 
 Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. After a stage deploy, `zerops_verify` the stage URL. If a deploy fails, redeploy through the same tool and follow its recovery guidance — don't reach around it.
 
@@ -43,4 +49,4 @@ Hand the user **working software**, not a status dump:
 
 > "I built **[what it does, in their words]** — you can now **[concrete thing]** on your preview at **[its URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow. Next I'll add **[the next slice, in their words]** unless that is off."
 
-A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. Then advance to the next slice (phase 4); read `zerops_workflow action="status"` to confirm where things stand.
+A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. In a Mate, end the turn after handing over the described change. Elsewhere, advance to the next slice (phase 4); read `zerops_workflow action="status"` to confirm where things stand.

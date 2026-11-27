@@ -22,8 +22,8 @@ A product request walks these phases in order. Detail lives in `phases/*.md` —
 | 2 | **PRD + topology** | `phases/prd.md` | write/extend `.zcp/guided/PRD.md` — problem, users, assumptions, stories, out-of-scope, drivers, decisions, boundaries, topology |
 | 3 | **Slices + runway** | `phases/slices.md` | write `.zcp/guided/slices/NN-*.md` with blocked-by + parallel-safety notes, audit safe siblings, then bootstrap from the anchored recipe (`route=recipe`: its import = the runway, `buildFromGit` = the seeded skeleton) and add the delta |
 | 4 | **Build a slice** | `phases/develop.md` | fresh subagents build serial slices, or safe sibling slices in parallel after the audit; slice markdown is the brief; TDD red→green |
-| 5 | **Review + verify** | `phases/review-deploy.md` | review subagents + verify on the dev URL; promote to stage at a checkpoint, not per slice |
-| 6 | **Release** | `phases/release.md` | dev/demo → their preview is the release; production-business → the launch-production flow; then back for the next feature |
+| 5 | **Review + verify** | `phases/review-deploy.md` | review subagents + verify on the dev URL; in a Mate describe the change for its Review build, elsewhere promote to stage at a checkpoint |
+| 6 | **Release** | `phases/release.md` | in a Mate hand over the change; elsewhere dev/demo → their preview, production-business → the launch-production flow; then back for the next feature |
 
 Default to one slice at a time — finish, review, verify before advancing; dispatch **safe sibling slices** in parallel only where `phases/slices.md` marked them safe. After a feature ships, a new request re-enters at Align — extend the PRD, add slices on the existing infra, scaled to the ask.
 
@@ -78,7 +78,7 @@ Every guided app runs as a **dev/stage pair** — tier sets scale + managed mode
 
 ## What "verified" means
 
-"Verified" is a **composite** — name the parts, never collapse them to a bare "verified": acceptance tests went red→green (yours), review is clean (yours), and `zerops_verify` reports reachable/healthy (ZCP). Tests and review are host-reported — your own work, never a platform fact; `zerops_verify` proves reachability only. The per-phase table (with the looks-&-feels-right part) lives in `phases/review-deploy.md`.
+Name the checks: acceptance tests went red→green (yours), review is clean (yours), and `zerops_verify` reports reachable/healthy (ZCP). Tests and review are host-reported — your own work, never a platform fact; `zerops_verify` proves reachability only. Outside a Mate, "verified" is this composite, never a bare claim. In a Mate, report the change as verified only when its Review build passes at the described head. The per-phase table (with the looks-&-feels-right part) lives in `phases/review-deploy.md`.
 
 ---
 
@@ -90,6 +90,6 @@ Every guided app runs as a **dev/stage pair** — tier sets scale + managed mode
 - **Never hardcode a platform fact.** Service type, version, variant, region, profile come from their live owner (`zerops_knowledge uri="zerops://decisions/choose-*"` + the active-filtered schema). The matrix in `phases/align.md` names which capability at which tier; the owner resolves the concrete service.
 - **Make it look and feel right.** Lean on the resolved stack's idiomatic UI kit for the accessibility + consistency floor; spend judgment on what a kit can't give — information architecture, real loading/empty/error states, copy in the user's terms (name things by what the user controls; errors say what happened + how to fix). The craft floor is yours: restraint over flourish, `ease-out` entrances under 300ms, press feedback, respect reduced-motion, don't over-animate. Default to a product UI; reserve bespoke for a true brand surface. Never ship the kit's stock default look as the finished product.
 - **Parallelism is checked, not assumed** — the audit + rule live in `phases/slices.md`; `Blocked-by: none` alone never authorizes concurrent edits.
-- **Your workshop's words stay in it.** "dev/stage pair", "stage", "promote", "slice" and service names are for the tools; what the person opens is **their preview** — a copy with test data, never "online" or "live", never to install or share — and only production, after its first release, is the real app (AGENTS.md, "Words for the person").
-- **Build on the dev runtime; promote to stage at checkpoints** — cadence in `phases/develop.md` (build/reload) + `phases/review-deploy.md` (promote), not per slice.
+- **Use the person's words.** Their preview is a copy with test data, never "online" or "live", never to install or share; only production, after its first release, is the real app. In a Mate, the dev copy's Preview is where they try work; the stage runs the Review build of a described head (AGENTS.md, "Words for the person").
+- **Build on the dev runtime.** In a Mate, describe the change for its Review build; elsewhere promote to stage at checkpoints. The cadence is in `phases/develop.md` and `phases/review-deploy.md`.
 - **Proportionate, not gold-plated.** Scale ceremony to the ask (DAG depth by tier: `phases/slices.md`). Spend design effort on the foundation (data model, persistence, auth, trust boundaries); stay lean on everything reversible.

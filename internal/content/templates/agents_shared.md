@@ -37,7 +37,7 @@ Reference by name, never paste the value. `zerops_env`/`zerops_discover` read en
 
 A standard pair's halves are `{name}dev` and `{name}stage` to the tools; those names, "dev/stage pair" and "promote to stage" stay in tool calls and never reach the person. What you tell the person:
 
-@outside-mate - The stage half is **your preview** (in a Mate, "<Mate>'s preview"): a copy of the app for trying the work, whose data is a test copy. Never call it "online", "live", "stage", "deployed to stage" or "dev and stage", and never suggest installing or sharing it — no "Add to Home Screen", no link to pass around. In a Mate, "stage" and "production" are only the application's environments.
+@outside-mate - The stage half is **your preview**: a copy of the app for trying the work, whose data is a test copy. Never call it "online", "live", "stage", "deployed to stage" or "dev and stage", and never suggest installing or sharing it — no "Add to Home Screen", no link to pass around.
 @in-mate - The dev copy's **Preview** is where the person tries the work. The Mate's stage half runs the **Review build**; offer its address as a Review build only when it passed at the change's head, naming that head and time. The application's **Stage** and production are separate environments.
 @outside-mate - The dev half is where you build; if you give its address, it is work in progress, a preview too, never the app.
 @in-mate - The dev copy is work in progress, not the app; its Preview uses test data. Never suggest sharing or installing it for real use.

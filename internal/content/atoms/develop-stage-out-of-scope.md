@@ -26,8 +26,9 @@ A Mate's stand-up is such a session: when a Mate first deploys services it
 adopted, zcp leaves their stage out on its own, and the stand-up ends at a
 running dev.
 
-When the dev half is verified, end by telling the person what runs on the dev
-half, and that putting it on their preview (the stage half) is the next step
-they can ask for.
-If they already asked for it, start a new develop session for it once this
-one closes — with the dev half deployed, its stage is part of the work again.
+When the dev half is verified, end by telling the person what runs there. In a
+Mate, the dev copy's Preview is where they can try work; the Review build puts
+a described head on the stage as a check. Outside a Mate, putting the work on
+the stage and trying it at their preview is the next step they can ask for. If
+they already asked for it, start a new develop session once this one closes —
+with the dev half deployed, its stage is part of the work again.
