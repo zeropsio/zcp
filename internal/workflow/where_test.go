@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -33,7 +34,7 @@ func TestWhere_WHCOPY_NamesWorkingCopies(t *testing.T) {
 		{"named second", WhereFacts{ReadAt: at, Lease: "pool-2", Copies: copies}, header + "\n" + strings.Replace(second, "pool-2:", "pool-2 (this conversation's):", 1) + "\n" + first + "\n" + dev},
 		{"no alias", WhereFacts{ReadAt: at, Copies: copies}, header + "\n" + first + "\n" + second + "\n" + dev},
 		{"unknown alias", WhereFacts{ReadAt: at, Lease: "missing", Copies: copies}, header + "\n" + first + "\n" + second + "\n" + dev},
-		{"parked and landed", WhereFacts{ReadAt: at, Copies: []WhereCopy{{Name: "pool-3", Part: "api", Branch: "feat/c", Lease: true, State: "parked", Unverified: true, HasHQ: true, Change: &HQChangeLine{Number: 43, LandedWith: 41}, ServersUnread: "lease parked"}}, Changes: []HQChangeLine{{Number: 44, Branch: "feat/d", Labels: []string{"draft"}}}}, header + "\n" + "pool-3: part api, branch feat/c, parked (unverified), change #43 merged as part of #41; dev servers not read (lease parked)\nchange #44 feat/d (draft): no working copy"},
+		{"parked and landed", WhereFacts{ReadAt: at, Copies: []WhereCopy{{Name: "pool-3", Part: "api", Branch: "feat/c", Lease: true, State: "parked", Unverified: true, HasHQ: true, Change: &HQChangeLine{Number: 43, LandedWith: 41}, ServersUnread: "lease parked"}}, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 44, Branch: "feat/d", Labels: []string{"draft"}}}}}, header + "\n" + "pool-3: part api, branch feat/c, parked (unverified), change #43 merged as part of #41; dev servers not read (lease parked)\nchange #44 feat/d (draft): no working copy"},
 		{"empty", WhereFacts{ReadAt: at}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,9 +200,28 @@ func runEditCases(t *testing.T, cases []editPlanCase) {
 func TestPlanEdit_WHAcquire_NoCopy(t *testing.T) {
 	t.Parallel()
 	runEditCases(t, []editPlanCase{{name: "none", fresh: true, want: EditStep{Action: "acquire"}}})
-	text := RenderWhere(WhereFacts{EditSteps: true, Changes: []HQChangeLine{{Number: 7, Branch: "feature"}}})
+	text := RenderWhere(WhereFacts{EditSteps: true, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 7, Branch: "feature"}, Step: MissingEditCopyStep("feature", "")}}})
 	if !strings.Contains(text, "change #7 feature: no working copy; step: acquire") {
 		t.Errorf("where should show the acquire step: %s", text)
+	}
+}
+
+// witness: internal/workflow/where.go | if classicDev != "" { → if classicDev == "" {
+func TestWhere_WHCheckout_ClassicBranchNeedsCheckout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, dev, want string
+	}{
+		{"classic", "appdev", "change #7 feature: no working copy; step: checkout feature in appdev"},
+		{"pool", "", "change #7 feature: no working copy; step: acquire"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			facts := WhereFacts{EditSteps: true, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 7, Branch: "feature"}, Step: MissingEditCopyStep("feature", tc.dev)}}}
+			if got := RenderWhere(facts); !strings.Contains(got, tc.want) {
+				t.Errorf("where = %q; want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -273,7 +293,30 @@ func TestPlanEdit_WHDescribe_DraftAtHead(t *testing.T) {
 func TestPlanEdit_WHHanded_ReadyAtHead(t *testing.T) {
 	t.Parallel()
 	ready := true
-	runEditCases(t, []editPlanCase{{name: "ready", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "handed over", Number: 7, Head: "head"}}})
+	copies := []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}
+	for _, tc := range []struct {
+		name  string
+		build *hq.ReviewBuild
+	}{
+		{"no result", nil},
+		{"taken", &hq.ReviewBuild{Head: "head", State: "awaiting"}},
+		{"passing", &hq.ReviewBuild{Head: "head", State: "passing"}},
+		{"unavailable", &hq.ReviewBuild{Head: "head", State: "unavailable"}},
+		{"failure at another head", &hq.ReviewBuild{Head: "old", State: "failing"}},
+	} {
+		runEditCases(t, []editPlanCase{{name: tc.name, copies: copies, change: &EditChange{Number: 7, Head: "head", Ready: &ready, ReviewBuild: tc.build}, fresh: true, want: EditStep{Action: "handed over", Number: 7, Head: "head"}}})
+	}
+}
+
+// witness: internal/workflow/where.go | build.State == "failing" → build.State != "failing"
+func TestPlanEdit_WHRepair_FailedReviewAtHead(t *testing.T) {
+	t.Parallel()
+	ready := true
+	copies := []EditCopy{{Name: "appdev", Ref: &topology.BranchRef{Head: "head", Published: true}}}
+	runEditCases(t, []editPlanCase{
+		{name: "failed parts", copies: copies, change: &EditChange{Number: 7, Repo: "app", Head: "head", Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: "head", State: "failing", Parts: []hq.ReviewBuildPart{{Setup: "web", Outcome: "failed"}, {Setup: "db", Outcome: "ok"}, {Setup: "api", Outcome: "failed"}}}}, fresh: true, want: EditStep{Action: `read failure (zerops_check_log repo="app" change=7 setup="web"; omit setup to list and read other failed parts), fix, commit, push, describe-change`, Copy: "appdev"}},
+		{name: "no setup provided", copies: copies, change: &EditChange{Number: 7, Repo: "app", Head: "head", Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: "head", State: "failing"}}, fresh: true, want: EditStep{Action: `read failure (zerops_check_log repo="app" change=7; then read each failed part with setup), fix, commit, push, describe-change`, Copy: "appdev"}},
+	})
 }
 
 // witness: internal/workflow/where.go | head = head[:7] → head = head[:8]
@@ -310,9 +353,9 @@ func TestEditStep_WHStepWords_NamesStepAndShortCommit(t *testing.T) {
 func TestWhere_WHEditLine_ShowsStepAndReview(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	facts := WhereFacts{ReadAt: at, Lease: "pool-1", Copies: []WhereCopy{{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", Unsaved: &topology.LeaseUnsaved{}, HasHQ: true, Change: &HQChangeLine{Number: 7, Labels: []string{"Review build failed"}}, Step: &EditStep{Action: "handed over", Head: "abcdef0", Number: 7}, DevServers: []topology.DevServerState{}}}}
+	facts := WhereFacts{ReadAt: at, Lease: "pool-1", Copies: []WhereCopy{{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", Unsaved: &topology.LeaseUnsaved{}, HasHQ: true, Change: &HQChangeLine{Number: 7, Labels: []string{"Review build passed"}}, Step: &EditStep{Action: "handed over", Head: "abcdef0", Number: 7}, DevServers: []topology.DevServerState{}}}}
 	got := RenderWhere(facts)
-	if !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "Review build failed") {
+	if !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "Review build passed") {
 		t.Errorf("where omitted the step or review verdict: %s", got)
 	}
 }

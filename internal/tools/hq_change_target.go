@@ -2,6 +2,7 @@ package tools
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -57,7 +58,8 @@ type changeTarget struct {
 //     pairs sharing a repository count once — else the one whose leases hold
 //     the branch named; otherwise a refusal naming a pair or lease of each.
 //
-// open-change needs a branch, named or a lease's.
+// open-change needs a named or leased branch, or a named classic pair whose
+// branch resolveOpenChangeTarget reads from its dev checkout.
 func resolveChangeTarget(stateDir, address string, ask changeAsk) (changeTarget, error) {
 	named := strings.TrimSpace(ask.Branch)
 	if named != "" {
@@ -84,12 +86,31 @@ func resolveChangeTarget(stateDir, address string, ask changeAsk) (changeTarget,
 	if target.Branch == "" {
 		target.Branch = named
 	}
-	if ask.Verb == changeVerbOpen && target.Branch == "" {
+	if ask.Verb == changeVerbOpen && target.Branch == "" && (strings.TrimSpace(ask.Service) == "" || target.Pair == nil || target.Pair.DevIsPool()) {
 		return changeTarget{}, platform.NewPlatformError(platform.ErrInvalidParameter,
 			`open-change opens the change of a branch of your own: pass branch="<branch>", or service="<lease alias>" for the branch a lease holds.`,
 			"Cut a branch from main, commit, push it, and name it here.")
 	}
 	return target, nil
+}
+
+// resolveOpenChangeTarget also reads an explicitly addressed classic pair's
+// checkout when the call leaves its branch implicit.
+func resolveOpenChangeTarget(ctx context.Context, ssh ops.SSHDeployer, stateDir, address string, ask changeAsk) (changeTarget, *descriptionCopy, error) {
+	target, err := resolveChangeTarget(stateDir, address, ask)
+	if err != nil || target.Branch != "" {
+		return target, nil, err
+	}
+	workcopy, err := readDescriptionCopy(ctx, ssh, stateDir, address, target, ask.Service)
+	if err != nil {
+		return changeTarget{}, nil, fmt.Errorf("read the open change's checkout: %w", err)
+	}
+	branch, refusal := changeBranchOf(workcopy.branch)
+	if refusal != nil {
+		return changeTarget{}, nil, refusal
+	}
+	target.Branch = branch
+	return target, &workcopy, nil
 }
 
 // changeTargetOfService is the repository a pair or lease alias names.

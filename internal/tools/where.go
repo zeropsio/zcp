@@ -375,6 +375,8 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 	}
 	facts := workflow.WhereFacts{ReadAt: now, Lease: alias, EditSteps: rt.MateEnabled}
 	repos := map[string]string{}
+	classicDevs := map[string]string{}
+	unreadClassic := map[string]string{}
 	for _, service := range env.Services {
 		if len(service.WireStages) == 0 {
 			continue
@@ -401,6 +403,9 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 		if service.DevIsPool {
 			continue
 		}
+		if service.HQRepo != "" && (classicDevs[service.HQRepo] == "" || service.Hostname < classicDevs[service.HQRepo]) {
+			classicDevs[service.HQRepo] = service.Hostname
+		}
 		workingCopy := workflow.WhereCopy{Name: service.Hostname, Part: service.WireStages[0].Part, Branch: "not read", HasHQ: service.HQRepo != ""}
 		if got, ok := branches[service.Hostname]; ok {
 			workingCopy.Path = editCheckoutPath(service.Hostname, got.root)
@@ -414,6 +419,9 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 			}
 		} else {
 			workingCopy.WorkUnread = whereNoAnswer
+		}
+		if workingCopy.WorkUnread != "" && service.HQRepo != "" && (unreadClassic[service.HQRepo] == "" || service.Hostname < unreadClassic[service.HQRepo]) {
+			unreadClassic[service.HQRepo] = service.Hostname
 		}
 		workingCopy.DevServers, workingCopy.ServersUnread = whereServers(servers, service.Hostname)
 		facts.Copies = append(facts.Copies, workingCopy)
@@ -453,7 +461,12 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 				}
 			}
 			if !held && change.Open && change.Branch != "" {
-				facts.Changes = append(facts.Changes, change)
+				item := workflow.WhereChange{HQChangeLine: change, Step: workflow.MissingEditCopyStep(change.Branch, classicDevs[repo.Repo])}
+				if host := unreadClassic[repo.Repo]; host != "" {
+					item.Unread = "checkout " + host + " branch was not read"
+					item.Step = workflow.EditStep{Action: workflow.EditUnknown, Reason: item.Unread}
+				}
+				facts.Changes = append(facts.Changes, item)
 			}
 		}
 	}
@@ -524,11 +537,7 @@ func planWhereEdits(facts *workflow.WhereFacts, repos map[string]string, branche
 		var change *workflow.EditChange
 		if fresh && answer.change != nil {
 			current := answer.change
-			head := ""
-			if current.Head != nil {
-				head = *current.Head
-			}
-			change = &workflow.EditChange{Number: current.Number, Head: head, Ready: current.Ready}
+			change = editChange(current, repos[workcopy.Name])
 			told := workflow.HQChangeTold{Ready: current.Ready, Mergeability: current.Mergeability, Behind: current.Behind}
 			if current.PullRequest != nil {
 				told.Checks = current.PullRequest.Checks

@@ -8,6 +8,11 @@
 - WG-FRESH — A copy's edit step uses HQ's answer to this call; a last-heard change or absence remains unknown.
 - WG-HEAD — A detached checkout and an unborn branch say which branch or commit is absent instead of saying the checkout did not answer.
 - WG-GROUP — An unread lease does not hide work in another copy, but no copy is handed over until its branch group is read.
+- WG-REVIEWSTEP — A fresh HQ Review build result reaches the copy's edit step, so a failure at that head is repaired.
+- WG-NOCOPY — An unheld change uses a classic checkout for its own repository and a lease for a pool-only repository.
+- WG-NOCOPYREAD — When a classic checkout's branch was not read, a change in that repository says its copy is unknown instead of claiming none exists or telling the agent to switch branches.
+- WG-OPENBRANCH — Opening a change on a classic pair uses the addressed dev checkout's branch, and never opens from main.
+- WG-NEEDCOPY — Describing a branch without a copy names acquiring its pool lease or checking it out in the classic dev half.
 - WG-DESCRIBEDHEAD — A description is handed over only if the branch-group plan still says the same change and commit are handed over.
 - WG-KEPTHEAD — A new describe call binds its supplied words to its addressed commit, even when the same words were kept at another or an empty head; without a new call the words stay at their original head.
 - WG-MOVEDSTEP — When HQ refuses a description because its head moved, the kept words stay at their commit and the reply names the branch's next step.

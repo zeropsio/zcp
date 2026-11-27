@@ -82,7 +82,7 @@ func TestOpenChange_OpensTheChangeOnTheAgentsOwnBranch(t *testing.T) {
 
 // A branch HQ keeps for itself, one HQ cannot name, or one another Mate's
 // open change holds, opens nothing and says what to do instead; so does a
-// call that names no branch.
+// call whose addressed checkout is on main.
 func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -91,7 +91,7 @@ func TestOpenChange_RefusesABranchThatIsNotTheAgentsOwn(t *testing.T) {
 		refusal *hq.RefusedError
 		want    string
 	}{
-		{name: "no branch", branch: " ", want: "branch="},
+		{name: "implicit branch on main", branch: " ", want: "addressed checkout"},
 		{name: "main", branch: "main", want: "a branch of your own"},
 		{name: "main as a ref", branch: "refs/heads/main", want: "a branch of your own"},
 		{name: "a tag", branch: "refs/tags/v1", want: "a branch of your own"},

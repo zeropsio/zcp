@@ -79,7 +79,7 @@ func handleOpenChange(
 		return convertError(refusal, WithRecoveryStatus()), nil, nil
 	}
 	_ = hqChanges(stateDir)
-	target, err := resolveChangeTarget(stateDir, hqc.Address(), changeAsk{Service: input.Service, Branch: input.Branch, Verb: changeVerbOpen})
+	target, addressedCopy, err := resolveOpenChangeTarget(ctx, ssh, stateDir, hqc.Address(), changeAsk{Service: input.Service, Branch: input.Branch, Verb: changeVerbOpen})
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
@@ -88,11 +88,14 @@ func handleOpenChange(
 		if refusal := describeTextRefusal(text); refusal != nil {
 			return convertError(refusal, WithRecoveryStatus()), nil, nil
 		}
-		work, readErr := readDescriptionCopy(ctx, ssh, stateDir, hqc.Address(), target, input.Service)
-		if readErr != nil {
-			return convertError(readErr, WithRecoveryStatus()), nil, nil
+		workcopy = addressedCopy
+		if workcopy == nil {
+			work, readErr := readDescriptionCopy(ctx, ssh, stateDir, hqc.Address(), target, input.Service)
+			if readErr != nil {
+				return convertError(readErr, WithRecoveryStatus()), nil, nil
+			}
+			workcopy = &work
 		}
-		workcopy = &work
 	}
 	branch := target.Branch
 	route := changeRoute(stateDir, target)

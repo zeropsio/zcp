@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -27,7 +28,14 @@ type WhereFacts struct {
 	EditSteps bool
 	Copies    []WhereCopy
 	Stages    []WhereStage
-	Changes   []HQChangeLine // open changes without a working copy
+	Changes   []WhereChange // open changes without a working copy
+}
+
+// WhereChange names the step to get a copy of an open change's branch.
+type WhereChange struct {
+	HQChangeLine
+	Step   EditStep
+	Unread string
 }
 
 // WhereCopy is one lease or non-pool dev half and what its readers found.
@@ -58,9 +66,10 @@ type EditCopy struct {
 
 // EditChange is HQ's open change, as answered for this branch now.
 type EditChange struct {
-	Number int
-	Head   string
-	Ready  *bool
+	Number      int
+	Repo, Head  string
+	Ready       *bool
+	ReviewBuild *hq.ReviewBuild
 }
 
 // EditStep is the next action and the copy that needs it.
@@ -75,7 +84,7 @@ type EditStep struct {
 // PlanEdit decides the next step from the copies' own reads and HQ's answer.
 func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
 	if len(copies) == 0 {
-		return EditStep{Action: "acquire"}
+		return MissingEditCopyStep("", "")
 	}
 	if workcopy := copies[0]; workcopy.Unread != "" {
 		return EditStep{Action: EditUnknown, Copy: workcopy.Name, Reason: workcopy.Unread}
@@ -126,7 +135,31 @@ func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
 	if !*change.Ready {
 		return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
 	}
+	if build := change.ReviewBuild; build != nil && build.Head == change.Head && build.State == "failing" {
+		log := fmt.Sprintf("zerops_check_log repo=%q change=%d", change.Repo, change.Number)
+		setup := ""
+		for _, part := range build.Parts {
+			if part.Outcome == "failed" && part.Setup != "" {
+				setup = part.Setup
+				break
+			}
+		}
+		if setup == "" {
+			log += "; then read each failed part with setup"
+		} else {
+			log += fmt.Sprintf(" setup=%q; omit setup to list and read other failed parts", setup)
+		}
+		return EditStep{Action: "read failure (" + log + "), fix, commit, push, describe-change", Copy: copies[0].Name}
+	}
 	return EditStep{Action: EditHandedOver, Head: change.Head, Number: change.Number}
+}
+
+// MissingEditCopyStep names how to get a copy on a branch of this repository.
+func MissingEditCopyStep(branch, classicDev string) EditStep {
+	if classicDev != "" {
+		return EditStep{Action: "checkout " + branch, Copy: classicDev}
+	}
+	return EditStep{Action: "acquire"}
 }
 
 // Words names the action and, when relevant, the copy or change it concerns.
@@ -180,7 +213,7 @@ func RenderWhere(facts WhereFacts) string {
 	stages := slices.Clone(facts.Stages)
 	slices.SortStableFunc(stages, func(a, b WhereStage) int { return cmp.Compare(a.Hostname, b.Hostname) })
 	changes := slices.Clone(facts.Changes)
-	slices.SortStableFunc(changes, func(a, b HQChangeLine) int {
+	slices.SortStableFunc(changes, func(a, b WhereChange) int {
 		return cmp.Or(cmp.Compare(a.Branch, b.Branch), cmp.Compare(a.Number, b.Number))
 	})
 
@@ -200,9 +233,13 @@ func RenderWhere(facts WhereFacts) string {
 		lines = append(lines, fmt.Sprintf("stage %s (part %s) %s", stage.Hostname, stage.Part, version))
 	}
 	for _, change := range changes {
-		line := fmt.Sprintf("change #%d %s%s: no working copy", change.Number, change.Branch, whereLabels(change.Labels))
+		copyState := "no working copy"
+		if change.Unread != "" {
+			copyState = "working copy not read (" + change.Unread + ")"
+		}
+		line := fmt.Sprintf("change #%d %s%s: %s", change.Number, change.Branch, whereLabels(change.Labels), copyState)
 		if facts.EditSteps {
-			line += "; step: " + PlanEdit(nil, nil, false).Words()
+			line += "; step: " + change.Step.Words()
 		}
 		lines = append(lines, line)
 	}

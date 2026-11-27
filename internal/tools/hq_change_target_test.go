@@ -234,9 +234,9 @@ func TestResolveChange_NeverTheNewest(t *testing.T) {
 		t.Errorf("the ledger's one change with the state unread = %+v (%v), want #2", pick, err)
 	}
 
-	_, err = resolveChangeTarget(stateDir, targetHQ, changeAsk{Service: "appsdev", Verb: changeVerbOpen})
-	if pe := refusalOf(t, err); !strings.Contains(pe.Message, "branch=") {
-		t.Errorf("open-change on a pair with no branch: %s, want it to ask for branch=", pe.Message)
+	target, err = resolveChangeTarget(stateDir, targetHQ, changeAsk{Service: "appsdev", Verb: changeVerbOpen})
+	if err != nil || target.Pair == nil || target.Branch != "" {
+		t.Errorf("open-change on a classic pair should leave its branch to the checkout read: %+v (%v)", target, err)
 	}
 }
 

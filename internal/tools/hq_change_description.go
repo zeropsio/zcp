@@ -117,18 +117,50 @@ func readDescriptionCopy(ctx context.Context, ssh ops.SSHDeployer, stateDir, add
 			workcopy.root = ops.DevRepoRoot
 		}
 	}
-	if workcopy.name == "" || ssh == nil {
+	if workcopy.name == "" {
+		return descriptionCopy{}, missingDescriptionCopy(target, "")
+	}
+	if ssh == nil {
 		return descriptionCopy{}, errors.New("the addressed checkout was not read: name its lease or dev service and ensure SSH is available")
 	}
 	head, branch, _, err := ops.ReadEditHead(ctx, ssh, workcopy.name, workcopy.root)
 	if err != nil {
 		return descriptionCopy{}, fmt.Errorf("read the addressed checkout %s: %w", workcopy.name, err)
 	}
+	if !workcopy.lease && target.Branch != "" && branch != target.Branch {
+		return descriptionCopy{}, missingDescriptionCopy(target, workcopy.name)
+	}
 	if head == "" || branch == "" || branch == hqBase || (target.Branch != "" && branch != target.Branch) {
 		return descriptionCopy{}, fmt.Errorf("the addressed checkout %s has branch %q and head %q; it must hold the named branch and a commit", workcopy.name, branch, head)
 	}
 	workcopy.head, workcopy.branch = head, branch
 	return workcopy, nil
+}
+
+func missingDescriptionCopy(target changeTarget, classic string) error {
+	branch := target.Branch
+	message := "No working copy was selected."
+	switch {
+	case branch == "":
+		branch = "<branch>"
+	case classic != "":
+		message = fmt.Sprintf("The addressed working copy %s does not hold branch %q.", classic, branch)
+	default:
+		message = fmt.Sprintf("No working copy was found for branch %q.", branch)
+	}
+	if classic == "" && target.Pair != nil && !target.Pair.DevIsPool() {
+		classic = target.Pair.Hostname
+	}
+	step := workflow.MissingEditCopyStep(branch, classic)
+	suggestion := step.Words()
+	if classic == "" {
+		suggestion = fmt.Sprintf("zerops_lease action=acquire branch=%q", branch)
+		if target.Pair != nil {
+			suggestion += fmt.Sprintf(" pool=%q", target.Pair.Hostname)
+		}
+	}
+	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+		message, suggestion+"; then describe the change.")
 }
 
 func uniqueDescriptionCopy(candidates []descriptionCopy) (descriptionCopy, error) {
@@ -174,13 +206,17 @@ func readHandoverStep(ctx context.Context, ssh ops.SSHDeployer, hqc hq.Client, s
 	current, err := hqc.OpenChangeOnBranch(ctx, target.Repo, addressed.branch)
 	var change *workflow.EditChange
 	if err == nil && current != nil {
-		head := ""
-		if current.Head != nil {
-			head = *current.Head
-		}
-		change = &workflow.EditChange{Number: current.Number, Head: head, Ready: current.Ready}
+		change = editChange(current, target.Repo)
 	}
 	return workflow.PlanEdit(copies, change, err == nil), current
+}
+
+func editChange(current *hq.Change, repo string) *workflow.EditChange {
+	head := ""
+	if current.Head != nil {
+		head = *current.Head
+	}
+	return &workflow.EditChange{Number: current.Number, Repo: repo, Head: head, Ready: current.Ready, ReviewBuild: current.ReviewBuild}
 }
 
 func describedAtHandedOverHead(number int, head string, step workflow.EditStep) bool {

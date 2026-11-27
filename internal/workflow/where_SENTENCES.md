@@ -6,7 +6,8 @@
 - WH-UNREAD — A fact that was not read says not read with why, never clean, none or nothing. Breaks: a copy whose container did not answer reads clean and its unsaved work is released.
 - WH-STAGE — A stage's line says the name of the version it runs exactly as the platform holds it, and says when it runs none. Breaks: the agent rebuilds a stage that already runs its commit, or tests one that runs another branch.
 - WH-SIZE — The text never passes 1024 bytes: line 1 and the caller's copy stay, later whole lines give way to one line counting them. Breaks: every message of a Mate with many leases carries kilobytes, or the cut drops the caller's own copy.
-- WH-ACQUIRE — With no copy on a branch, the next edit step is to acquire one.
+- WH-ACQUIRE — With no pool copy on a branch, the next edit step is to acquire one.
+- WH-CHECKOUT — With no copy of a change's branch on a classic pair, the next step checks it out in that pair's dev half.
 - WH-COPYREAD — An unread copy or branch ref makes its next edit step unknown and names the missing read.
 - WH-FRESH — A last-heard or failed HQ read cannot establish a change or its absence for an edit.
 - WH-COMMIT — Uncommitted work is committed before pulling, pushing or describing the change.
@@ -16,7 +17,8 @@
 - WH-OPEN — A published, clean branch with no open change opens one with a description.
 - WH-HEAD — A change at another or unread head cannot establish handover of this copy.
 - WH-DESCRIBE — A draft at the published head is described before handover.
-- WH-HANDED — A ready change at the clean, published head is handed over.
+- WH-HANDED — A ready change at the clean, published head is handed over when its Review build has not failed at that head.
+- WH-REPAIR — A failed Review build at the ready, published head directs the copy to read each failed setup's log, fix, commit, push and describe again.
 - WH-STEPWORDS — A step names the copy or missing read, and a handed-over change names its first seven commit characters.
 - WH-EDITLINE — A copy's where line carries its edit step and the Review build label for its change.
 - WH-GROUP — A branch is not handed over while another copy is unread or holds work, but a readable copy's work remains actionable.
