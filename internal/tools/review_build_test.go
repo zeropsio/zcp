@@ -825,7 +825,7 @@ func TestReviewWatch_RBWatch_Ended_ContinuesReading(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build_run.go | *s.path = path → *s.path = "/"
+// witness: internal/tools/review_build_run.go | if public && path == "" { → if public {
 func TestReviewHealth_RBHealth_Setup_UsesDeclaredPath(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, yaml, path string }{
