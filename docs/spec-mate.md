@@ -1436,16 +1436,6 @@ _Release on archive and on completion_ (zcp `internal/hq/mate_state.go`,
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
 
-The file named by `ZCP_STATUS_FILE` also carries an optional `stages` array. Each entry names a
-stage by `hostname` and `repo` and carries `mainFollow: {head, outcome, reason?}`: the last main
-head its owning zcp tried there, `ok`, `failed` or `unavailable`, and a one-line reason when there
-is one. zcp replaces that stage's entry on its next result and keeps the other status sections;
-absence means no result was recorded. The entry is an observation, not the stage's current active
-version. A reader that does not know the additive section ignores it. `zcp where` reads it beside
-the stage's active version for the agent's next turn (§2.8c); the Mate may read the same section
-from the status file. `zerops_workflow action="status"` lists these results in full when `where`
-cannot fit every stage. HQ receives no main-follow result.
-
 To open a Draft, the Mate runs `zcp preview --lease <alias> --acquired-at <acquiredAt> --branch
 <branch> --json` for a lease, or `zcp preview --service <hostname> --branch <branch> --json` for
 a classic dev half. The identity is the one in `copies` (§1.0a). zcp ensures the copy's declared
@@ -2437,10 +2427,10 @@ zcp `TestBuildGroupRecipe_OnePart_ComposesAsBeforeStages`, `TestBuildGroupRecipe
 Only the Mate owning an adding change takes its complete set of stages with its current head and
 main through HQ's Review build take route. It builds the change merged into that main, reports every
 stage through the take's result route and holds the stage locks until HQ's merge decision settles.
-A changed main or head requires a new take. Describing a change starts no build. When no change
-of a repository is adding, each Mate brings its own stages to main if their active version is behind.
+A changed main or head requires a new take. Describing a change starts no build. A Mate's stages are
+its own: no Mate builds `main` on a stage by itself, after any merge or at a restart; a project whose
+people want one stage in step with `main` keeps a separate stage project for it.
 HQ owns the per-change, per-stage result and the merge decision; the platform owns active versions.
-The stage-owning zcp records each main-follow result in the status file (§2.8).
 The route shapes and merging states are `zeropsio/mate-hq:spec/protocol.md` (Changes).
 
 #### 2.8a.7 Shared fixtures
@@ -2503,11 +2493,11 @@ unbuilt rows `refused` with the check's words, and a pool or stage that has a bu
 | ID | Contract |
 |---|---|
 | W-1 | `zcp where` accepts `--lease <alias>` and `--json` and runs inside the project's zcp container, with or without a Mate. With `--json`, success exits 0 with the last stdout line `{"where":"<text>","readAt":"<RFC 3339 UTC>","tookMs":<n>}`; a failure before any fact is read exits 1 with `{"error":"<words>"}`. Without it, success prints the text alone; failure exits 1 with the error on stderr. An unknown lease alias marks no copy and is not an error. |
-| W-2 | Empty when nothing is named; otherwise the first line is `Where the work stands, read by zcp at <readAt>. A tool result you received after that is newer.` Working copies follow, the named lease first and marked `(this conversation's)`, then other leases by alias and non-pool dev halves by hostname. Each line names its part, branch, unsaved work, change, the edit's next step and change labels, and each dev server with its status and URL. Stages follow by hostname with their part and active version name verbatim, or `runs no deployed version`; when recorded, the last main-follow head, outcome and reason follow on the same stage line (§2.8). Then come open changes whose branch no copy holds, with the step to acquire a lease or use the classic dev half. A classic copy on another branch is `occupied by <branch>: ask the person` if dirty or not handed over; checkout is offered only when the copy is clean and handed over. Unread facts say `not read` with why. At most 1024 UTF-8 bytes: whole lines drop from the end, never the first or named copy's line, and the last line is `<n> more lines: zerops_workflow action="status" lists them.` If the named copy's servers alone exceed the bound, those that fit remain in order followed by `+N more (zcp status)`. |
+| W-2 | Empty when nothing is named; otherwise the first line is `Where the work stands, read by zcp at <readAt>. A tool result you received after that is newer.` Working copies follow, the named lease first and marked `(this conversation's)`, then other leases by alias and non-pool dev halves by hostname. Each line names its part, branch, unsaved work, change, the edit's next step and change labels, and each dev server with its status and URL. Stages follow by hostname with their part and active version name verbatim, or `runs no deployed version`; then open changes whose branch no copy holds, with the step to acquire a lease or use the classic dev half. A classic copy on another branch is `occupied by <branch>: ask the person` if dirty or not handed over; checkout is offered only when the copy is clean and handed over. Unread facts say `not read` with why. At most 1024 UTF-8 bytes: whole lines drop from the end, never the first or named copy's line, and the last line is `<n> more lines: zerops_workflow action="status" lists them.` If the named copy's servers alone exceed the bound, those that fit remain in order followed by `+N more (zcp status)`. |
 | W-3 | Reads are read-only: no container is started, nothing is acquired, released or deployed, and zcp state is not written. |
 | W-4 | Reads share a 3 s deadline and are not retried. A failed or unanswered fact says `not read` and why; other facts remain in the answer. |
 | W-5 | At the start of each run that sends a message, never for a maintenance run or slash command, the Mate server asks once, passing the conversation's bound lease alias with `--lease`, and waits at most 5 s. It places `where`, including the caller's copy's step and labels, verbatim between `<zerops-where>` and `</zerops-where>` in front of the run's message and never parses it. Empty text, an error, exit 2, a missing zcp or no answer in time adds nothing and the run starts. |
-| W-6 | Nothing in zcp calls `where`; apart from the main-follow results on workflow status (§2.8), tool answers, envelopes, AGENTS.md blocks and atoms are unchanged. |
+| W-6 | Nothing in zcp calls `where`; tool answers, envelopes, AGENTS.md blocks, atoms and status text are unchanged. |
 
 ---
 

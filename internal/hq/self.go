@@ -75,7 +75,6 @@ type Chief struct {
 type MateRepo struct {
 	Name     string      `json:"name"`
 	MainHead *string     `json:"mainHead"`
-	Adding   bool        `json:"adding"`
 	Origin   *RepoOrigin `json:"origin"`
 }
 

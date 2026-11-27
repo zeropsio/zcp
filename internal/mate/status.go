@@ -63,14 +63,6 @@ type Status struct {
 	UpdatedAt string        `json:"updatedAt"`
 	Standup   StandupStatus `json:"standup"`
 	Copies    *CopyStatus   `json:"copies,omitempty"`
-	Stages    []StageStatus `json:"stages,omitempty"`
-}
-
-// StageStatus is the last main-follow observation for one stage.
-type StageStatus struct {
-	Hostname   string                    `json:"hostname"`
-	Repo       string                    `json:"repo"`
-	MainFollow topology.MainFollowStatus `json:"mainFollow"`
 }
 
 // CopyStatus is the Mate-wide projection of its working copies. A nil
@@ -335,23 +327,6 @@ func UpdateStatusChecked(path string, change func(*Status) error) error {
 // UpdateStandup changes the stand-up's section.
 func UpdateStandup(path string, change func(*StandupStatus)) error {
 	return UpdateStatus(path, func(s *Status) { change(&s.Standup) })
-}
-
-// RecordStageMainFollow replaces the observation for this stage without
-// losing other stages or the other sections of the status file.
-func RecordStageMainFollow(path string, stage StageStatus) error {
-	if err := UpdateStatus(path, func(s *Status) {
-		for i := range s.Stages {
-			if s.Stages[i].Hostname == stage.Hostname {
-				s.Stages[i] = stage
-				return
-			}
-		}
-		s.Stages = append(s.Stages, stage)
-	}); err != nil {
-		return fmt.Errorf("record stage main-follow result: %w", err)
-	}
-	return nil
 }
 
 // standupRestartCause is a verdict row a restart stopped while it built.

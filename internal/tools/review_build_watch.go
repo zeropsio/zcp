@@ -156,11 +156,6 @@ func (o *reviewObserver) look(ctx context.Context) {
 		}
 		o.consider(ctx, key, change, *doc.Mate.AppID, main)
 	}
-	for _, repo := range doc.Mate.Repos {
-		key := reviewKey{repo: repo.Name}
-		seen[key] = true
-		o.considerMain(ctx, key, repo, *doc.Mate.AppID)
-	}
 	for key, attempt := range o.attempts {
 		if !seen[key] && !attempt.running {
 			delete(o.attempts, key)
@@ -195,67 +190,6 @@ func (o *reviewObserver) consider(ctx context.Context, key reviewKey, change hq.
 		a.tries++
 	}
 	o.start(ctx, key, change, app, a, now)
-}
-
-func (o *reviewObserver) considerMain(ctx context.Context, key reviewKey, repo hq.MateRepo, app string) {
-	if repo.Adding {
-		// An adding build may activate a candidate that HQ later declines. Even
-		// an unchanged main must be checked again when adding ends.
-		if attempt := o.attempts[key]; attempt != nil {
-			attempt.completed = false
-			attempt.stopped = false
-			attempt.next, attempt.tries = time.Time{}, 0
-		}
-	}
-	if !reviewMainNext(repo) {
-		return
-	}
-	main := *repo.MainHead
-	a := o.attempts[key]
-	if a == nil || a.main != main {
-		a = &reviewAttempt{head: main, main: main}
-		o.attempts[key] = a
-	}
-	if a.running || a.stopped || a.completed && a.next.IsZero() {
-		return
-	}
-	now := time.Now()
-	if !a.next.IsZero() {
-		if now.Before(a.next) {
-			return
-		}
-		a.next = time.Time{}
-		a.tries++
-	}
-	d, ok := o.deps(ctx)
-	if !ok {
-		o.schedule(a, now)
-		return
-	}
-	metas, err := workflow.ListServiceMetas(d.stateDir)
-	if err != nil {
-		o.log(fmt.Sprintf("Main stage could not read pair records: %v", err))
-		o.schedule(a, now)
-		return
-	}
-	stages := reviewStages(metas, app, repo.Name)
-	if len(stages) == 0 {
-		a.completed = true
-		return
-	}
-	hqc, err := hq.Open(d.httpClient, hqIdentity(d.rt))
-	if err != nil {
-		o.schedule(a, now)
-		return
-	}
-	a.running = true
-	go func() {
-		unavailable, err := executeReviewMain(ctx, d, hqc, app, repo.Name, main, metas, stages, o.read, o.log)
-		select {
-		case o.done <- reviewDone{key: key, head: main, main: main, unavailable: unavailable, err: err}:
-		case <-ctx.Done():
-		}
-	}()
 }
 
 func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.MateChange, app string, a *reviewAttempt, now time.Time) {

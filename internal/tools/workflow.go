@@ -21,7 +21,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -1236,11 +1235,6 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	}
 	plan := workflow.BuildPlan(envelope)
 	guidance, plan := statusGuidance(&envelope, corpus, matches, plan, edit, hasEdit)
-	if rt.MateEnabled {
-		if extra := mainFollowStatusGuidance(envelope, mate.StatusFilePath()); extra != "" {
-			guidance = append(guidance, extra)
-		}
-	}
 	if !rt.InContainer && projectID != "" {
 		if extra := localDotenvGuidanceAddendum(ctx, client, projectID); extra != "" {
 			guidance = append(guidance, extra)

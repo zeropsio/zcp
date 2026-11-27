@@ -829,20 +829,6 @@ func commitVersionName(sha, headSHA, headBranch string) string {
 // and the Mate app show.
 const versionNameShort = 7
 
-// VersionNameHolds says a version name zcp wrote holds exactly commit's
-// tree: a commit deploy's (AppVersionName) or a clean build's "label short"
-// (versionNameFor, commitVersionName). A "-dirty" name holds no commit.
-func VersionNameHolds(name, commit string) bool {
-	if commit == "" {
-		return false
-	}
-	if name == AppVersionName(commit) {
-		return true
-	}
-	label, short, ok := strings.Cut(name, " ")
-	return ok && label != "" && len(commit) >= versionNameShort && short == shortSHA(commit)
-}
-
 // shortSHA is sha as a version name spells it: lower case, its first
 // versionNameShort characters.
 func shortSHA(sha string) string {

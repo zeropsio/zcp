@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
-	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -24,7 +22,7 @@ import (
 )
 
 func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, stage topology.StageRef) hq.ReviewBuildPart {
-	return reviewBuildStageWithLock(ctx, d, source, "app/code", "abcdef", stage, nil)
+	return reviewBuildStageWithLock(ctx, d, source, "app/code", "abcdef", stage)
 }
 
 // witness: internal/tools/review_build.go | c.State == hq.ChangeAdding → c.State != hq.ChangeAdding
@@ -62,7 +60,7 @@ func reviewTestProcess(name, status string) platform.Process {
 func TestReviewVersion_RBFlight_Restart_JoinsHead(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"PENDING", "RUNNING"} {
-		got := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp abcdef", status)}, nil)
+		got := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp abcdef", status)})
 		if got.action != reviewJoin || got.id != "version" || got.process != "process" {
 			t.Fatalf("%s: got %+v", status, got)
 		}
@@ -73,7 +71,7 @@ func TestReviewVersion_RBFlight_Restart_JoinsHead(t *testing.T) {
 func TestReviewVersion_RBActive_ActiveHead_Probes(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"FINISHED", "FAILED"} {
-		got := reviewVersionOf("abcdef", "stage", "version", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "ACTIVE"}}, []platform.Process{reviewTestProcess("zcp abcdef", status)}, nil)
+		got := reviewVersionOf("abcdef", "stage", "version", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "ACTIVE"}}, []platform.Process{reviewTestProcess("zcp abcdef", status)})
 		if got.action != reviewProbe || got.id != "version" {
 			t.Fatalf("%s: got %+v", status, got)
 		}
@@ -84,7 +82,7 @@ func TestReviewVersion_RBActive_ActiveHead_Probes(t *testing.T) {
 func TestReviewVersion_RBFailed_EndedHead_ReportsFailure(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"BUILD_FAILED", "DEPLOY_FAILED", "PREPARING_RUNTIME_FAILED", "BUILDING"} {
-		got := reviewVersionOf("abcdef", "stage", "", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: status}}, []platform.Process{reviewTestProcess("zcp abcdef", "FAILED")}, nil)
+		got := reviewVersionOf("abcdef", "stage", "", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: status}}, []platform.Process{reviewTestProcess("zcp abcdef", "FAILED")})
 		if got.action != reviewFailed || got.id != "version" || got.status != status {
 			t.Fatalf("%s: got %+v", status, got)
 		}
@@ -102,12 +100,12 @@ func TestReviewVersion_RBNeeded_InactiveVersion_BuildsAgain(t *testing.T) {
 		{[]platform.AppVersionEvent{{ID: "other", Name: "zcp another", Status: "BACKUP"}}, reviewBuild},
 		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "BACKUP"}}, reviewBuild},
 	} {
-		got := reviewVersionOf("abcdef", "stage", "", tc.versions, nil, nil)
+		got := reviewVersionOf("abcdef", "stage", "", tc.versions, nil)
 		if got.action != tc.want {
 			t.Fatalf("versions %+v: got %+v, want %v", tc.versions, got, tc.want)
 		}
 	}
-	other := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp another", "FINISHED")}, nil)
+	other := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp another", "FINISHED")})
 	if other.action != reviewBuild {
 		t.Fatalf("another head's build: got %+v", other)
 	}
@@ -157,7 +155,7 @@ func TestReviewStage_RBCut_InterruptedUpload_CleansBeforeBuild(t *testing.T) {
 		{"DEPLOYING", reviewUnknown},
 	} {
 		versions := []platform.AppVersionEvent{cut, {ID: "built", Name: "zcp abcdef", Status: tc.status}}
-		if got := reviewVersionOf("abcdef", "stage", "", versions, nil, nil); got.action != tc.want || got.id != "built" {
+		if got := reviewVersionOf("abcdef", "stage", "", versions, nil); got.action != tc.want || got.id != "built" {
 			t.Fatalf("cut beside %s: got %+v, want %v for built", tc.status, got, tc.want)
 		}
 	}
@@ -210,28 +208,25 @@ func TestReviewSetups_RBSetup_Tier_ResolvesOnlyTheRepository(t *testing.T) {
 func TestReviewRetry_RBRetry_Unavailable_IsBounded(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		for _, number := range []int{0, 7} {
-			for i, delay := range []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, 0, 0} {
-				key := reviewKey{repo: "code", number: number}
-				a := &reviewAttempt{head: "head", main: "main", tries: i, running: true}
-				o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: a}}
-				now := time.Now()
-				o.finish(reviewDone{key: key, head: "head", main: "main", unavailable: true})
-				if delay == 0 {
-					if !a.stopped || !a.next.IsZero() {
-						t.Fatalf("%d retry %d: %+v, want stopped", number, i, a)
-					}
-				} else if !a.next.Equal(now.Add(delay)) || a.stopped {
-					t.Fatalf("%d retry %d: %+v, want after %s", number, i, a, delay)
-				}
-			}
-			key := reviewKey{repo: "code", number: number}
-			a := &reviewAttempt{head: "head", main: "main", running: true}
+		key := reviewKey{repo: "code", number: 7}
+		for i, delay := range []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, 0, 0} {
+			a := &reviewAttempt{head: "head", main: "main", tries: i, running: true}
 			o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: a}}
-			o.finish(reviewDone{key: key, head: "head", main: "main"})
-			if !a.completed || !a.next.IsZero() || a.stopped {
-				t.Fatalf("%d failed build scheduled a retry: %+v", number, a)
+			now := time.Now()
+			o.finish(reviewDone{key: key, head: "head", main: "main", unavailable: true})
+			if delay == 0 {
+				if !a.stopped || !a.next.IsZero() {
+					t.Fatalf("retry %d: %+v, want stopped", i, a)
+				}
+			} else if !a.next.Equal(now.Add(delay)) || a.stopped {
+				t.Fatalf("retry %d: %+v, want after %s", i, a, delay)
 			}
+		}
+		a := &reviewAttempt{head: "head", main: "main", running: true}
+		o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: a}}
+		o.finish(reviewDone{key: key, head: "head", main: "main"})
+		if !a.completed || !a.next.IsZero() || a.stopped {
+			t.Fatalf("failed build scheduled a retry: %+v", a)
 		}
 	})
 }
@@ -778,160 +773,6 @@ func TestDescriptionEdit_RBDescribeHead_BindsWordsToCommit(t *testing.T) {
 			}
 		})
 	}
-}
-
-// witness: internal/tools/review_build.go | if v.ID == active && (v.Name == ops.AppVersionName(head) || held != nil && held(v.ID, v.Name)) { → if v.ID == active && v.Name == ops.AppVersionName(head) {
-func TestReviewAtMain_RBAtMain_ActiveHoldsMain_ProbesWithoutBuild(t *testing.T) {
-	t.Parallel()
-	main, other := "1a2b3c4d5e6f", "9f8e7d6c5b4a"
-	merged := func(sha string) hq.MateChange {
-		return hq.MateChange{Repo: "code", State: hq.ChangeMerged, MergedSha: &sha, ReviewBuild: &hq.ReviewBuild{
-			State: "passing", Parts: []hq.ReviewBuildPart{{Outcome: "ok", AppVersionID: "active"}},
-		}}
-	}
-	github := &hq.RepoOrigin{Mode: hq.OriginOnGitHub}
-	for _, tc := range []struct {
-		name    string
-		active  string
-		origin  *hq.RepoOrigin
-		changes []hq.MateChange
-		want    reviewVersionAction
-	}{
-		{"zcp build of main", ops.AppVersionName(main), nil, nil, reviewProbe},
-		{"deploy named by main", "main 1a2b3c4", nil, nil, reviewProbe},
-		{"dirty deploy", "main 1a2b3c4-dirty", nil, nil, reviewBuild},
-		{"older main", ops.AppVersionName(other), nil, nil, reviewBuild},
-		{"Review build merged as main", "zcp candidate", nil, []hq.MateChange{merged(main)}, reviewProbe},
-		{"Review build merged on GitHub", "zcp candidate", github, []hq.MateChange{merged(main)}, reviewBuild},
-		{"Review build merged earlier", "zcp candidate", nil, []hq.MateChange{merged(other)}, reviewBuild},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			repo := hq.MateRepo{Name: "code", MainHead: &main, Origin: tc.origin}
-			held := func(id, name string) bool { return reviewAtMain(main, id, name, repo, tc.changes) }
-			versions := []platform.AppVersionEvent{{ID: "active", Name: tc.active, Status: "ACTIVE"}}
-			if got := reviewVersionOf(main, "stage", "active", versions, nil, held); got.action != tc.want {
-				t.Fatalf("action = %d, want %d", got.action, tc.want)
-			}
-		})
-	}
-}
-
-// witness: internal/tools/review_build_watch.go | if a.running || a.stopped || a.completed && a.next.IsZero() { → if a.stopped || a.completed && a.next.IsZero() {
-func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
-	t.Parallel()
-	main := "main-sha"
-	for _, tc := range []struct {
-		name   string
-		adding bool
-		head   *string
-		want   bool
-	}{
-		{"idle", false, &main, true}, {"adding", true, &main, false},
-		{"unborn", false, nil, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := reviewMainNext(hq.MateRepo{Adding: tc.adding, MainHead: tc.head}); got != tc.want {
-				t.Fatalf("follow main = %t, want %t", got, tc.want)
-			}
-		})
-	}
-	found := reviewVersionOf(main, "stage", "older", []platform.AppVersionEvent{{ID: "older", Name: ops.AppVersionName("old"), Status: "ACTIVE"}}, nil, nil)
-	if found.action != reviewBuild {
-		t.Fatalf("lagging stage: %+v", found)
-	}
-	synctest.Test(t, func(t *testing.T) {
-		key := reviewKey{repo: "code"}
-		attempt := &reviewAttempt{head: main, main: main, running: true}
-		observer := reviewObserver{
-			attempts: map[reviewKey]*reviewAttempt{key: attempt},
-			deps:     func(context.Context) (devGitDeps, bool) { return devGitDeps{}, false },
-		}
-		repo := hq.MateRepo{Name: "code", MainHead: &main}
-		observer.considerMain(t.Context(), key, repo, "app")
-		if !attempt.running || !attempt.next.IsZero() {
-			t.Fatalf("running main-follow started again: %+v", attempt)
-		}
-		attempt.running, attempt.completed = false, true
-		repo.Adding = true
-		observer.considerMain(t.Context(), key, repo, "app")
-		if attempt.completed || !attempt.next.IsZero() {
-			t.Fatalf("adding did not reset the completed attempt: %+v", attempt)
-		}
-		repo.Adding = false
-		observer.considerMain(t.Context(), key, repo, "app")
-		if attempt.next.IsZero() {
-			t.Fatalf("main was not reconsidered after adding: %+v", attempt)
-		}
-	})
-}
-
-// witness: internal/tools/review_build_take.go | recordReviewMain(statusPath, repo, main, part) → recordReviewMain(statusPath, repo, "", part)
-func TestReviewMain_RBMainResult_StageOutcome_ReachesStatus(t *testing.T) {
-	// non-parallel: the running service and its status reader share ZCP_STATUS_FILE.
-	statusPath := filepath.Join(t.TempDir(), "mate-status.json")
-	t.Setenv(mate.EnvStatusFile, statusPath)
-	synctest.Test(t, func(t *testing.T) {
-		if err := mate.UpdateStatus(statusPath, func(s *mate.Status) {
-			s.Standup.State = mate.StandupDone
-			s.Stages = []mate.StageStatus{{Hostname: "otherstage", Repo: "other", MainFollow: topology.MainFollowStatus{Head: "other-head", Outcome: "ok"}}}
-		}); err != nil {
-			t.Fatal(err)
-		}
-		main := "abcdef"
-		for _, tc := range []struct {
-			name, version, outcome, reason string
-			active, unavailable, bindError bool
-		}{
-			{"failed", "BUILD_FAILED", "failed", "build: BUILD_FAILED", false, false, false},
-			{"unavailable", "BUILDING", "unavailable", "read stage version: version ver-1 is BUILDING and has no live build", false, true, false},
-			{"before lock", "", "unavailable", "follow main: find main stages: read services: temporarily unreachable", false, true, true},
-			{"recovered", "ACTIVE", "ok", "", true, false, false},
-		} {
-			svc := platform.ServiceStack{ID: "stage", Name: "apistage", ProjectID: "project"}
-			if tc.active {
-				svc.ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: "ver-1"}
-			}
-			client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
-				WithProject(&platform.Project{ID: "project"}).
-				WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "ver-1", Status: tc.version}}).
-				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "ver-1", ServiceStackID: "stage", Name: "zcp " + main}})
-			if tc.bindError {
-				client.WithError("ListServicesDirect", errors.New("temporarily unreachable"))
-			}
-			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			read := func() (hq.MateStateDocument, error) {
-				return hq.MateStateDocument{Link: hq.MateLinkLinked, Mate: &hq.MateState{Repos: []hq.MateRepo{{Name: "code", MainHead: &main}}}}, nil
-			}
-			unavailable, err := executeReviewMain(t.Context(), d, hq.Client{}, "app", "code", main, nil, []topology.StageRef{{Hostname: "apistage", SetupName: "api"}}, read, nil)
-			if (err != nil) != tc.bindError || unavailable != tc.unavailable {
-				t.Fatalf("%s: unavailable = %t, err = %v; want %t", tc.name, unavailable, err, tc.unavailable)
-			}
-			status, err := mate.ReadStatus(statusPath)
-			if err != nil || status.Standup.State != mate.StandupDone || len(status.Stages) != 2 {
-				t.Fatalf("status = %+v, err = %v", status, err)
-			}
-			got := status.Stages[1]
-			want := mate.StageStatus{Hostname: "apistage", Repo: "code", MainFollow: topology.MainFollowStatus{Head: main, Outcome: tc.outcome, Reason: tc.reason}}
-			if got != want || status.Stages[0].MainFollow.Head != "other-head" {
-				t.Fatalf("stage = %+v, other = %+v; want %+v", got, status.Stages[0], want)
-			}
-			env := workflow.StateEnvelope{Services: []workflow.ServiceSnapshot{{Hostname: "pool", HQRepo: "code", DevIsPool: true, Stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}}}}}
-			wantText := "main " + main + ": " + tc.outcome
-			if tc.reason != "" {
-				wantText += " (" + tc.reason + ")"
-			}
-			where := renderWhereAnswer(env, map[string]whereEvent{"apistage": {kind: whereVersionEvent, value: "zcp previous"}}, nil, nil, nil, nil, runtime.Info{MateEnabled: true}, "", time.Now(), nil, nil, status.Stages)
-			if !strings.Contains(where, "stage apistage (part api) runs zcp previous; "+wantText) || !strings.Contains(mainFollowStatusGuidance(env, statusPath), "stage apistage: "+wantText) {
-				t.Fatalf("where = %q, status = %q", where, mainFollowStatusGuidance(env, statusPath))
-			}
-			env.Services[0].HQRepo = "another-repo"
-			if strings.Contains(mainFollowStatusGuidance(env, statusPath), "stage apistage:") {
-				t.Fatalf("old repository's result shown after the stage moved: %+v", status.Stages)
-			}
-		}
-	})
 }
 
 // witness: internal/tools/review_build_take.go | base + "\x00" + head → base[:0] + "\x00" + head

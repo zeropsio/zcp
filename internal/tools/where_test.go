@@ -78,7 +78,7 @@ func TestWhere_WGStanding_ListsOnlyOpenChanges(t *testing.T) {
 			if err != nil || line.Open != tc.open || string(wire) != tc.wire {
 				t.Fatalf("open = %v; wire = %s, err = %v; want %v and %s", line.Open, wire, err, tc.open, tc.wire)
 			}
-			got := renderWhereAnswer(workflow.StateEnvelope{}, nil, nil, nil, nil, []workflow.HQRepoChanges{{Repo: "app", Changes: []workflow.HQChangeLine{line}}}, runtime.Info{}, "", at, nil, nil, nil)
+			got := renderWhereAnswer(workflow.StateEnvelope{}, nil, nil, nil, nil, []workflow.HQRepoChanges{{Repo: "app", Changes: []workflow.HQChangeLine{line}}}, runtime.Info{}, "", at, nil, nil)
 			if got != tc.want {
 				t.Fatalf("where = %q; want %q", got, tc.want)
 			}
@@ -292,7 +292,7 @@ func TestWhere_WGNoCopy_SelectsTheRepositorysDevHalf(t *testing.T) {
 			branches := map[string]whereEvent{"appdev": {value: "earlier", head: head, dirty: tc.dirty}}
 			refs := map[string]whereEvent{"appdev": {ref: &topology.BranchRef{Head: head, Published: true}}}
 			reads := map[string]whereEvent{"appdev": {change: &hq.Change{Number: 6, Head: &head, Ready: &tc.ready}}}
-			answer := renderWhereAnswer(env, nil, branches, nil, nil, changes, runtime.Info{MateEnabled: true}, "", time.Time{}, refs, reads, nil)
+			answer := renderWhereAnswer(env, nil, branches, nil, nil, changes, runtime.Info{MateEnabled: true}, "", time.Time{}, refs, reads)
 			for _, want := range []string{"change #7 feature: no working copy; step: " + tc.want, "change #8 other: no working copy; step: acquire"} {
 				if !strings.Contains(answer, want) {
 					t.Errorf("where = %q; missing %q", answer, want)
@@ -307,7 +307,7 @@ func TestWhere_WGNoCopyRead_UnreadClassicBranchIsUnknown(t *testing.T) {
 	t.Parallel()
 	env := workflow.StateEnvelope{Services: []workflow.ServiceSnapshot{{Hostname: "appdev", StageHostname: "appstage", HQRepo: "app"}}}
 	changes := []workflow.HQRepoChanges{{Repo: "app", Changes: []workflow.HQChangeLine{{Number: 7, Branch: "feature", Open: true}}}}
-	answer := renderWhereAnswer(env, nil, map[string]whereEvent{"appdev": {err: errors.New("unreachable")}}, nil, nil, changes, runtime.Info{MateEnabled: true}, "", time.Time{}, nil, nil, nil)
+	answer := renderWhereAnswer(env, nil, map[string]whereEvent{"appdev": {err: errors.New("unreachable")}}, nil, nil, changes, runtime.Info{MateEnabled: true}, "", time.Time{}, nil, nil)
 	want := "change #7 feature: working copy not read (checkout appdev branch was not read); step: unknown: checkout appdev branch was not read"
 	if !strings.Contains(answer, want) || strings.Contains(answer, "no working copy; step: checkout") {
 		t.Fatalf("where = %q; want %q", answer, want)
