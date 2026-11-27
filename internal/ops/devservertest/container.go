@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"regexp"
 	"slices"
@@ -260,6 +261,31 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 		return []byte("ok"), nil
 	}
 	return []byte("ok"), nil
+}
+
+// ExecSSHStdio answers a held copy-state wait using the configured next state.
+func (c *Container) ExecSSHStdio(_ context.Context, _, command string, _ io.Reader, stdout, _ io.Writer) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !strings.Contains(command, "zcp-devsup ctl copy-state") || !c.Installed || !c.Running || !slices.Contains(c.Capabilities, devsup.CapabilityCopyState) {
+		return 1, errors.New("copy-state wait unavailable")
+	}
+	declaration, err := devsup.ParseDeclaration([]byte(c.Declaration))
+	if err != nil {
+		return 1, fmt.Errorf("parse wait declaration: %w", err)
+	}
+	preview, ok := devsup.PreviewServer(declaration.Servers)
+	if !ok {
+		return 1, errors.New("no preview for wait")
+	}
+	answer, ok := c.WaitFinds[preview.Name]
+	if !ok {
+		return 1, errors.New("no next copy state")
+	}
+	if _, err := io.WriteString(stdout, encode(map[string]any{"status": answer.Status})); err != nil {
+		return 1, fmt.Errorf("write wait answer: %w", err)
+	}
+	return 0, nil
 }
 
 // ExecSSHStdin answers one command as ExecSSH does; the input is not read.

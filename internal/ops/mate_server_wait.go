@@ -101,42 +101,46 @@ func ReportMateCopy(ctx context.Context, d LeaseDeps, statusPath string, target 
 }
 
 // AwaitMateServer holds one wait for a copy and writes its answer only over
-// the state on which it was armed. A lost connection writes unknown once.
-func AwaitMateServer(ctx context.Context, d LeaseDeps, statusPath, root string, target MateCopyTarget) error {
+// the state on which it was armed. A lost connection writes unknown once. If
+// publishing an answer fails, next names the answered state so the observer
+// can wait for its next transition without retrying the failed write.
+func AwaitMateServer(ctx context.Context, d LeaseDeps, statusPath, root string, target MateCopyTarget) (next mate.CopyState, err error) {
 	if target.Pool != "" {
 		lease, ok, err := LeaseTargetChecked(ctx, d, target.Hostname, "observed")
 		if err != nil {
-			return recordLostCopy(ctx, d, statusPath, target, err)
+			return "", recordLostCopy(ctx, d, statusPath, target, err)
 		}
 		if !ok || lease.AcquiredAt != target.AcquiredAt || lease.Branch != target.Branch {
-			return nil
+			return "", nil
 		}
 		if lease.Parked {
 			if err := StoreMateCopyEvent(d.StateDir, statusPath, target, mate.CopyEvent{Kind: mate.CopyPark}, d.now().UTC(), target.StateAt); err != nil {
-				return fmt.Errorf("store parked copy: %w", err)
+				return "", fmt.Errorf("store parked copy: %w", err)
 			}
-			return nil
+			return "", nil
 		}
 	}
 	ds, err := readDevServers(ctx, d.SSH, target.Hostname, root, d.now)
 	if err != nil {
-		return recordLostCopy(ctx, d, statusPath, target, err)
+		return "", recordLostCopy(ctx, d, statusPath, target, err)
 	}
 	if !ds.Supervisor.Supports(devsup.CapabilityCopyState) {
-		return recordLostCopy(ctx, d, statusPath, target, fmt.Errorf("supervisor lacks copy-state capability"))
+		return "", recordLostCopy(ctx, d, statusPath, target, fmt.Errorf("supervisor lacks copy-state capability"))
 	}
 	after := copyWaitAfter(target.State)
 	if after == "" {
-		return nil
+		return "", nil
 	}
 	status, err := copyServerState(ctx, d.SSH, target.Hostname, after)
 	if err != nil {
-		return recordLostCopy(ctx, d, statusPath, target, err)
+		return "", recordLostCopy(ctx, d, statusPath, target, err)
 	}
-	if err := StoreMateCopyEvent(d.StateDir, statusPath, target, mate.CopyEvent{Kind: mate.CopyReport, Report: string(status)}, d.now().UTC(), target.StateAt); err != nil {
-		return fmt.Errorf("store waited copy: %w", err)
+	event := mate.CopyEvent{Kind: mate.CopyReport, Report: string(status)}
+	if err := StoreMateCopyEvent(d.StateDir, statusPath, target, event, d.now().UTC(), target.StateAt); err != nil {
+		next, _ = mate.NextCopyState(target.State, event)
+		return next, fmt.Errorf("store waited copy: %w", err)
 	}
-	return nil
+	return "", nil
 }
 
 func recordLostCopy(ctx context.Context, d LeaseDeps, statusPath string, target MateCopyTarget, cause error) error {

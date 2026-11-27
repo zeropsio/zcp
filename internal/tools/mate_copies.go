@@ -277,7 +277,7 @@ func KeepMateCopies(ctx context.Context, env func() func(string) string, statusP
 	}
 	o := &mateCopyObserver{stateDir: stateDir, statusPath: statusPath, log: log,
 		deps: liveDevGitDeps(env, log), ssh: platform.NewSystemSSHDeployer(),
-		done: make(chan mateCopyWaitKey, 64), scanDone: make(chan struct{}, 1),
+		done: make(chan mateCopyWaited, 64), scanDone: make(chan struct{}, 1),
 		active: map[mateCopyWaitKey]mateCopyActive{}, seen: map[mateCopyWaitKey]string{}}
 	o.bootLeases(ctx)
 	o.scan(ctx)
@@ -286,6 +286,10 @@ func KeepMateCopies(ctx context.Context, env func() func(string) string, statusP
 }
 
 type mateCopyWaitKey struct{ host, acquired, branch string }
+type mateCopyWaited struct {
+	key    mateCopyWaitKey
+	target ops.MateCopyTarget
+}
 type mateCopyActive struct {
 	at     string
 	cancel context.CancelFunc
@@ -297,7 +301,7 @@ type mateCopyObserver struct {
 	log                  func(string)
 	deps                 func(context.Context) (devGitDeps, bool)
 	ssh                  ops.SSHDeployer
-	done                 chan mateCopyWaitKey
+	done                 chan mateCopyWaited
 	scanDone             chan struct{}
 	active               map[mateCopyWaitKey]mateCopyActive
 	seen                 map[mateCopyWaitKey]string
@@ -333,9 +337,8 @@ func (o *mateCopyObserver) run(ctx context.Context, watcher *fsnotify.Watcher, c
 				return
 			}
 			o.log("copy observer service metadata watch lost events")
-		case key := <-o.done:
-			delete(o.active, key)
-			o.observe(ctx)
+		case result := <-o.done:
+			o.finishWait(ctx, result)
 		case <-o.scanDone:
 			o.scanning = false
 			if o.scanAgain {
@@ -344,6 +347,16 @@ func (o *mateCopyObserver) run(ctx context.Context, watcher *fsnotify.Watcher, c
 			}
 		}
 	}
+}
+
+func (o *mateCopyObserver) finishWait(ctx context.Context, result mateCopyWaited) {
+	delete(o.active, result.key)
+	if result.target.State != "" {
+		if d, ok := o.deps(ctx); ok {
+			o.startWait(ctx, result.key, result.target, d)
+		}
+	}
+	o.observe(ctx)
 }
 
 func (o *mateCopyObserver) refresh(ctx context.Context) {
@@ -463,11 +476,17 @@ func (o *mateCopyObserver) startWait(ctx context.Context, key mateCopyWaitKey, t
 		defer cancel()
 		ld := LeaseDepsFor(d.client, d.rt.ProjectID, o.stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), nil, d.ssh, d.rt)
 		root := supervisorRoot(o.stateDir, target.Hostname)
-		if err := ops.AwaitMateServer(waitCtx, ld, o.statusPath, root, target); err != nil && waitCtx.Err() == nil {
+		next, err := ops.AwaitMateServer(waitCtx, ld, o.statusPath, root, target)
+		result := mateCopyWaited{key: key}
+		if err != nil && waitCtx.Err() == nil {
 			o.log("copy observer could not wait for a dev server")
+			if next != "" {
+				target.State = next
+				result.target = target
+			}
 		}
 		select {
-		case o.done <- key:
+		case o.done <- result:
 		case <-ctx.Done():
 		}
 	}()

@@ -18,6 +18,39 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// witness: internal/tools/mate_copies.go | o.startWait(ctx, result.key, result.target, d) → _ = d
+func TestMateCopies_MCWrite_WaitsForTheNextEventAfterAWriteFailure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ host string }{{"appdev"}, {"anotherdev"}} {
+		t.Run(tc.host, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "status.json")
+				const at = "2026-11-27T07:00:00Z"
+				if err := mate.UpdateStatus(path, func(s *mate.Status) {
+					s.Copies = &mate.CopyStatus{DevServices: []mate.DevCopyStatus{{Hostname: tc.host, State: mate.CopyStopped, StateAt: at}}}
+				}); err != nil {
+					t.Fatal(err)
+				}
+				started, release := make(chan struct{}, 2), make(chan struct{})
+				ssh := &leaseStubSSH{fn: func(string) ([]byte, error) { started <- struct{}{}; <-release; return nil, errors.New("closed") }}
+				key := mateCopyWaitKey{host: tc.host}
+				o := &mateCopyObserver{statusPath: path, log: func(string) {}, done: make(chan mateCopyWaited, 2),
+					active: map[mateCopyWaitKey]mateCopyActive{key: {at: at, cancel: func() {}}}, seen: map[mateCopyWaitKey]string{key: at},
+					deps: func(context.Context) (devGitDeps, bool) { return devGitDeps{ssh: ssh}, true }}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer close(release)
+				defer cancel()
+				o.finishWait(ctx, mateCopyWaited{key: key, target: ops.MateCopyTarget{Hostname: tc.host, State: mate.CopyStarting, StateAt: at}})
+				synctest.Wait()
+				if len(o.active) != 1 || len(started) != 1 {
+					t.Fatalf("next wait: active=%d started=%d, want one", len(o.active), len(started))
+				}
+			})
+		})
+	}
+}
+
 // witness: internal/tools/mate_copies.go | if active.at != target.StateAt { → if true {
 func TestMateCopies_MCWait_UnchangedStateKeepsOneWait(t *testing.T) {
 	t.Parallel()
@@ -33,7 +66,7 @@ func TestMateCopies_MCWait_UnchangedStateKeepsOneWait(t *testing.T) {
 				}
 				started, release := make(chan struct{}, 2), make(chan struct{})
 				ssh := &leaseStubSSH{fn: func(string) ([]byte, error) { started <- struct{}{}; <-release; return nil, errors.New("closed") }}
-				o := &mateCopyObserver{statusPath: path, log: func(string) {}, done: make(chan mateCopyWaitKey, 2),
+				o := &mateCopyObserver{statusPath: path, log: func(string) {}, done: make(chan mateCopyWaited, 2),
 					active: map[mateCopyWaitKey]mateCopyActive{}, seen: map[mateCopyWaitKey]string{},
 					deps: func(context.Context) (devGitDeps, bool) { return devGitDeps{ssh: ssh}, true }}
 				ctx, cancel := context.WithCancel(t.Context())

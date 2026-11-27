@@ -14,6 +14,34 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 )
 
+// witness: internal/ops/mate_server_wait.go | next, _ = mate.NextCopyState(target.State, event) → next, _ = mate.NextCopyState(target.State, mate.CopyEvent{Kind: mate.CopyLinkLost})
+func TestDevServer_DSCopyWrite_FailedPublicationKeepsTheAnsweredState(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		before mate.CopyState
+		answer devsup.Status
+		want   mate.CopyState
+	}{{"start listened", mate.CopyStarting, devsup.StatusRunning, mate.CopyRunning}, {"running stopped", mate.CopyRunning, devsup.StatusStopped, mate.CopyStopped}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			block := filepath.Join(dir, "not-a-directory")
+			if err := os.WriteFile(block, []byte("block"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"run","preview":true}]}`)
+			c.WaitFinds = map[string]devsup.ServerState{"web": {Status: tc.answer}}
+			d := LeaseDeps{SSH: c}
+			target := MateCopyTarget{Hostname: "appdev", State: tc.before, StateAt: "2026-11-27T07:00:00Z"}
+			next, err := AwaitMateServer(t.Context(), d, filepath.Join(block, "status.json"), "", target)
+			if err == nil || next != tc.want {
+				t.Fatalf("write failure = %s, %v; want %s and an error", next, err, tc.want)
+			}
+		})
+	}
+}
+
 // witness: internal/ops/lease_mate_status.go | next, ok := mate.NextCopyState(*state, mate.CopyEvent{Kind: mate.CopyLinkLost}) → next, ok := mate.NextCopyState(*state, mate.CopyEvent{Kind: mate.CopyStop})
 func TestDevServer_DSCopyBoot_UnknownUntilTheSnapshot(t *testing.T) {
 	t.Parallel()
@@ -139,7 +167,7 @@ func TestLease_LPMateRelease_DropsOnlyTheReleasedLease(t *testing.T) {
 }
 
 // non-parallel: writing a lease record consults the process environment.
-// witness: internal/ops/lease_mate_status.go | *state, *stateAt = next, at.UTC().Format(time.RFC3339Nano) → *state, *stateAt = *state, at.UTC().Format(time.RFC3339Nano)
+// witness: internal/ops/lease_mate_status.go | *state, *stateAt = next, at.UTC().Format(time.RFC3339Nano) → *state, *stateAt = mate.CopyState(string(next)+"!"), at.UTC().Format(time.RFC3339Nano)
 func TestDevServer_DSCopyEvents_OnlyCurrentLeaseAndNewerReportAreApplied(t *testing.T) {
 	t.Setenv("ZCP_MATE_ENABLED", "0")
 	start := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
@@ -208,7 +236,7 @@ func TestDevServer_DSCopyLink_WaitFailureAndOlderSupervisorAreUnknown(t *testing
 			c := &devservertest.Container{Installed: true, Running: true, SupervisorVersion: "v1", Formats: []int{1}, Capabilities: tc.capabilities}
 			d := LeaseDeps{SSH: c, Now: func() time.Time { return start.Add(time.Minute) }}
 			target := MateCopyTarget{Hostname: "appdev", State: "running", StateAt: start.Format(time.RFC3339Nano)}
-			if err := AwaitMateServer(t.Context(), d, path, "", target); err == nil {
+			if _, err := AwaitMateServer(t.Context(), d, path, "", target); err == nil {
 				t.Fatal("lost link must be reported")
 			}
 			status, err := mate.ReadStatus(path)
