@@ -4299,14 +4299,30 @@ names no application has no board.
   the board, in its card, naming no place for it — never to start that work itself on any branch, and to go on with
   what the person asked for. Its annotations are those of a proposal: read-only, since it writes
   nothing, and not idempotent, since each call draws a new card.
+- `zerops_board_propose` takes, instead of `title` and `brief`, a **plan**:
+  `{ tasks: [{ key, title, brief, needs? }] }`, 2–20 tasks in the order they land, for work whose
+  steps build on each other's changes; a call with both proposes nothing. `key` names the task
+  within the plan: one line of 1–40 characters of `a-z0-9-`, each its own. `title` and `brief` take
+  one task's bounds. `needs` names the keys of this plan's tasks it builds on, repeats dropped; HQ
+  holds the task until each of them is met. A plan outside these bounds, a need naming a key no task
+  of the plan has, and needs that go in a circle (a task needing itself included) are refused,
+  nothing proposed, with words naming that task, key or circle. It writes nothing and asks HQ
+  nothing. It answers
+  `{"proposed":{"board":{"plan":[{"key","title","brief","needs":["<key>"]}]}},"nextActions":"…"}`,
+  the tasks in the agent's order, `needs` always a list, telling the agent the same as for one task
+  of the plan as a whole, and to start none of its tasks.
 - `zerops_board_list` takes `{}` and reads `GET /api/mate/tasks` under the project key, once, within
-  3 s to connect and 10 s to answer. It answers `{"tasks":[{"id","title","state","with"?,"from"?}],
-  "more"?,"nextActions":"…"}`, the open tasks in HQ's order, at most 100, `more` counting the rest.
+  3 s to connect and 10 s to answer. It answers
+  `{"tasks":[{"id","title","state","with"?,"from"?,"needs"?}],"more"?,"nextActions":"…"}`, the open
+  tasks in HQ's order, at most 100, `more` counting the rest. `state` is HQ's, `held` among them for a
+  task waiting on tasks it needs.
   `with` is who has the task: "your person, in this Mate" for a task this Mate's person took into
   it, "a person, in <Mate>" for another Mate's person, "<Mate>, an automated Mate" for the pool's,
   the Mate a task is with where HQ names no taker, absent for nobody. `from` is where the task came
   from: "a conversation in this Mate" or "in another Mate" for a conversation's, else HQ's label of
-  its source, absent when HQ has none. `nextActions` tells the agent to propose only work no open
+  its source, absent when HQ has none. `needs` is what the task waits on, when HQ's answer carries
+  it: `[{"id","title"?,"state"}]`, `title` HQ's or else that of the open task of that id, `state`
+  HQ's (`waiting`, `met` or `broken`). `nextActions` tells the agent to propose only work no open
   task covers, and, when one does, to say so in one sentence and propose nothing. Its annotations
   are read-only and idempotent. HQ not answering, HQ refusing this Mate's access (its key, Zerops, or
   its project gone: the one derivation describe-change uses), a `404` (an HQ that keeps no board
@@ -4315,15 +4331,19 @@ names no application has no board.
   board before they put a task there.
 
 **The route,** under `Authorization: Project <ZCP_API_KEY>`: `GET /api/mate/tasks` →
-`200 {"tasks":[task]}`, the open tasks (`queued`, `assigned`, `working`, `waiting`, `taken`) of the
-application HQ holds the Mate in. zcp reads of each task `id`, `title`, `state`, `label`, `mate`
-(`{projectId, name}`, nullable), `taker` (`null`, `{kind: "pool", mateProjectId}` or
-`{kind: "person", userId, mateProjectId}`) and `source.kind` with, for `conversation`, its
-`mateProjectId`; the task's other fields are HQ's (`zeropsio/mate-hq:spec/protocol.md`).
+`200 {"tasks":[task]}`, the open tasks (`queued`, `assigned`, `working`, `waiting`, `taken`, and
+`held` from an HQ that keeps needs) of the application HQ holds the Mate in. zcp reads of each task
+`id`, `title`, `state`, `label`, `mate` (`{projectId, name}`, nullable), `taker` (`null`,
+`{kind: "pool", mateProjectId}` or `{kind: "person", userId, mateProjectId}`), `source.kind` with,
+for `conversation`, its `mateProjectId`, and, when present, `needs` (`[{taskId, state, title?}]`);
+the task's other fields are HQ's (`zeropsio/mate-hq:spec/protocol.md`).
 
 **mate.** The engine opens a board ask from a `proposed.board` answer and draws its card in that
 conversation: the brief, editable, and **Put on board**, which posts the task from the person's own
 client (`POST /api/apps/:appId/tasks`, HQ's person door) and settles the card "On the board".
+From a `proposed.board.plan` answer it draws one card for the plan — its tasks, their order and what
+each needs — whose Put on board posts them in one write (`POST /api/apps/:appId/tasks/plan`), each
+key's needs as the plan names them.
 When the person took a task into this Mate, the conversation working it links its change to the
 task from zcp's answer to `zerops_workflow action="open-change"` alone: the answer's `pullRequest`
 (the change's number) and `pullRequestUrl` (`…/changes/<appId>/<repo>/<number>`) are part of this
@@ -4331,18 +4351,21 @@ seam, and the Mate posts them to HQ under the project key (`POST /api/mate/tasks
 
 **Where the agent reads it.** AGENTS.md's *What one change holds* names `zerops_board_propose` for
 unasked work found outside every open change and points at
-`zerops_knowledge uri="zerops://playbooks/board"`, which holds the rest: list first, never start
-it, one sentence, never a token asked of the person.
+`zerops_knowledge uri="zerops://playbooks/board"`, which holds the rest: list first, steps that
+build on each other as one plan, never start it, one sentence, never a token asked of the person.
 
 The first Mate that draws the board card is `BoardMateVersion` (`internal/mate/manifest.go`); below
 it `zerops_board_propose` refuses, nothing proposed, and tells the agent to name what it found in one
-sentence and never start it.
+sentence and never start it. The first Mate that draws a plan's card is `BoardPlanMateVersion`;
+below it a plan is refused, nothing proposed, and the agent is told to propose its tasks one by one
+in the order they land and to say in each brief which of them it builds on.
 
 ### Invariants
 
 | ID | Invariant |
 |---|---|
 | MT-1 | A Mate's agent proposes a board task and lists the board's open tasks only in a Mate's container: the proposal writes nothing, asks HQ nothing, answers `proposed.board` with the trimmed title (1–120 characters, one line) and brief (1–8,000), and is refused below `BoardMateVersion`; the list is one bounded `GET /api/mate/tasks` under the project key, at most 100 tasks with who has each and where it came from, and each failure says whether asking again helps; a Mate in no application has no board for either (§6.11). zcp `internal/tools/board_SENTENCES.md`. |
+| MT-2 | A plan proposed for the board is 2–20 tasks, each a plan-local key (1–40 of `a-z0-9-`, its own), a task's title and brief, and needs naming only keys of the same plan, never in a circle; it writes nothing, asks HQ nothing, answers `proposed.board.plan` in the agent's order, and is refused below `BoardPlanMateVersion` with the agent told to propose the tasks one by one; the list tells each task's needs and the held state when HQ carries them (§6.11). zcp `internal/ops/board_plan_SENTENCES.md`, `internal/tools/board_SENTENCES.md`. |
 
 ## 8. Agent sign-in
 
