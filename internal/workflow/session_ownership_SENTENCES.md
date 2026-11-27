@@ -7,3 +7,4 @@
 - SO-5 — An incomplete meta keeps its old interrupted bootstrap when another bootstrap starts. Breaks: one conversation erases another's unfinished services.
 - SO-6 — A resume cannot claim an old empty bootstrap already pruned by another start. Breaks: stale state recreates an unregistered session.
 - SO-7 — An unfinished bootstrap's recorded plan holds its dev and stage hostnames before any meta exists, by the rule and with the refusal of an incomplete meta. Breaks: a second bootstrap plans and imports the services the first is creating.
+- SO-8 — A session registry that cannot be read holds every hostname a plan names, the refusal naming each with the read's error; a readable registry holds only what its sessions hold. Breaks: a corrupt registry reads as no sessions and a second bootstrap plans over another's hostnames.

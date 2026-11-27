@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -901,9 +902,20 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 // unfinished bootstrap session. A session holds the hostnames of its recorded
 // plan and of its incomplete ServiceMetas: in a Mate while it exists in the
 // registry, standalone while its process is alive. A planned stage another
-// complete pair records as its stage is refused too.
+// complete pair records as its stage is refused too. A registry that cannot be
+// read holds every planned hostname, since who holds them is unknown.
 func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
-	sessions, _ := ListSessions(e.stateDir)
+	sessions, registryErr := ListSessions(e.stateDir)
+	if registryErr != nil {
+		held := make([]string, 0, len(targets))
+		for _, target := range targets {
+			for _, hostname := range targetHostnames(target) {
+				held = append(held, strconv.Quote(hostname))
+			}
+		}
+		return fmt.Errorf("%s may be held by another bootstrap session, and the session registry cannot be read (%w) — make the registry readable first",
+			strings.Join(held, ", "), registryErr)
+	}
 	holders := make(map[string]SessionEntry, len(sessions))
 	for _, s := range sessions {
 		// A Mate's unfinished session holds across process exits; what an

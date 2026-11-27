@@ -3,6 +3,7 @@ package workflow
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -366,6 +367,62 @@ func TestBootstrapOwnership_SO7_PlanHoldsItsHostnamesBeforeMetas(t *testing.T) {
 			}
 			if tt.prefix && !strings.HasPrefix(got, tt.want) || !tt.prefix && got != tt.want {
 				t.Fatalf("hostname lock refusal = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// witness: internal/workflow/engine.go | if registryErr != nil { → if registryErr == nil {
+func TestBootstrapOwnership_SO8_UnreadableRegistryHoldsEveryPlannedHostname(t *testing.T) {
+	t.Parallel()
+	pair := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "appdev", BootstrapMode: topology.PlanModeStandard, ExplicitStage: "appstage"}}
+	web := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "webdev", BootstrapMode: topology.PlanModeDev}}
+	app := BootstrapTarget{Runtime: RuntimeTarget{DevHostname: "appdev", BootstrapMode: topology.PlanModeDev}}
+	tests := []struct {
+		name     string
+		registry string // corrupt, empty, holder: "first" records the pair's plan
+		targets  []BootstrapTarget
+		want     string
+		suffix   string // with want as prefix: the read's own error stands between them
+	}{
+		{"corrupt registry", "corrupt", []BootstrapTarget{pair, web},
+			`"appdev", "appstage", "webdev" may be held by another bootstrap session, and the session registry cannot be read (`,
+			`) — make the registry readable first`},
+		{"readable empty registry", "empty", []BootstrapTarget{pair, web}, "", ""},
+		{"one holder, another hostname", "holder", []BootstrapTarget{web}, "", ""},
+		{"one holder, its hostname", "holder", []BootstrapTarget{app},
+			`service "appdev" is being bootstrapped by session first (PID 0) — finish or reset that session first`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			engine := NewMateEngine(dir, EnvContainer, nil)
+			engine.setSessionID("second")
+			if err := RegisterSession(dir, SessionEntry{SessionID: "first", Workflow: WorkflowBootstrap}); err != nil {
+				t.Fatalf("register first bootstrap: %v", err)
+			}
+			switch tt.registry {
+			case "corrupt":
+				if err := os.WriteFile(filepath.Join(dir, registryFileName), []byte("{"), 0o600); err != nil {
+					t.Fatalf("break the registry: %v", err)
+				}
+			case "empty":
+				if err := UnregisterSession(dir, "first"); err != nil {
+					t.Fatalf("empty the registry: %v", err)
+				}
+			case "holder":
+				state := &WorkflowState{SessionID: "first", Workflow: WorkflowBootstrap, Bootstrap: &BootstrapState{Active: true, Plan: &ServicePlan{Targets: []BootstrapTarget{pair}}}}
+				if err := SaveSessionState(dir, "first", state); err != nil {
+					t.Fatalf("save first bootstrap: %v", err)
+				}
+			}
+			got := ""
+			if err := engine.checkHostnameLocks(tt.targets); err != nil {
+				got = err.Error()
+			}
+			if tt.suffix == "" && got != tt.want || tt.suffix != "" && (!strings.HasPrefix(got, tt.want) || !strings.HasSuffix(got, tt.suffix)) {
+				t.Fatalf("hostname lock refusal = %q, want %q … %q", got, tt.want, tt.suffix)
 			}
 		})
 	}
