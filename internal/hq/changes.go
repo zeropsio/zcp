@@ -2,6 +2,7 @@ package hq
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -191,6 +192,9 @@ type Change struct {
 	Ready         *bool        `json:"ready"`
 	ReviewBuild   *ReviewBuild `json:"reviewBuild,omitempty"`
 	ChecksGivenUp bool         `json:"checksGivenUp,omitempty"`
+	PullRequest   *struct {
+		Checks string `json:"checks,omitempty"`
+	} `json:"pullRequest,omitempty"`
 }
 
 // OpenedChange is HQ's answer to opening a change: the Mate's open change in
@@ -220,6 +224,26 @@ func (c Client) OpenChange(ctx context.Context, repo, title, branch string) (Ope
 	err := c.call.jsonWithRevision(ctx, http.MethodPost, "/api/mate/changes", c.authorization(),
 		body, &opened, &opened.StateRev)
 	return opened, err
+}
+
+// OpenChangeOnBranch reads HQ's current open change for this Mate, repository
+// and branch. A nil change is HQ's explicit answer that none is open.
+func (c Client) OpenChangeOnBranch(ctx context.Context, repo, branch string) (*Change, error) {
+	query := url.Values{"repo": {repo}, "branch": {branch}}
+	var answer struct {
+		Change json.RawMessage `json:"change"`
+	}
+	if err := c.Once().call.json(ctx, http.MethodGet, "/api/mate/changes?"+query.Encode(), c.authorization(), nil, &answer); err != nil {
+		return nil, fmt.Errorf("read open change: %w", err)
+	}
+	if len(answer.Change) == 0 {
+		return nil, errors.New("read open change: HQ did not answer with a change")
+	}
+	var change *Change
+	if err := json.Unmarshal(answer.Change, &change); err != nil {
+		return nil, fmt.Errorf("read open change: %w", err)
+	}
+	return change, nil
 }
 
 // ReviewBuildWrite is a take or a result sent to HQ for one change head.

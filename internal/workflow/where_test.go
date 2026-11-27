@@ -107,6 +107,18 @@ func TestWhere_WHSIZE_KeepsNamedCopyAndWholeLines(t *testing.T) {
 			}
 		})
 	}
+	{ // A long branch and reason must leave the named step and labels visible.
+		facts := WhereFacts{ReadAt: at, Lease: "pool-1", Copies: []WhereCopy{{
+			Name: "pool-1", Part: "api", Branch: strings.Repeat("\u754c", 255), Lease: true, State: "held",
+			Unsaved: &topology.LeaseUnsaved{}, HasHQ: true,
+			Change: &HQChangeLine{Number: 7, Labels: []string{"ready", "GitHub's checks failed", "Review build unavailable (" + strings.Repeat("\u754c", 300) + ")"}},
+			Step:   &EditStep{Action: "handed over", Head: "abcdef0", Number: 7}, DevServers: []topology.DevServerState{},
+		}}}
+		got := RenderWhere(facts)
+		if len(got) > WhereBudgetBytes || !utf8.ValidString(got) || !strings.Contains(got, "pool-1 (this conversation's):") || !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "GitHub's checks failed") || !strings.Contains(got, "Review build unavailable") {
+			t.Errorf("oversized named copy lost its step or labels: %d bytes\n%s", len(got), got)
+		}
+	}
 	t.Run("oversized server list", func(t *testing.T) {
 		t.Parallel()
 		servers := make([]topology.DevServerState, 40)
@@ -118,5 +130,128 @@ func TestWhere_WHSIZE_KeepsNamedCopyAndWholeLines(t *testing.T) {
 		if len(got) > WhereBudgetBytes || !strings.Contains(got, "pool-1 (this conversation's):") || !strings.Contains(got, "dev server api running") || !strings.HasSuffix(got, "more (zcp status)") {
 			t.Errorf("oversized server list: %d bytes\n%s", len(got), got)
 		}
+	})
+}
+
+type editPlanCase struct {
+	name   string
+	copies []EditCopy
+	change *EditChange
+	fresh  bool
+	want   EditStep
+}
+
+func runEditCases(t *testing.T, cases []editPlanCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := PlanEdit(tc.copies, tc.change, tc.fresh); got != tc.want {
+				t.Errorf("step = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: "acquire"} → return EditStep{Action: EditUnknown}
+func TestPlanEdit_WHAcquire_NoCopy(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{{name: "none", fresh: true, want: EditStep{Action: "acquire"}}})
+	text := RenderWhere(WhereFacts{EditSteps: true, Changes: []HQChangeLine{{Number: 7, Branch: "feature"}}})
+	if !strings.Contains(text, "change #7 feature: no working copy; step: acquire") {
+		t.Errorf("where should show the acquire step: %s", text)
+	}
+}
+
+// witness: internal/workflow/where.go | if workcopy := copies[0]; workcopy.Unread != "" { → if workcopy := copies[0]; workcopy.Unread == "" {
+func TestPlanEdit_WHCopyRead_UnreadCopy(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{
+		{name: "checkout", copies: []EditCopy{{Name: "pool-1", Unread: "checkout was not read"}}, fresh: true, want: EditStep{Action: EditUnknown, Copy: "pool-1", Reason: "checkout was not read"}},
+	})
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: EditUnknown, Reason: "HQ was not read"} → return EditStep{Action: "open change with a description"}
+func TestPlanEdit_WHFresh_LastHeardIsUnknown(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{{name: "last heard", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}, want: EditStep{Action: EditUnknown, Reason: "HQ was not read"}}})
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: "commit", Copy: workcopy.Name} → return EditStep{Action: "push", Copy: workcopy.Name}
+func TestPlanEdit_WHCommit_DirtyBeforePush(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{{name: "dirty and behind", copies: []EditCopy{{Name: "pool-1", Dirty: true, Ref: &topology.BranchRef{Head: "head", Published: true, Behind: 1}}}, fresh: true, want: EditStep{Action: "commit", Copy: "pool-1"}}})
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: "pull", Copy: workcopy.Name} → return EditStep{Action: "push", Copy: workcopy.Name}
+func TestPlanEdit_WHPull_BehindBranch(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{{name: "behind", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true, Behind: 2}}}, fresh: true, want: EditStep{Action: "pull", Copy: "pool-1"}}})
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: "pull then push", Copy: workcopy.Name} → return EditStep{Action: "pull", Copy: workcopy.Name}
+func TestPlanEdit_WHDiverged_PullBeforePush(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{
+		{name: "diverged", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true, Ahead: 1, Behind: 2}}}, fresh: true, want: EditStep{Action: "pull then push", Copy: "pool-1"}},
+		{name: "remote object missing", copies: []EditCopy{{Name: "pool-2", Ref: &topology.BranchRef{Head: "head", Published: true, HistoryUnknown: true}}}, fresh: true, want: EditStep{Action: "pull then push if needed", Copy: "pool-2"}},
+	})
+}
+
+// witness: internal/workflow/where.go | if !workcopy.Ref.Published || workcopy.Ref.Ahead > 0 { → if !workcopy.Ref.Published && workcopy.Ref.Ahead > 0 {
+func TestPlanEdit_WHPush_BranchRefNotOtherBranches(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{
+		{name: "unpublished", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head"}}}, fresh: true, want: EditStep{Action: "push", Copy: "pool-1"}},
+		{name: "ahead of own branch", copies: []EditCopy{{Name: "pool-2", Ref: &topology.BranchRef{Head: "head", Published: true, Ahead: 1}}}, fresh: true, want: EditStep{Action: "push", Copy: "pool-2"}},
+	})
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: "open change with a description", Head: copies[0].Ref.Head} → return EditStep{Action: "handed over", Head: copies[0].Ref.Head}
+func TestPlanEdit_WHOpen_PublishedWithoutChange(t *testing.T) {
+	t.Parallel()
+	runEditCases(t, []editPlanCase{{name: "no open change", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}, fresh: true, want: EditStep{Action: "open change with a description", Head: "head"}}})
+}
+
+// witness: internal/workflow/where.go | change.Head != copies[0].Ref.Head → change.Head == copies[0].Ref.Head
+func TestPlanEdit_WHHead_ChangeAtAnotherHead(t *testing.T) {
+	t.Parallel()
+	ready := true
+	runEditCases(t, []editPlanCase{{name: "other head", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "new", Published: true}}}, change: &EditChange{Number: 7, Head: "old", Ready: &ready}, fresh: true, want: EditStep{Action: EditUnknown, Reason: "HQ's change head or readiness was not read at this head"}}})
+}
+
+// witness: internal/workflow/where.go | if !*change.Ready { → if *change.Ready {
+func TestPlanEdit_WHDescribe_DraftAtHead(t *testing.T) {
+	t.Parallel()
+	ready := false
+	runEditCases(t, []editPlanCase{{name: "draft", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "describe change", Number: 7, Head: "head"}}})
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: "handed over", Head: change.Head, Number: change.Number} → return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
+func TestPlanEdit_WHHanded_ReadyAtHead(t *testing.T) {
+	t.Parallel()
+	ready := true
+	runEditCases(t, []editPlanCase{{name: "ready", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "handed over", Number: 7, Head: "head"}}})
+}
+
+// witness: internal/workflow/where.go | base += "step: " + worktree.Step.words() + "; " → base += ""
+func TestWhere_WHEditLine_ShowsStepAndReview(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	facts := WhereFacts{ReadAt: at, Lease: "pool-1", Copies: []WhereCopy{{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", Unsaved: &topology.LeaseUnsaved{}, HasHQ: true, Change: &HQChangeLine{Number: 7, Labels: []string{"Review build failed"}}, Step: &EditStep{Action: "handed over", Head: "abcdef0", Number: 7}, DevServers: []topology.DevServerState{}}}}
+	got := RenderWhere(facts)
+	if !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "Review build failed") {
+		t.Errorf("where omitted the step or review verdict: %s", got)
+	}
+}
+
+// witness: internal/workflow/where.go | return EditStep{Action: "read", Copy: workcopy.Name} → return EditStep{Action: "handed over", Copy: workcopy.Name}
+func TestPlanEdit_WHGroup_AllCopiesBeforeHandover(t *testing.T) {
+	t.Parallel()
+	ready := true
+	runEditCases(t, []editPlanCase{
+		{name: "other unread", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}, {Name: "pool-2", Unread: "checkout unread"}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "read", Copy: "pool-2"}},
+		{name: "own work remains actionable", copies: []EditCopy{{Name: "pool-1", Dirty: true, Ref: &topology.BranchRef{Head: "head", Published: true}}, {Name: "pool-2", Unread: "checkout unread"}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "commit", Copy: "pool-1"}},
+		{name: "other dirty", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}, {Name: "pool-2", Dirty: true, Ref: &topology.BranchRef{Head: "head", Published: true}}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "commit", Copy: "pool-2"}},
 	})
 }

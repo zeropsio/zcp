@@ -4,3 +4,16 @@
 - WH-UNREAD — A fact that was not read says not read with why, never clean, none or nothing. Breaks: a copy whose container did not answer reads clean and its unsaved work is released.
 - WH-STAGE — A stage's line says the name of the version it runs exactly as the platform holds it, and says when it runs none. Breaks: the agent rebuilds a stage that already runs its commit, or tests one that runs another branch.
 - WH-SIZE — The text never passes 1024 bytes: line 1 and the caller's copy stay, later whole lines give way to one line counting them. Breaks: every message of a Mate with many leases carries kilobytes, or the cut drops the caller's own copy.
+- WH-ACQUIRE — With no copy on a branch, the next edit step is to acquire one.
+- WH-COPYREAD — An unread copy or branch ref makes its next edit step unknown and names the missing read.
+- WH-FRESH — A last-heard or failed HQ read cannot establish a change or its absence for an edit.
+- WH-COMMIT — Uncommitted work is committed before pulling, pushing or describing the change.
+- WH-PULL — A copy behind its branch's remote ref pulls before handover.
+- WH-DIVERGED — A copy diverged from its branch pulls and then pushes; unknown remote history first needs a pull.
+- WH-PUSH — A branch missing on origin or with commits ahead of its own ref is pushed even if another branch has those commits.
+- WH-OPEN — A published, clean branch with no open change opens one with a description.
+- WH-HEAD — A change at another or unread head cannot establish handover of this copy.
+- WH-DESCRIBE — A draft at the published head is described before handover.
+- WH-HANDED — A ready change at the clean, published head is handed over.
+- WH-EDITLINE — A copy's where line carries its edit step and the Review build label for its change.
+- WH-GROUP — A branch is not handed over while another copy is unread or holds work, but a readable copy's work remains actionable.

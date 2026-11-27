@@ -40,3 +40,12 @@ type LeaseUnsaved struct {
 	// UnpushedCommits is how many commits are on no remote branch.
 	UnpushedCommits int `json:"unpushedCommits"`
 }
+
+// BranchRef compares a checkout's head to its own branch on origin. A
+// missing remote object leaves its history unknown until a pull fetches it.
+type BranchRef struct {
+	Head           string
+	Published      bool
+	Ahead, Behind  int
+	HistoryUnknown bool
+}

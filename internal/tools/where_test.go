@@ -47,7 +47,7 @@ func TestWhere_WGStanding_ListsOnlyOpenChanges(t *testing.T) {
 			if err != nil || line.Open != tc.open || string(wire) != tc.wire {
 				t.Fatalf("open = %v; wire = %s, err = %v; want %v and %s", line.Open, wire, err, tc.open, tc.wire)
 			}
-			got := renderWhereAnswer(workflow.StateEnvelope{}, nil, nil, nil, nil, []workflow.HQRepoChanges{{Repo: "app", Changes: []workflow.HQChangeLine{line}}}, runtime.Info{}, "", at)
+			got := renderWhereAnswer(workflow.StateEnvelope{}, nil, nil, nil, nil, []workflow.HQRepoChanges{{Repo: "app", Changes: []workflow.HQChangeLine{line}}}, runtime.Info{}, "", at, nil, nil)
 			if got != tc.want {
 				t.Fatalf("where = %q; want %q", got, tc.want)
 			}
@@ -160,5 +160,38 @@ func TestWhere_WGWire_PreservesExistingEnvelope(t *testing.T) {
 	want := `{"phase":"idle","environment":"local","idleScenario":"bootstrapped","project":{"id":"proj-1","name":"proj"},"services":[{"hostname":"appstage","typeVersion":"nodejs@22","runtimeClass":"dynamic","status":"ACTIVE","bootstrapped":true,"mode":"stage","closeDeployMode":"unset","gitPushState":"unconfigured","buildIntegration":"none","setupName":"app"},{"hostname":"devpool","typeVersion":"swarm@1","runtimeClass":"pool","status":"ACTIVE","bootstrapped":true,"closeDeployMode":"unset","gitPushState":"unconfigured","buildIntegration":"none","stages":[{"hostname":"appstage","setup":"app","part":"app"}]}],"leases":[{"alias":"devpool-3","pool":"devpool","branch":"feat-x","containerHostname":"node-id-3.runtime.devpool.zerops","state":"held","unverified":true,"acquiredAt":"2026-10-23T18:00:00Z","part":"app","stage":"appstage"}],"generated":"2026-11-25T12:00:00Z"}`
 	if !beforeReconcile || string(got) != want {
 		t.Fatalf("preview before reconciliation = %v; envelope = %s; want %s", beforeReconcile, got, want)
+	}
+}
+
+// witness: internal/tools/where.go | fresh := answered && answer.err == nil → fresh := answered || answer.err == nil
+func TestWhere_WGFresh_LastHeardCannotOpenChange(t *testing.T) {
+	t.Parallel()
+	facts := workflow.WhereFacts{Copies: []workflow.WhereCopy{{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", HasHQ: true}}}
+	branches := map[string]whereEvent{"pool-1": {value: "feature", head: "head"}}
+	refs := map[string]whereEvent{"pool-1": {ref: &topology.BranchRef{Head: "head", Published: true}}}
+	planWhereEdits(&facts, map[string]string{"pool-1": "app"}, branches, refs, nil, time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC))
+	if got := facts.Copies[0].Step; got == nil || got.Action != workflow.EditUnknown || got.Reason != "HQ was not read" || facts.Copies[0].HasHQ {
+		t.Errorf("last-heard absence was accepted: %+v", facts.Copies[0])
+	}
+}
+
+// witness: internal/tools/where.go | repos[other.Name] != repos[workcopy.Name] → repos[other.Name] == repos[workcopy.Name]
+func TestWhere_WGGroup_UnreadOtherCopyPreventsHandover(t *testing.T) {
+	t.Parallel()
+	ready := true
+	head := "head"
+	facts := workflow.WhereFacts{Copies: []workflow.WhereCopy{
+		{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", HasHQ: true},
+		{Name: "pool-2", Part: "api", Branch: "feature", Lease: true, State: "held", HasHQ: true},
+	}}
+	branches := map[string]whereEvent{"pool-1": {value: "feature", head: head}, "pool-2": {err: errors.New("offline")}}
+	refs := map[string]whereEvent{"pool-1": {ref: &topology.BranchRef{Head: head, Published: true}}}
+	hqReads := map[string]whereEvent{"pool-1": {change: &hq.Change{Number: 7, Head: &head, Ready: &ready}}}
+	planWhereEdits(&facts, map[string]string{"pool-1": "app", "pool-2": "app"}, branches, refs, hqReads, time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC))
+	if got := facts.Copies[0].Step; got == nil || got.Action != "read" || got.Copy != "pool-2" {
+		t.Errorf("readable copy falsely handed over: %+v", got)
+	}
+	if got := facts.Copies[1].Step; got == nil || got.Action != workflow.EditUnknown {
+		t.Errorf("unread copy = %+v, want unknown", got)
 	}
 }

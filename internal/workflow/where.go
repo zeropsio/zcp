@@ -14,13 +14,17 @@ import (
 // WhereBudgetBytes bounds the text placed in front of a turn's message.
 const WhereBudgetBytes = 1024
 
+// EditUnknown is a step whose inputs were not read.
+const EditUnknown = "unknown"
+
 // WhereFacts holds the facts read for a turn, including reasons for missed reads.
 type WhereFacts struct {
-	ReadAt  time.Time
-	Lease   string
-	Copies  []WhereCopy
-	Stages  []WhereStage
-	Changes []HQChangeLine // open changes without a working copy
+	ReadAt    time.Time
+	Lease     string
+	EditSteps bool
+	Copies    []WhereCopy
+	Stages    []WhereStage
+	Changes   []HQChangeLine // open changes without a working copy
 }
 
 // WhereCopy is one lease or non-pool dev half and what its readers found.
@@ -36,6 +40,102 @@ type WhereCopy struct {
 	ServersUnread      string
 	HasHQ              bool
 	Change             *HQChangeLine
+	Step               *EditStep
+	BranchRef          *topology.BranchRef
+}
+
+// EditCopy is the checkout and branch ref as read for this call.
+type EditCopy struct {
+	Name   string
+	Dirty  bool
+	Unread string
+	Ref    *topology.BranchRef
+}
+
+// EditChange is HQ's open change, as answered for this branch now.
+type EditChange struct {
+	Number int
+	Head   string
+	Ready  *bool
+}
+
+// EditStep is the next action and the copy that needs it.
+type EditStep struct {
+	Action string
+	Copy   string
+	Reason string
+	Head   string
+	Number int
+}
+
+// PlanEdit decides the next step from the copies' own reads and HQ's answer.
+func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
+	if len(copies) == 0 {
+		return EditStep{Action: "acquire"}
+	}
+	if workcopy := copies[0]; workcopy.Unread != "" {
+		return EditStep{Action: EditUnknown, Copy: workcopy.Name, Reason: workcopy.Unread}
+	} else if workcopy.Ref == nil {
+		return EditStep{Action: EditUnknown, Copy: workcopy.Name, Reason: "branch ref was not read"}
+	}
+	if !fresh {
+		return EditStep{Action: EditUnknown, Reason: "HQ was not read"}
+	}
+	for _, workcopy := range copies {
+		if workcopy.Unread == "" && workcopy.Ref != nil && workcopy.Dirty {
+			return EditStep{Action: "commit", Copy: workcopy.Name}
+		}
+	}
+	for _, workcopy := range copies {
+		if workcopy.Unread != "" || workcopy.Ref == nil {
+			continue
+		}
+		if workcopy.Ref.HistoryUnknown {
+			return EditStep{Action: "pull then push if needed", Copy: workcopy.Name}
+		}
+		if workcopy.Ref.Behind > 0 && workcopy.Ref.Ahead > 0 {
+			return EditStep{Action: "pull then push", Copy: workcopy.Name}
+		}
+		if workcopy.Ref.Behind > 0 {
+			return EditStep{Action: "pull", Copy: workcopy.Name}
+		}
+	}
+	for _, workcopy := range copies {
+		if workcopy.Unread != "" || workcopy.Ref == nil {
+			continue
+		}
+		if !workcopy.Ref.Published || workcopy.Ref.Ahead > 0 {
+			return EditStep{Action: "push", Copy: workcopy.Name}
+		}
+	}
+	for _, workcopy := range copies[1:] {
+		if workcopy.Unread != "" || workcopy.Ref == nil {
+			return EditStep{Action: "read", Copy: workcopy.Name}
+		}
+	}
+	if change == nil {
+		return EditStep{Action: "open change with a description", Head: copies[0].Ref.Head}
+	}
+	if change.Head == "" || change.Head != copies[0].Ref.Head || change.Ready == nil {
+		return EditStep{Action: EditUnknown, Reason: "HQ's change head or readiness was not read at this head"}
+	}
+	if !*change.Ready {
+		return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
+	}
+	return EditStep{Action: "handed over", Head: change.Head, Number: change.Number}
+}
+
+func (step EditStep) words() string {
+	if step.Action == EditUnknown {
+		return "unknown: " + step.Reason
+	}
+	if step.Action == "handed over" {
+		return fmt.Sprintf("handed over at %s (change #%d)", step.Head, step.Number)
+	}
+	if step.Copy != "" {
+		return step.Action + " in " + step.Copy
+	}
+	return step.Action
 }
 
 // WhereStage is a stage's active version, or the reason it was not read.
@@ -87,7 +187,11 @@ func RenderWhere(facts WhereFacts) string {
 		lines = append(lines, fmt.Sprintf("stage %s (part %s) %s", stage.Hostname, stage.Part, version))
 	}
 	for _, change := range changes {
-		lines = append(lines, fmt.Sprintf("change #%d %s%s: no working copy", change.Number, change.Branch, whereLabels(change.Labels)))
+		line := fmt.Sprintf("change #%d %s%s: no working copy", change.Number, change.Branch, whereLabels(change.Labels))
+		if facts.EditSteps {
+			line += "; step: " + PlanEdit(nil, nil, false).words()
+		}
+		lines = append(lines, line)
 	}
 	if len(strings.Join(lines, "\n")) <= WhereBudgetBytes {
 		return strings.Join(lines, "\n")
@@ -143,8 +247,15 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 		if worktree.Unsaved.FileCount > 0 {
 			unsaved = append(unsaved, fmt.Sprintf("%d files uncommitted", worktree.Unsaved.FileCount))
 		}
-		if worktree.Unsaved.UnpushedCommits > 0 {
-			unsaved = append(unsaved, fmt.Sprintf("%d commits unpushed", worktree.Unsaved.UnpushedCommits))
+		unpushed := worktree.Unsaved.UnpushedCommits
+		if worktree.Step != nil {
+			unpushed = 0
+			if worktree.BranchRef != nil {
+				unpushed = worktree.BranchRef.Ahead
+			}
+		}
+		if unpushed > 0 {
+			unsaved = append(unsaved, fmt.Sprintf("%d commits unpushed", unpushed))
 		}
 		if len(unsaved) > 0 {
 			work = strings.Join(unsaved, ", ")
@@ -155,16 +266,34 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 	if worktree.Unverified {
 		work += " (unverified)"
 	}
-	base := fmt.Sprintf("%s: part %s, branch %s, %s", name, worktree.Part, worktree.Branch, work)
+	base := fmt.Sprintf("%s: ", name)
+	if worktree.Step != nil {
+		base += "step: " + worktree.Step.words() + "; "
+	}
+	change := ""
 	if worktree.Branch != "main" && worktree.HasHQ {
 		switch {
 		case worktree.Change == nil:
-			base += ", no change yet"
+			change = "no change yet"
 		case worktree.Change.Landing() != "":
-			base += fmt.Sprintf(", change #%d %s", worktree.Change.Number, worktree.Change.Landing())
+			change = fmt.Sprintf("change #%d %s", worktree.Change.Number, worktree.Change.Landing())
 		default:
-			base += fmt.Sprintf(", change #%d%s", worktree.Change.Number, whereLabels(worktree.Change.Labels))
+			labels := worktree.Change.Labels
+			if limit > 0 {
+				labels = slices.Clone(labels)
+				for i := range labels {
+					labels[i] = whereClip(labels[i], 160)
+				}
+			}
+			change = fmt.Sprintf("change #%d%s", worktree.Change.Number, whereLabels(labels))
 		}
+	}
+	if worktree.Step != nil && change != "" {
+		base += change + "; "
+	}
+	base += fmt.Sprintf("part %s, branch %s, %s", worktree.Part, worktree.Branch, work)
+	if worktree.Step == nil && change != "" {
+		base += ", " + change
 	}
 	servers := make([]string, 0, len(worktree.DevServers)+1)
 	switch {

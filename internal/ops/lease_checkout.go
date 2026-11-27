@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -1212,4 +1213,88 @@ func saveWorkHint(onHQ bool, where string) string {
 		return "Commit it on a branch of your own in " + where + " and push that branch through zcp — `git checkout -b <branch>` first if you are on `main`, then `zcp git <alias> push -u origin <branch>`, as a plain `git push` there holds no credential for HQ; HQ refuses a push of `main`, of a branch another Mate's open change holds, and any force push (zcp does not commit for you)"
 	}
 	return "Commit and push it from " + where + " (zcp does not commit for you)"
+}
+
+// ReadEditHead reads the root checkout's actual commit, branch and worktree.
+// Every command must succeed: a failed status is not a clean checkout.
+func ReadEditHead(ctx context.Context, ssh SSHDeployer, alias, root string) (string, string, bool, error) {
+	git := leaseGitRead + shellQuote(root)
+	script := git + " rev-parse --verify " + shellQuote("HEAD^{commit}") + " && " +
+		git + " symbolic-ref -q --short HEAD && " +
+		"zcp_work_status=$(" + git + " status --porcelain) && " +
+		`if [ -n "$zcp_work_status" ]; then printf 'checkout-dirty\n'; else printf 'checkout-clean\n'; fi`
+	out, err := ssh.ExecSSH(ctx, alias, script)
+	if err != nil {
+		return "", "", false, fmt.Errorf("read checkout: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 3 || !leaseCommitRe.MatchString(lines[0]) || lines[1] == "" || (lines[2] != "checkout-clean" && lines[2] != "checkout-dirty") {
+		return "", "", false, errors.New("checkout answered an invalid head, branch or status")
+	}
+	return lines[0], lines[1], lines[2] == "checkout-dirty", nil
+}
+
+// ReadBranchRef compares this checkout to the branch's current origin ref.
+// zcp git provides the same credential relay as a person's git command; the
+// read does not fetch or change the checkout's remote-tracking refs.
+func ReadBranchRef(ctx context.Context, ssh SSHDeployer, alias, root, branch, head string) (topology.BranchRef, error) {
+	ref := topology.BranchRef{Head: head}
+	if !leaseCommitRe.MatchString(head) {
+		return ref, errors.New("checkout head was not read")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return ref, fmt.Errorf("find zcp: %w", err)
+	}
+	name := "refs/heads/" + branch
+	out, err := exec.CommandContext(ctx, executable, "git", alias, "ls-remote", "origin", name).Output()
+	if err != nil {
+		return ref, fmt.Errorf("branch remote ref was not read: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return ref, nil
+	}
+	if len(fields) != 2 || fields[1] != name || !leaseCommitRe.MatchString(fields[0]) {
+		return ref, errors.New("branch remote ref answered an invalid value")
+	}
+	ref.Published = true
+	remote := fields[0]
+	if remote == head {
+		return ref, nil
+	}
+	if ssh == nil {
+		return ref, errors.New("checkout history was not read")
+	}
+	// A missing object in a partial clone otherwise causes cat-file to fetch
+	// it. Refuse the comparison if this Git cannot disable lazy fetching.
+	git := "GIT_OPTIONAL_LOCKS=0 git --no-lazy-fetch -C " + shellQuote(root)
+	script := "git --no-lazy-fetch --version >/dev/null && if ! " + git + " cat-file -e " + shellQuote(remote+"^{commit}") + " 2>/dev/null; then printf 'missing\n'; " +
+		"elif " + git + " merge-base --is-ancestor " + shellQuote(remote) + " " + shellQuote(head) + "; then printf 'ahead '; " +
+		git + " rev-list --count " + shellQuote(remote+".."+head) + "; else " +
+		git + " rev-list --left-right --count " + shellQuote(head+"..."+remote) + "; fi"
+	out, err = ssh.ExecSSH(ctx, alias, script)
+	if err != nil {
+		return ref, fmt.Errorf("checkout history was not read: %w", err)
+	}
+	fields = strings.Fields(string(out))
+	if len(fields) == 1 && fields[0] == "missing" {
+		ref.HistoryUnknown = true
+		return ref, nil
+	}
+	if len(fields) != 2 {
+		return ref, errors.New("checkout history answered an invalid value")
+	}
+	if fields[0] == "ahead" {
+		ref.Ahead, err = strconv.Atoi(fields[1])
+	} else {
+		ref.Ahead, err = strconv.Atoi(fields[0])
+		if err == nil {
+			ref.Behind, err = strconv.Atoi(fields[1])
+		}
+	}
+	if err != nil || ref.Ahead < 0 || ref.Behind < 0 {
+		return ref, errors.New("checkout history answered invalid counts")
+	}
+	return ref, nil
 }

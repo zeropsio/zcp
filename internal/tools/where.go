@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ const (
 
 type whereEvent struct {
 	kind, host, value string
+	head, repo, root  string
+	ref               *topology.BranchRef
+	change            *hq.Change
 	envelope          workflow.StateEnvelope
 	ids               map[string]string
 	changes           []workflow.HQRepoChanges
@@ -51,6 +55,8 @@ type whereGatherer struct {
 	servers     map[string]ops.DevServerRead
 	work        map[string]ops.DevServerRead
 	changes     []workflow.HQRepoChanges
+	refs        map[string]whereEvent
+	hqReads     map[string]whereEvent
 }
 
 // WhereAnswer reads the facts for a turn without changing a checkout or a
@@ -64,6 +70,7 @@ func WhereAnswer(ctx context.Context, deps ops.LeaseDeps, rt runtime.Info, alias
 		events: make(chan whereEvent, 256), pending: 2,
 		versions: map[string]whereEvent{}, branches: map[string]whereEvent{},
 		servers: map[string]ops.DevServerRead{}, work: map[string]ops.DevServerRead{},
+		refs: map[string]whereEvent{}, hqReads: map[string]whereEvent{},
 	}
 	g.start(ctx)
 	for g.pending > 0 {
@@ -127,7 +134,7 @@ func (g *whereGatherer) atDeadline(ctx context.Context) (string, error) {
 }
 
 func (g *whereGatherer) render() string {
-	return renderWhereAnswer(g.env, g.versions, g.branches, g.servers, g.work, g.changes, g.rt, g.alias, g.now)
+	return renderWhereAnswer(g.env, g.versions, g.branches, g.servers, g.work, g.changes, g.rt, g.alias, g.now, g.refs, g.hqReads)
 }
 
 func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
@@ -142,7 +149,7 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 				g.startVersion(ctx, host, event.ids[host])
 			}
 			if !service.DevIsPool {
-				g.startDev(ctx, service.Hostname)
+				g.startDev(ctx, service.Hostname, service.HQRepo)
 			}
 		}
 	case "envelope":
@@ -154,6 +161,10 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 		for _, lease := range g.env.LeaseList() {
 			if ctx.Err() == nil && lease.State == ops.LeaseStateHeld && !lease.Unverified {
 				g.startStatus(ctx, lease.Alias, true)
+				_, repo, _ := hq.RepoOfURL(hqAddress(g.rt), lease.Repo)
+				if g.rt.MateEnabled && repo != "" {
+					g.startHead(ctx, lease.Alias, ops.LeaseWorkDir, repo)
+				}
 			}
 		}
 	case "changes":
@@ -165,6 +176,15 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 	case "branch":
 		g.pending--
 		g.branches[event.host] = event
+		if event.err == nil && g.rt.MateEnabled && event.repo != "" && event.value != "" && event.value != hqBase {
+			g.startEditReads(ctx, event)
+		}
+	case "ref":
+		g.pending--
+		g.refs[event.host] = event
+	case "hq":
+		g.pending--
+		g.hqReads[event.host] = event
 	case "servers":
 		g.pending--
 		g.servers[event.host] = event.read
@@ -194,29 +214,63 @@ func (g *whereGatherer) startVersion(ctx context.Context, host, id string) {
 	}()
 }
 
-func (g *whereGatherer) startDev(ctx context.Context, host string) {
+func (g *whereGatherer) startDev(ctx context.Context, host, repo string) {
 	if ctx.Err() != nil {
 		return
 	}
 	g.startStatus(ctx, host, false)
+	root := supervisorRoot(g.deps.StateDir, host)
+	if root == "" {
+		root = ops.DevRepoRoot
+	}
+	g.startHead(ctx, host, root, repo)
+}
+
+// startHead reads the actual root checkout, including its branch and commit.
+func (g *whereGatherer) startHead(ctx context.Context, host, root, repo string) {
 	if g.deps.SSH == nil {
 		g.branches[host] = whereEvent{err: fmt.Errorf("no SSH reader")}
 		return
 	}
 	g.pending++
-	root := supervisorRoot(g.deps.StateDir, host)
-	if root == "" {
-		root = ops.DevRepoRoot
-	}
 	go func() {
-		_, branch, dirty, ok, err := git.HeadStatus(ctx, git.SSHRunner{Executor: g.deps.SSH, Hostname: host}, root)
+		var head, branch string
+		var dirty bool
+		var err error
+		if g.rt.MateEnabled && repo != "" {
+			head, branch, dirty, err = ops.ReadEditHead(ctx, g.deps.SSH, host, root)
+		} else {
+			var ok bool
+			head, branch, dirty, ok, err = git.HeadStatus(ctx, git.SSHRunner{Executor: g.deps.SSH, Hostname: host}, root)
+			if !ok && err == nil {
+				err = errors.New("checkout did not answer")
+			}
+		}
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		if !ok && err == nil {
-			err = fmt.Errorf("checkout did not answer")
+		g.send(ctx, whereEvent{kind: "branch", host: host, value: branch, head: head, repo: repo, root: root, dirty: dirty, err: err})
+	}()
+}
+
+// startEditReads asks both owners once, in parallel under where's deadline.
+func (g *whereGatherer) startEditReads(ctx context.Context, workcopy whereEvent) {
+	if ctx.Err() != nil {
+		return
+	}
+	g.pending += 2
+	go func() {
+		ref, err := ops.ReadBranchRef(ctx, g.deps.SSH, workcopy.host, workcopy.root, workcopy.value, workcopy.head)
+		g.send(ctx, whereEvent{kind: "ref", host: workcopy.host, ref: &ref, err: err})
+	}()
+	go func() {
+		client, ok := openHQ(http.DefaultClient, g.rt)
+		if !ok {
+			g.send(ctx, whereEvent{kind: "hq", host: workcopy.host, err: errors.New("HQ was not read")})
+			return
 		}
-		g.send(ctx, whereEvent{kind: "branch", host: host, value: branch, dirty: dirty, err: err})
+		change, err := client.OpenChangeOnBranch(ctx, workcopy.repo, workcopy.value)
+		g.send(ctx, whereEvent{kind: "hq", host: workcopy.host, change: change, err: err})
 	}()
 }
 
@@ -254,13 +308,13 @@ func (g *whereGatherer) waitRead(ctx context.Context, kind, host string, receipt
 	}
 }
 
-func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string]whereEvent, servers, work map[string]ops.DevServerRead, changes []workflow.HQRepoChanges, rt runtime.Info, alias string, now time.Time) string {
+func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string]whereEvent, servers, work map[string]ops.DevServerRead, changes []workflow.HQRepoChanges, rt runtime.Info, alias string, now time.Time, refs, hqReads map[string]whereEvent) string {
 	serverStates := make(map[string][]topology.DevServerState, len(servers))
 	for host, read := range servers {
 		serverStates[host] = read.Servers
 	}
 	env = env.WithParts(serverStates)
-	facts := workflow.WhereFacts{ReadAt: now, Lease: alias}
+	facts := workflow.WhereFacts{ReadAt: now, Lease: alias, EditSteps: rt.MateEnabled}
 	repos := map[string]string{}
 	for _, service := range env.Services {
 		if len(service.WireStages) == 0 {
@@ -291,7 +345,7 @@ func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string
 		workingCopy := workflow.WhereCopy{Name: service.Hostname, Part: service.WireStages[0].Part, Branch: "not read", HasHQ: service.HQRepo != ""}
 		if got, ok := branches[service.Hostname]; ok {
 			if got.err != nil {
-				workingCopy.WorkUnread, workingCopy.HasHQ = "checkout did not answer", false
+				workingCopy.WorkUnread = "checkout did not answer"
 				if errors.Is(got.err, context.DeadlineExceeded) || errors.Is(got.err, context.Canceled) {
 					workingCopy.WorkUnread = whereNoAnswer
 				}
@@ -299,7 +353,7 @@ func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string
 				workingCopy.Branch, workingCopy.Dirty = got.value, got.dirty
 			}
 		} else {
-			workingCopy.WorkUnread, workingCopy.HasHQ = whereNoAnswer, false
+			workingCopy.WorkUnread = whereNoAnswer
 		}
 		workingCopy.DevServers, workingCopy.ServersUnread = whereServers(servers, service.Hostname)
 		facts.Copies = append(facts.Copies, workingCopy)
@@ -332,7 +386,9 @@ func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string
 			for i := range facts.Copies {
 				workingCopy := &facts.Copies[i]
 				if repos[workingCopy.Name] == repo.Repo && workingCopy.Branch == change.Branch && change.Branch != "" {
-					workingCopy.Change = &change
+					if !rt.MateEnabled || !workingCopy.HasHQ {
+						workingCopy.Change = &change
+					}
 					held = true
 				}
 			}
@@ -341,7 +397,92 @@ func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string
 			}
 		}
 	}
+	if rt.MateEnabled {
+		planWhereEdits(&facts, repos, branches, refs, hqReads, now)
+	}
 	return workflow.RenderWhere(facts)
+}
+
+// planWhereEdits keeps each copy's own reads separate; no last-heard HQ
+// state can establish the change or its absence for this call.
+func planWhereEdits(facts *workflow.WhereFacts, repos map[string]string, branches, refs, hqReads map[string]whereEvent, now time.Time) {
+	inputs := make(map[string]workflow.EditCopy, len(facts.Copies))
+	for i := range facts.Copies {
+		workcopy := &facts.Copies[i]
+		if !workcopy.HasHQ {
+			continue
+		}
+		input := workflow.EditCopy{Name: workcopy.Name}
+		branch, read := branches[workcopy.Name]
+		if workcopy.Branch == hqBase && read && branch.err == nil && branch.value == hqBase {
+			continue
+		}
+		switch {
+		case workcopy.Unverified:
+			input.Unread = "lease was not verified"
+		case workcopy.Lease && workcopy.State != ops.LeaseStateHeld:
+			input.Unread = "lease checkout was not read"
+		case !read || branch.err != nil:
+			input.Unread = "checkout head and branch were not read"
+		case branch.value == "":
+			input.Unread = "checkout is not on a branch"
+		case workcopy.Lease && branch.value != workcopy.Branch:
+			input.Unread = "checkout branch differs from the lease"
+		case workcopy.WorkUnread != "":
+			input.Unread = "working copy was not read"
+		default:
+			input.Dirty = branch.dirty
+			ref, found := refs[workcopy.Name]
+			if found && ref.err == nil {
+				input.Ref = ref.ref
+			} else {
+				input.Unread = "branch remote ref or checkout history was not read"
+			}
+		}
+		workcopy.BranchRef = input.Ref
+		inputs[workcopy.Name] = input
+	}
+	for i := range facts.Copies {
+		workcopy := &facts.Copies[i]
+		input, planned := inputs[workcopy.Name]
+		if !planned {
+			continue
+		}
+		answer, answered := hqReads[workcopy.Name]
+		fresh := answered && answer.err == nil
+		var change *workflow.EditChange
+		if fresh && answer.change != nil {
+			current := answer.change
+			head := ""
+			if current.Head != nil {
+				head = *current.Head
+			}
+			change = &workflow.EditChange{Number: current.Number, Head: head, Ready: current.Ready}
+			told := workflow.HQChangeTold{Ready: current.Ready, Mergeability: current.Mergeability, Behind: current.Behind}
+			if current.PullRequest != nil {
+				told.Checks = current.PullRequest.Checks
+			}
+			reviewBuildAsTold(&told, current.ReviewBuild, current.ChecksGivenUp)
+			workcopy.Change = &workflow.HQChangeLine{Number: current.Number, Branch: current.Branch, Labels: changeLabels(&told, now), Open: true}
+		} else if !fresh {
+			workcopy.HasHQ = false // The last-heard state cannot establish absence.
+		}
+		group := []workflow.EditCopy{input}
+		if workcopy.Lease {
+			for _, other := range facts.Copies {
+				if !other.Lease || other.Name == workcopy.Name || repos[other.Name] != repos[workcopy.Name] || other.Branch != workcopy.Branch {
+					continue
+				}
+				otherInput, exists := inputs[other.Name]
+				if !exists {
+					otherInput = workflow.EditCopy{Name: other.Name, Unread: "checkout was not read"}
+				}
+				group = append(group, otherInput)
+			}
+		}
+		step := workflow.PlanEdit(group, change, fresh)
+		workcopy.Step = &step
+	}
 }
 
 func whereServers(reads map[string]ops.DevServerRead, host string) ([]topology.DevServerState, string) {
