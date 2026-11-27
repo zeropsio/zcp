@@ -65,7 +65,7 @@ type Status struct {
 	Copies    *CopyStatus   `json:"copies,omitempty"`
 }
 
-// CopyStatus is the Mate-wide last observation of its working copies. A nil
+// CopyStatus is the Mate-wide projection of its working copies. A nil
 // list has not been read; a non-nil empty list was read and has no entries.
 type CopyStatus struct {
 	Leases      []LeaseCopyStatus `json:"leases"`
@@ -80,6 +80,8 @@ type LeaseCopyStatus struct {
 	Branch            string                     `json:"branch"`
 	Repo              string                     `json:"repo,omitempty"`
 	AcquiredAt        string                     `json:"acquiredAt"`
+	State             CopyState                  `json:"state"`
+	StateAt           string                     `json:"stateAt"`
 	DevServers        *[]topology.DevServerState `json:"devServers,omitempty"`
 	DevServersReadAt  string                     `json:"devServersReadAt,omitempty"`
 }
@@ -87,6 +89,8 @@ type LeaseCopyStatus struct {
 // DevCopyStatus is a classic dev half and its last observed checkout.
 type DevCopyStatus struct {
 	Hostname         string                     `json:"hostname"`
+	State            CopyState                  `json:"state"`
+	StateAt          string                     `json:"stateAt"`
 	Branch           *string                    `json:"branch,omitempty"`
 	BranchReadAt     string                     `json:"branchReadAt,omitempty"`
 	DevServers       *[]topology.DevServerState `json:"devServers,omitempty"`
