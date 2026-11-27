@@ -1324,6 +1324,11 @@ func runningSiblings(st devsup.State, name string) []string {
 // has a port, probes it once from inside the container. Without a name on a
 // dev service with several servers, none named after it, it reports each.
 func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds *DevServers) (*DevServerResult, error) {
+	if p.Name == "" && ds.DeclarationErr == nil && len(ds.Servers()) == 0 && len(ds.State.Servers) == 0 {
+		result := newResult(devServerActionStatus, p.Hostname, "")
+		result.Message = fmt.Sprintf("no preview server declared for %s", p.Hostname)
+		return result, nil
+	}
 	if _, named := ds.State.Servers[p.Hostname]; p.Name == "" && !ds.DeclarationExists && len(ds.State.Servers) > 0 && !named {
 		return statusSupervisedServers(ctx, ssh, p, ds)
 	}

@@ -15,6 +15,71 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 )
 
+// witness: internal/ops/dev_server.go | len(ds.Servers()) == 0 → len(ds.Servers()) > 0
+func TestDevServer_DSNoPreview_EmptyPartIsNotAnError(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name      string
+		params    DevServerParams
+		servers   DevServers
+		wantEmpty bool
+	}{
+		{
+			name:      "empty lease declaration",
+			params:    DevServerParams{Hostname: "apppool-3"},
+			servers:   DevServers{Hostname: "apppool-3", Service: "apppool", DeclarationExists: true},
+			wantEmpty: true,
+		},
+		{
+			name:      "missing declaration",
+			params:    DevServerParams{Hostname: "appdev"},
+			servers:   DevServers{Hostname: "appdev"},
+			wantEmpty: true,
+		},
+		{
+			name:      "another part declared",
+			params:    DevServerParams{Hostname: "webpool-2"},
+			servers:   DevServers{Hostname: "webpool-2", Service: "webpool", DeclarationExists: true, Declared: devsup.Declaration{Servers: []devsup.Server{{Name: "api", Service: "apipool"}}}},
+			wantEmpty: true,
+		},
+		{
+			name:    "explicit unknown name",
+			params:  DevServerParams{Hostname: "apppool-3", Name: "web"},
+			servers: DevServers{Hostname: "apppool-3", DeclarationExists: true},
+		},
+		{
+			name:    "invalid declaration",
+			params:  DevServerParams{Hostname: "apppool-3"},
+			servers: DevServers{Hostname: "apppool-3", DeclarationExists: true, DeclarationErr: errors.New("invalid declaration")},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := statusDevServer(context.Background(), nil, tt.params, &tt.servers)
+			if !tt.wantEmpty {
+				if err == nil {
+					t.Errorf("status = %+v, want an error", got)
+				}
+				return
+			}
+			if err != nil || got == nil {
+				t.Fatalf("status = %+v, error = %v, want an empty status", got, err)
+			}
+			if got.Running || got.Message != "no preview server declared for "+tt.params.Hostname {
+				t.Errorf("status = %+v, want no preview server declared for %s", got, tt.params.Hostname)
+			}
+		})
+	}
+	t.Run("status action", func(t *testing.T) {
+		t.Parallel()
+		c := devservertest.NewSupervised(`{"version":1,"servers":[]}`)
+		got := runDevServer(t, c, DevServerParams{Action: "status", Hostname: "appdev"})
+		if got.Running || got.Message != "no preview server declared for appdev" {
+			t.Errorf("status = %+v, want no preview server declared for appdev", got)
+		}
+	})
+}
+
 // witness: internal/ops/dev_server.go | operation == devServerActionStatus → operation != devServerActionStatus
 func TestDevServer_DSActionNoSup_SupervisorLossKeepsTheActionError(t *testing.T) {
 	t.Parallel()
