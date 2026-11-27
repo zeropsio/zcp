@@ -157,7 +157,7 @@ Edge case: plan generates `[postgresql@16]` with no runtimes.
 
 ### 2.4 Route `resume` — Resume interrupted session
 
-**Precondition**: the agent resumes a dead-PID bootstrap session explicitly with its `sessionId`.
+**Precondition**: the agent resumes a dead-PID bootstrap session explicitly with its `sessionId` (standalone may recover a sole interrupted session at startup).
 
 - **Plan.Primary** = `{iterate bootstrap at the step where the previous session stopped, rationale: "Continue the prior bootstrap at its last completed step."}`
 - **Atoms**: `bootstrap-resume`.

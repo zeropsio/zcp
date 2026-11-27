@@ -172,7 +172,7 @@ func TestPruneDeadSessions(t *testing.T) {
 			input := make([]SessionEntry, len(tt.input))
 			copy(input, tt.input)
 
-			got := pruneDeadSessions(input)
+			got := pruneDeadSessions(input, false)
 			gotIDs := make([]string, 0, len(got))
 			for _, s := range got {
 				gotIDs = append(gotIDs, s.SessionID)

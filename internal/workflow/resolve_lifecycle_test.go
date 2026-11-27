@@ -25,7 +25,7 @@ func TestResolveLifecycle_Precedence(t *testing.T) {
 	})
 	t.Run("infra-first: open ws + bootstrap registered -> FocusBootstrap", func(t *testing.T) {
 		dir := t.TempDir()
-		if _, err := InitSessionAtomic(dir, "proj", WorkflowBootstrap, "add redis"); err != nil {
+		if _, err := InitSessionAtomic(dir, "proj", WorkflowBootstrap, "add redis", false); err != nil {
 			t.Fatalf("InitSessionAtomic: %v", err)
 		}
 		ws := NewWorkSession("proj", "local", "task", []string{"web"})
@@ -37,7 +37,7 @@ func TestResolveLifecycle_Precedence(t *testing.T) {
 	})
 	t.Run("stale v2 recipe entry -> not an infra focus", func(t *testing.T) {
 		dir := t.TempDir()
-		if _, err := InitSessionAtomic(dir, "proj", "recipe", "author"); err != nil {
+		if _, err := InitSessionAtomic(dir, "proj", "recipe", "author", false); err != nil {
 			t.Fatalf("InitSessionAtomic: %v", err)
 		}
 		if got := ResolveLifecycle(dir, nil); got != FocusIdle {

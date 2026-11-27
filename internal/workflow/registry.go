@@ -309,13 +309,13 @@ func cleanOrphanedFiles(stateDir string, liveIDs map[string]bool) {
 	}
 }
 
-// pruneDeadSessions keeps bootstrap sessions for explicit resume, and removes
-// other entries with dead PIDs or entries older than 24h.
-func pruneDeadSessions(sessions []SessionEntry) []SessionEntry {
+// pruneDeadSessions keeps a Mate's bootstrap sessions for explicit resume and
+// removes other entries with dead PIDs or entries older than 24h.
+func pruneDeadSessions(sessions []SessionEntry, mate bool) []SessionEntry {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	alive := sessions[:0]
 	for _, s := range sessions {
-		if s.Workflow == WorkflowBootstrap {
+		if mate && s.Workflow == WorkflowBootstrap {
 			alive = append(alive, s)
 			continue
 		}

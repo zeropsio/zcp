@@ -430,7 +430,7 @@ iterate (the `develop` 3-tier deploy ladder caps at 5 attempts).
 
 ### 2.2 Exclusivity
 
-Per-service, not global. Multiple bootstraps coexist for different services. Same-hostname lock: incomplete ServiceMeta from alive session blocks new bootstrap for that hostname. Dead PID → auto-unlock.
+Per-service, not global. Multiple bootstraps coexist for different services. An incomplete ServiceMeta locks its hostname while its session exists in a Mate; standalone holds the lock while the process lives.
 
 ### 2.3 Step 1: Discover
 
@@ -1217,8 +1217,8 @@ engine boot, never claimed.
 
 `.zcp/state/registry.json` — tracks both infrastructure sessions
 (`SessionID` = 16-hex) and work sessions (`SessionID` = `work-{pid}`),
-with file lock via `.registry.lock`. Auto-prunes dead PIDs and sessions
->24h old on new-session creation. This is the single source of session
+with file lock via `.registry.lock`. New-session creation keeps a Mate's
+bootstrap sessions and prunes other dead or >24h-old entries. This is the single source of session
 ownership; no other state files track active sessions.
 
 ### 7.4 Actions

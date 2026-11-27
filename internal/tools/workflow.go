@@ -753,12 +753,15 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 }
 
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	// The edit variant must be decided before consulting any session.
-	if input.Workflow == workflowDevelop {
+	// In a Mate, decide the edit variant before consulting any session.
+	if rt.MateEnabled && input.Workflow == workflowDevelop {
 		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer)
 	}
 	if result := activeWorkflowStartError(engine, input.Workflow); result != nil {
 		return result, nil, nil
+	}
+	if input.Workflow == workflowDevelop {
+		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer)
 	}
 
 	// Bootstrap conductor — discovery + commit split.

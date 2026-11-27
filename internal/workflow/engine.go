@@ -31,13 +31,14 @@ import (
 // atomic rename; torn reads are not possible and the worst concurrent-
 // write outcome is a superseded state file that `reset` clears.
 //
-// Immutable fields (stateDir, environment, knowledge, recipeCorpus) are
+// Immutable fields (stateDir, environment, mate, knowledge, recipeCorpus) are
 // set in NewEngine and never mutated afterwards.
 type Engine struct {
 	stateDir       string
 	sessionID      string
 	completedState *WorkflowState // holds final state after session file is cleaned up
 	environment    Environment
+	mate           bool
 	knowledge      knowledge.Provider
 	// knowledgeCache caches zerops_knowledge query results for the session
 	// lifetime. sync.Map because concurrent map read+write would panic the
@@ -55,16 +56,22 @@ type Engine struct {
 	recipeCorpus *StoreRecipeCorpus
 }
 
-// NewEngine creates a new workflow engine rooted at baseDir.
-//
-// At boot, migrate legacy state and clean dead processes' work sessions.
-// Bootstrap sessions remain available for explicit resume: the launching
-// environment does not identify the conversation that owns them.
+// NewEngine creates an engine for a standalone environment.
 func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
+	return newEngine(baseDir, env, kp, false)
+}
+
+// NewMateEngine creates an engine whose bootstrap sessions belong to conversations.
+func NewMateEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
+	return newEngine(baseDir, env, kp, true)
+}
+
+func newEngine(baseDir string, env Environment, kp knowledge.Provider, mate bool) *Engine {
 	e := &Engine{
 		stateDir:    baseDir,
 		environment: env,
 		knowledge:   kp,
+		mate:        mate,
 	}
 	if store, ok := kp.(*knowledge.Store); ok {
 		e.recipeCorpus = NewStoreRecipeCorpus(store)
@@ -73,6 +80,25 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 	MigrateRemoveLegacyWorkState(baseDir)
 	CleanStaleWorkSessions(baseDir)
 
+	// A Mate launch does not identify the conversation. Only a standalone
+	// engine can safely recover its single interrupted bootstrap at startup.
+	if !mate {
+		sessions, _ := ListSessions(baseDir)
+		var candidates []SessionEntry
+		for _, s := range sessions {
+			if s.Workflow == WorkflowBootstrap && s.PID != os.Getpid() && !isProcessAlive(s.PID, s.StartTime) {
+				candidates = append(candidates, s)
+			}
+		}
+		if len(candidates) == 1 {
+			c := candidates[0]
+			if state, err := LoadSessionByID(baseDir, c.SessionID); err == nil {
+				if err := e.claimSession(c.SessionID, state); err == nil {
+					fmt.Fprintf(os.Stderr, "zcp: auto-recovered session %s from previous process\n", c.SessionID)
+				}
+			}
+		}
+	}
 	return e
 }
 
@@ -178,7 +204,7 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 		}
 	}
 
-	state, err := InitSessionAtomic(e.stateDir, projectID, workflowName, intent)
+	state, err := InitSessionAtomic(e.stateDir, projectID, workflowName, intent, e.mate)
 	if err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
@@ -640,9 +666,7 @@ func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []Bootstr
 	// or mode-check here. The old recipe pre-flight + ValidateBootstrapRecipeMode
 	// were the slot-matcher that rejected simple/cross-type recipes; deleted.)
 
-	// Per-hostname lock: reject if any target hostname has an incomplete meta
-	// from a DIFFERENT session that is still alive. Orphaned metas (dead session)
-	// are safe to overwrite — the new bootstrap takes ownership.
+	// Per-hostname lock: a different unfinished session can own a target.
 	if err := e.checkHostnameLocks(targets); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}
@@ -808,8 +832,8 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 }
 
 // checkHostnameLocks verifies that no target hostname is locked by another active session.
-// A hostname is locked when it has an incomplete ServiceMeta from a different session
-// whose process is still alive. Orphaned metas (dead/missing session) are unlocked.
+// A hostname with an incomplete ServiceMeta is locked while its session exists
+// in a Mate, or while its process is alive in a standalone environment.
 // A planned stage another complete pair records as its stage is refused too.
 func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 	sessions, _ := ListSessions(e.stateDir)
@@ -842,14 +866,13 @@ func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
 			if meta.BootstrapSession == e.sessionID {
 				continue // our own session = not locked
 			}
-			// Incomplete meta from another session — check if alive (pair-aware
-			// (pid,startTime), so a recycled PID doesn't read as a live locker).
+			// A Mate's unfinished session holds the hostname across process exits.
 			s, inRegistry := sessionByID[meta.BootstrapSession]
-			if inRegistry && isProcessAlive(s.PID, s.StartTime) {
+			if inRegistry && (e.mate || isProcessAlive(s.PID, s.StartTime)) {
 				return fmt.Errorf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
 					hostname, meta.BootstrapSession, s.PID)
 			}
-			// Dead/missing session = orphaned meta, safe to overwrite.
+			// A missing session, or a dead standalone session, leaves an orphan.
 		}
 	}
 	return nil

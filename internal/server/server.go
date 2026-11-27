@@ -390,6 +390,14 @@ func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir 
 	tools.RegisterMateMessages(s.server, httpClient, s.rtInfo)
 }
 
+func (s *Server) newWorkflowEngine(stateDir string) *workflow.Engine {
+	env := workflow.DetectEnvironment(s.rtInfo)
+	if s.rtInfo.MateEnabled {
+		return workflow.NewMateEngine(stateDir, env, s.store)
+	}
+	return workflow.NewEngine(stateDir, env, s.store)
+}
+
 func (s *Server) registerTools() {
 	projectID := s.authInfo.ProjectID
 	// Host-derive the schema fetch from the resolved ZCP_API_HOST (authInfo is
@@ -406,8 +414,7 @@ func (s *Server) registerTools() {
 	)
 	if cwd, err := os.Getwd(); err == nil {
 		stateDir = filepath.Join(cwd, ".zcp", "state")
-		env := workflow.DetectEnvironment(s.rtInfo)
-		wfEngine = workflow.NewEngine(stateDir, env, s.store)
+		wfEngine = s.newWorkflowEngine(stateDir)
 	}
 
 	// Knowledge tracker shared between knowledge and workflow tools.

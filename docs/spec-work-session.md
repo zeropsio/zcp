@@ -85,8 +85,9 @@ more confusion than it resolves.
    `zerops_workflow action="status"` as the canonical recovery call, so
    even a freshly-compacted LLM has a single, deterministic re-orientation
    step.
-6. **Survives process restart per layer semantics.** Bootstrap is resumed
-   explicitly. Work sessions are per-process — restart = fresh start.
+6. **Survives process restart per layer semantics.** A Mate resumes bootstrap
+   explicitly; standalone recovers a sole interrupted bootstrap. Work sessions
+   are per-process — restart = fresh start.
 7. **Advisory, not enforcing.** Work Session informs the LLM; it does not
    gate tool calls. Hard gates stay only where they belong (bootstrap step
    checkers, hostname locks).
@@ -202,8 +203,9 @@ type SessionEntry struct {
 
 **Work sessions register with `Workflow: "work"` and `SessionID: "work-{pid}"`.**
 
-A new process does not claim a bootstrap without a conversation identity;
-the agent resumes the interrupted session explicitly.
+In a Mate a new process does not claim a bootstrap without a conversation
+identity; the agent resumes it explicitly. Standalone recovers a sole dead
+bootstrap session at startup.
 
 **Benefits:**
 - Zero chance of `active_session` file collision between parallel instances
@@ -650,7 +652,7 @@ none is architecturally available under the current MCP protocol.
 | Entity | Survives PID restart? | Mechanism |
 |--------|----------------------|-----------|
 | ServiceMeta | Yes | File on disk, read on every call |
-| Bootstrap session | Yes | Explicit resume |
+| Bootstrap session | Yes | Explicit resume in a Mate; standalone recovers a sole interrupted session |
 | Work session | **No — by design** | Orphan cleanup. Work survives in git/filesystem. |
 
 This is an explicit design choice. Work sessions are per-LLM-task. Trying to

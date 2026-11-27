@@ -15,7 +15,7 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// witness: internal/tools/workflow.go | return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer) → if result := activeWorkflowStartError(engine, input.Workflow); result != nil { return result, nil, nil }; return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer)
+// witness: internal/tools/workflow.go | if rt.MateEnabled && input.Workflow == workflowDevelop { → if false && rt.MateEnabled && input.Workflow == workflowDevelop {
 func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -23,12 +23,14 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 		scope       string
 		activeHere  bool
 		foreignLive bool
+		mate        bool
 		wantError   bool
 	}{
-		{"other conversation's interrupted bootstrap", "dev", false, false, false},
-		{"other conversation's live bootstrap", "dev", false, true, false},
-		{"own active bootstrap and edit", "dev", true, false, false},
-		{"own active bootstrap and deploy", "stage", true, false, true},
+		{"other conversation's interrupted bootstrap", "dev", false, false, true, false},
+		{"other conversation's live bootstrap", "dev", false, true, true, false},
+		{"own active bootstrap and edit", "dev", true, false, true, false},
+		{"own active bootstrap and deploy", "stage", true, false, true, true},
+		{"standalone active bootstrap and develop", "dev", true, false, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -40,7 +42,12 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("write pair: %v", err)
 			}
-			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			var engine *workflow.Engine
+			if tt.mate {
+				engine = workflow.NewMateEngine(dir, workflow.EnvContainer, nil)
+			} else {
+				engine = workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			}
 			var original *workflow.Engine
 			id := "interrupted"
 			switch {
@@ -52,7 +59,7 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 				id = started.SessionID
 			case tt.foreignLive:
 				original, id = liveBootstrapForEdit(t, dir)
-				engine = workflow.NewEngine(dir, workflow.EnvContainer, nil)
+				engine = workflow.NewMateEngine(dir, workflow.EnvContainer, nil)
 			default:
 				state := &workflow.WorkflowState{SessionID: id, ProjectID: "project", Workflow: workflow.WorkflowBootstrap, Bootstrap: &workflow.BootstrapState{Active: true, Steps: []workflow.BootstrapStep{{Name: "discover", Status: "in_progress"}}}}
 				if err := workflow.SaveSessionState(dir, id, state); err != nil {
@@ -61,7 +68,7 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 				if err := workflow.RegisterSession(dir, workflow.SessionEntry{SessionID: id, Workflow: workflow.WorkflowBootstrap, ProjectID: "project"}); err != nil {
 					t.Fatalf("register interrupted bootstrap: %v", err)
 				}
-				engine = workflow.NewEngine(dir, workflow.EnvContainer, nil)
+				engine = workflow.NewMateEngine(dir, workflow.EnvContainer, nil)
 			}
 			before, err := workflow.LoadSessionByID(dir, id)
 			if err != nil {
@@ -71,7 +78,7 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 				{ID: "dev-id", Name: "dev", Status: platform.ServiceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "code", Source: "CLI", Built: true}},
 				{ID: "stage-id", Name: "stage", Status: platform.ServiceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 			}).WithProject(&platform.Project{ID: "project"})
-			rt := runtime.Info{InContainer: true, MateEnabled: true, HQ: &runtime.HQLink{Origin: "https://example.invalid", ProjectID: "project", Key: "test"}}
+			rt := runtime.Info{InContainer: true, MateEnabled: tt.mate, HQ: &runtime.HQLink{Origin: "https://example.invalid", ProjectID: "project", Key: "test"}}
 			if !tt.activeHere {
 				status, _, err := handleWorkflowAction(context.Background(), "project", engine, client, nil, nil, nil, WorkflowInput{Action: "status"}, dir, "", nil, nil, rt, "", nil)
 				if err != nil || status == nil || status.IsError || strings.Contains(extractText(status), id) || strings.Contains(extractText(status), "session-active") {
@@ -95,7 +102,7 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 				}
 				text := extractText(status)
 				envelope, ok := workflow.ExtractEnvelope(text)
-				if !ok || envelope.Phase != workflow.PhaseIdle || !slices.ContainsFunc(envelope.Services, func(s workflow.ServiceSnapshot) bool { return s.Hostname == "dev" }) || strings.Contains(text, id) {
+				if !ok || envelope.Phase != workflow.PhaseDevelopEdit || !slices.ContainsFunc(envelope.Services, func(s workflow.ServiceSnapshot) bool { return s.Hostname == "dev" }) || strings.Contains(text, id) {
 					t.Fatalf("edit status belongs to other bootstrap: %q", text)
 				}
 			}
@@ -109,7 +116,7 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 					t.Fatalf("continue original bootstrap = %#v, %v", progress, err)
 				}
 			} else if !tt.activeHere {
-				original := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+				original := workflow.NewMateEngine(dir, workflow.EnvContainer, nil)
 				if resumed, err := original.Resume(id); err != nil || resumed.Bootstrap == nil || !resumed.Bootstrap.Active {
 					t.Fatalf("resume original bootstrap = %#v, %v", resumed, err)
 				}
@@ -124,7 +131,7 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 
 func liveBootstrapForEdit(t *testing.T, dir string) (*workflow.Engine, string) {
 	t.Helper()
-	original := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	original := workflow.NewMateEngine(dir, workflow.EnvContainer, nil)
 	started, err := original.BootstrapStartWithRoute("project", "bootstrap", workflow.BootstrapRouteClassic, "")
 	if err != nil {
 		t.Fatalf("start other bootstrap: %v", err)

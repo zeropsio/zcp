@@ -1629,13 +1629,13 @@ func TestInitSessionAtomic_NoProjectSingleton(t *testing.T) {
 			dir := t.TempDir()
 
 			// First session via InitSessionAtomic.
-			_, err := InitSessionAtomic(dir, "proj-1", tt.firstWf, "first")
+			_, err := InitSessionAtomic(dir, "proj-1", tt.firstWf, "first", false)
 			if err != nil {
 				t.Fatalf("first InitSessionAtomic: %v", err)
 			}
 
 			// Second session.
-			_, err = InitSessionAtomic(dir, "proj-1", tt.secondWf, "second")
+			_, err = InitSessionAtomic(dir, "proj-1", tt.secondWf, "second", false)
 			if tt.expectErr {
 				if err == nil {
 					t.Fatal("expected error for second session")

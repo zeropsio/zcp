@@ -178,15 +178,13 @@ func sessionFilePath(stateDir, sessionID string) string {
 }
 
 // InitSessionAtomic creates a new workflow session atomically within a single
-// registry lock scope. It prunes dead sessions, cleans orphaned session files,
+// registry lock scope. It prunes stale sessions, cleans orphaned session files,
 // writes the session state file, and appends the registry entry — all in one
 // lock acquisition. It does NOT itself enforce bootstrap exclusivity: bootstrap
 // ownership is PER-HOSTNAME (not a project singleton — see spec-workflows.md
 // §2.2 / B6), enforced at provision time by checkHostnameLocks
-// (engine.go, via FindServiceMeta) — an incomplete ServiceMeta held by an
-// alive session blocks a new bootstrap for THAT hostname only; dead PID
-// auto-unlocks.
-func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*WorkflowState, error) {
+// (engine.go, via FindServiceMeta).
+func InitSessionAtomic(stateDir, projectID, workflowName, intent string, mate bool) (*WorkflowState, error) {
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("init session atomic: %w", err)
@@ -207,8 +205,8 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 	}
 
 	err = withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		// Keep bootstrap sessions for explicit resume while pruning stale work.
-		reg.Sessions = pruneDeadSessions(reg.Sessions)
+		// A Mate keeps bootstrap sessions for explicit resume.
+		reg.Sessions = pruneDeadSessions(reg.Sessions, mate)
 		liveIDs := make(map[string]bool, len(reg.Sessions)+1)
 		for _, s := range reg.Sessions {
 			liveIDs[s.SessionID] = true
