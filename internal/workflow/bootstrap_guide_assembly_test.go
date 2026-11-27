@@ -655,7 +655,7 @@ func TestBootstrapGuide_CloseGuidance_RendersFromRuntimeURLs(t *testing.T) {
 			{Hostname: "appdev", Role: RuntimeURLRoleDev, URL: "https://appdev-24cb-3000.prg1.zerops.app", Handoff: false},
 			{Hostname: "appstage", Role: RuntimeURLRoleStage, URL: "https://appstage-24cb-3000.prg1.zerops.app", Handoff: true},
 		}
-		guide := FormatRuntimeURLsForGuide(urls)
+		guide := FormatRuntimeURLsForGuide(urls, false, "")
 
 		if !strings.Contains(guide, "https://appstage-24cb-3000.prg1.zerops.app") {
 			t.Errorf("guide should carry the stage URL, got:\n%s", guide)
@@ -675,7 +675,7 @@ func TestBootstrapGuide_CloseGuidance_RendersFromRuntimeURLs(t *testing.T) {
 
 	t.Run("empty collection notes the URL could not be resolved yet", func(t *testing.T) {
 		t.Parallel()
-		guide := FormatRuntimeURLsForGuide(nil)
+		guide := FormatRuntimeURLsForGuide(nil, false, "")
 		if !strings.Contains(guide, "could be resolved yet") {
 			t.Errorf("empty collection should explain no URL could be resolved yet, got:\n%s", guide)
 		}

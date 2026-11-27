@@ -114,10 +114,8 @@ type BootstrapResponse struct {
 // hostname against the bootstrap plan: RuntimeURLRoleDev (a target's
 // DevHostname), RuntimeURLRoleStage (a target's StageHostname()), or
 // RuntimeURLRoleOther (any other subdomain-enabled service, e.g. a managed
-// dependency exposing HTTP, or a service outside the plan). Handoff marks
-// the URL the agent should hand back to the user as "the app" — always the
-// stage half, never the dev container (idle by design: `zsc noop`, answers
-// 502).
+// dependency exposing HTTP, or a service outside the plan). Handoff marks a
+// standalone stage URL for the person; a Mate's stage is not a handoff.
 type RuntimeURL struct {
 	Hostname string `json:"hostname"`
 	Role     string `json:"role"`

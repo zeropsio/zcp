@@ -524,25 +524,27 @@ func removeMappingKey(mapNode *yaml.Node, key string) {
 // import ops) and calls this pure function with the already-resolved
 // result; it never hand-composes URL guidance itself.
 //
-// The stage entry (Handoff=true) is called out as the URL to hand back to
-// the user — dev is never presented that way, even when its own subdomain
-// happens to be enabled (the dev container idles by design: `zsc noop`,
-// answers 502). Resolution is best-effort: a hostname that couldn't be
-// resolved is simply absent from urls — never a fabricated URL — so an
-// empty/short collection still returns an honest note instead of silence.
-func FormatRuntimeURLsForGuide(urls []RuntimeURL) string {
+// Standalone guidance calls out the handoff URL; a Mate names the stage and
+// uses the stand-up's draft guidance instead. Resolution is best-effort: a
+// hostname that couldn't be resolved is absent rather than fabricated.
+func FormatRuntimeURLsForGuide(urls []RuntimeURL, mateEnabled bool, draftGuidance string) string {
 	var sb strings.Builder
 	sb.WriteString("## Runtime URLs\n\n")
 
+	if mateEnabled {
+		sb.WriteString(draftGuidance + "\n\n")
+	}
 	if len(urls) == 0 {
 		sb.WriteString("No runtime URL could be resolved yet — subdomain access may still be propagating. Re-check via `zerops_workflow action=\"status\"` or `zerops_discover`.\n")
 		return sb.String()
 	}
 
-	for _, u := range urls {
-		if u.Handoff {
-			fmt.Fprintf(&sb, "**Hand this URL back to the user as their preview** — a copy with test data, never \"online\", \"live\" or \"stage\", nothing to install or share (stage half — the dev container is idle by design, do not hand that one back): %s\n\n", u.URL)
-			break
+	if !mateEnabled {
+		for _, u := range urls {
+			if u.Handoff {
+				fmt.Fprintf(&sb, "**Hand this URL back to the user as their preview** — a copy with test data, never \"online\", \"live\" or \"stage\", nothing to install or share (stage half — the dev container is idle by design, do not hand that one back): %s\n\n", u.URL)
+				break
+			}
 		}
 	}
 
@@ -550,7 +552,9 @@ func FormatRuntimeURLsForGuide(urls []RuntimeURL) string {
 	sb.WriteString("|---|---|---|\n")
 	for _, u := range urls {
 		role := u.Role
-		if u.Handoff {
+		if mateEnabled && u.Role == RuntimeURLRoleStage {
+			role = "stage: runs what was added to main; the Review build builds a change on it"
+		} else if !mateEnabled && u.Handoff {
 			role += " (handoff)"
 		}
 		fmt.Fprintf(&sb, "| `%s` | %s | %s |\n", u.Hostname, role, u.URL)

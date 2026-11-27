@@ -50,7 +50,7 @@ func TestStandupReport_SRPooled_SaysTheRowsNotThePairs(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/standup_report.go | yet and verify. Once the draft is ready, tell the person they can open it in Mate. → yet and verify. Tell the person the setup is ready immediately.
+// witness: internal/tools/standup_report.go | standupDraftReady = "Once the draft is ready, tell the person they can open it in Mate." → standupDraftReady = "Tell the person the setup is ready immediately."
 func TestStandupReport_SRTerms_SeparatesPreviewAndStage(t *testing.T) {
 	t.Parallel()
 	stage := workflow.MateTierRuntime{Hostname: "webstage", Setup: "web"}

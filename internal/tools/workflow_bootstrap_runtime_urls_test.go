@@ -76,7 +76,7 @@ func TestWorkflowBootstrap_PopulatesRuntimeURLs(t *testing.T) {
 			t.Fatalf("expected close step in progress before populate, got %+v", resp.Current)
 		}
 
-		populateRuntimeURLs(context.Background(), mock, "proj-1", eng, resp)
+		populateRuntimeURLs(context.Background(), mock, "proj-1", eng, resp, false)
 
 		if len(resp.RuntimeURLs) != 1 {
 			t.Fatalf("expected exactly 1 resolved runtime URL (dev has no subdomain access), got %d: %+v", len(resp.RuntimeURLs), resp.RuntimeURLs)
@@ -133,7 +133,7 @@ func TestWorkflowBootstrap_PopulatesRuntimeURLs(t *testing.T) {
 			t.Fatalf("expected close step in progress before populate, got %+v", resp.Current)
 		}
 
-		populateRuntimeURLs(context.Background(), mock, "proj-1", eng, resp)
+		populateRuntimeURLs(context.Background(), mock, "proj-1", eng, resp, false)
 
 		if len(resp.RuntimeURLs) != 0 {
 			t.Errorf("resolver failure must omit the entry, got %+v", resp.RuntimeURLs)
@@ -173,7 +173,7 @@ func TestBuildRuntimeURLs_TwoHTTPPorts_ProjectsSelectedURI(t *testing.T) {
 			svc := platform.ServiceStack{ID: "svc-1", Name: "portprobe", SubdomainAccess: true, Ports: tc.ports}
 			mock := platform.NewMock().WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "31e1"}).
 				WithServiceEnv(svc.ID, []platform.ServiceEnvVar{{Key: "zeropsSubdomain", Content: second + "\n" + first}})
-			got := buildRuntimeURLs(context.Background(), mock, "proj-1", []platform.ServiceStack{svc}, &workflow.ServicePlan{})
+			got := buildRuntimeURLs(context.Background(), mock, "proj-1", []platform.ServiceStack{svc}, &workflow.ServicePlan{}, false)
 			if len(got) != 1 {
 				t.Fatalf("runtime URLs = %+v, want one service entry", got)
 			}

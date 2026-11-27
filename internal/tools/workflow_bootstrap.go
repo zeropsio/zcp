@@ -208,7 +208,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			ctx, client, httpClient, sshDeployer, mounter, rt, projectID, stateDir, hqPassBackedOff, schemaCache))
 	}
 
-	populateRuntimeURLs(ctx, client, projectID, engine, resp)
+	populateRuntimeURLs(ctx, client, projectID, engine, resp, rt.MateEnabled)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
 	}
@@ -313,7 +313,7 @@ func appendTransitionMessage(resp *workflow.BootstrapResponse, engine *workflow.
 // step's DetailedGuide (session still open) or to resp.Message (terminal),
 // so the "guidance derives from the collection" contract holds regardless
 // of which shape the response takes.
-func populateRuntimeURLs(ctx context.Context, client platform.Client, projectID string, engine *workflow.Engine, resp *workflow.BootstrapResponse) {
+func populateRuntimeURLs(ctx context.Context, client platform.Client, projectID string, engine *workflow.Engine, resp *workflow.BootstrapResponse, mateEnabled bool) {
 	if resp == nil || (resp.Current != nil && resp.Current.Name != workflow.StepClose) {
 		return
 	}
@@ -326,8 +326,8 @@ func populateRuntimeURLs(ctx context.Context, client platform.Client, projectID 
 		return
 	}
 
-	resp.RuntimeURLs = buildRuntimeURLs(ctx, client, projectID, services, state.Bootstrap.Plan)
-	guidance := workflow.FormatRuntimeURLsForGuide(resp.RuntimeURLs)
+	resp.RuntimeURLs = buildRuntimeURLs(ctx, client, projectID, services, state.Bootstrap.Plan, mateEnabled)
+	guidance := workflow.FormatRuntimeURLsForGuide(resp.RuntimeURLs, mateEnabled, standupDraftReady)
 	if resp.Current != nil {
 		resp.Current.DetailedGuide += "\n\n" + guidance
 	} else {
@@ -348,7 +348,7 @@ func populateRuntimeURLs(ctx context.Context, client platform.Client, projectID 
 // state alone (topology.DeriveAdoptedIntent, the same PA-6 adopt rule): the
 // entries here are already subdomain-on by construction, so intent is
 // "domain" when a custom domain also routes to the service, else "subdomain".
-func buildRuntimeURLs(ctx context.Context, client platform.Client, projectID string, services []platform.ServiceStack, plan *workflow.ServicePlan) []workflow.RuntimeURL {
+func buildRuntimeURLs(ctx context.Context, client platform.Client, projectID string, services []platform.ServiceStack, plan *workflow.ServicePlan, mateEnabled bool) []workflow.RuntimeURL {
 	var enabled []*platform.ServiceStack
 	for i := range services {
 		if services[i].SubdomainAccess {
@@ -371,7 +371,7 @@ func buildRuntimeURLs(ctx context.Context, client platform.Client, projectID str
 			Hostname: svc.Name,
 			Role:     role,
 			URL:      url,
-			Handoff:  role == workflow.RuntimeURLRoleStage,
+			Handoff:  !mateEnabled && role == workflow.RuntimeURLRoleStage,
 		}
 		if obsErr == nil {
 			if obs, ok := obsAll[svc.Name]; ok {
@@ -453,7 +453,7 @@ func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client 
 			resp.Message = note + "\n\n" + resp.Message
 		}
 	}
-	populateRuntimeURLs(ctx, client, projectID, engine, resp)
+	populateRuntimeURLs(ctx, client, projectID, engine, resp, rt.MateEnabled)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
 	}

@@ -150,7 +150,7 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 	case stood == containers:
 		resp.StandUp = standupReady
 		resp.Next = "Every pair stands: each dev half and each part's stage run main's code. " +
-			"Start each dev half's dev server as its next step says if it is not running yet and verify. Once the draft is ready, tell the person they can open it in Mate. " +
+			"Start each dev half's dev server as its next step says if it is not running yet and verify. " + standupDraftReady + " " +
 			"Nothing was committed, pushed or proposed."
 	case devs == containers && stood+queued == containers:
 		resp.StandUp = standupDevelopment
@@ -270,10 +270,12 @@ func standupPooledNext(pooled pooledOutcome) string {
 // standupCallAgain is the next step of a half the call left undecided.
 const standupCallAgain = "Call zerops_standup again."
 
+const standupDraftReady = "Once the draft is ready, tell the person they can open it in Mate."
+
 // standupDevelopmentNext is the model's way on once every dev half stands and
 // the stages are queued: development first, then the stages on a second call.
 const standupDevelopmentNext = "Every dev half runs main's code; the stages are queued. " +
-	"Start each dev half's dev server with zerops_dev_server as its next step says and verify it. Once the draft is ready, tell the person they can open it in Mate. " +
+	"Start each dev half's dev server with zerops_dev_server as its next step says and verify it. " + standupDraftReady + " " +
 	"Then call zerops_standup again in this turn: it builds each part's stage from main, after its dev half and what its build reads, and waits for them. " +
 	"Until that call the stages wait for their first deploy (READY_TO_DEPLOY), which breaks nothing. Nothing was committed, pushed or proposed."
 
