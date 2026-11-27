@@ -177,7 +177,7 @@ func (o *reviewObserver) consider(ctx context.Context, key reviewKey, change hq.
 		a.updatedAt = change.UpdatedAt
 	}
 	now := time.Now()
-	action := reviewNext(change, a.running, now)
+	action := reviewNext(change, a.running)
 	if action == reviewNothing {
 		if !a.running && change.State != hq.ChangeAdding && change.State != hq.ChangeMerging {
 			delete(o.attempts, key)

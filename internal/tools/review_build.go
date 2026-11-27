@@ -28,7 +28,7 @@ const (
 )
 
 // reviewNext decides from HQ's adding phase and this process's running set.
-func reviewNext(c hq.MateChange, running bool, _ time.Time) reviewAction {
+func reviewNext(c hq.MateChange, running bool) reviewAction {
 	if running || c.Repo == hq.RecipeRepo || c.Head == nil || *c.Head == "" || c.ChecksGivenUp != nil {
 		return reviewNothing
 	}

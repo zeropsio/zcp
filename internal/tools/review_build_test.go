@@ -45,7 +45,7 @@ func TestReviewNext_RBAdding_OnlyAdding_Takes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := reviewNext(hq.MateChange{Repo: tc.repo, State: tc.state, Head: &head}, tc.running, time.Time{})
+			got := reviewNext(hq.MateChange{Repo: tc.repo, State: tc.state, Head: &head}, tc.running)
 			if got != tc.want {
 				t.Fatalf("action = %v, want %v", got, tc.want)
 			}
