@@ -125,3 +125,49 @@ func TestPoolDeploy_PDCHOICE_RequiresAnUnambiguousLease(t *testing.T) {
 		})
 	}
 }
+
+// witness: internal/workflow/render.go | if env.Mate { → if !env.Mate {
+func TestPoolDeploy_PDMATE_LeavesStageCheckToReviewBuild(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		env  StateEnvelope
+	}{
+		{
+			name: "Mate with a held branch lease",
+			env: StateEnvelope{
+				Phase: PhaseDevelopActive, Mate: true,
+				Services: []ServiceSnapshot{
+					{Hostname: "apppool", RuntimeClass: topology.RuntimePool, DevIsPool: true, Bootstrapped: true, Deployed: true, StageHostname: "appstage", Stages: []topology.StageRef{{Hostname: "appstage", SetupName: "web"}}},
+					{Hostname: "appstage", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto, SetupName: "web"},
+				},
+				Leases:      &[]LeaseSnapshot{{Alias: "apppool-4", Pool: "apppool", Branch: "feat/a", State: "held"}},
+				WorkSession: &WorkSessionSummary{Intent: "deploy the requested branch", Services: []string{"appstage"}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := poolStageDeployNext("appstage", tc.env); got != "" {
+				t.Errorf("Mate pool-stage hint = %q, want none", got)
+			}
+			plan := BuildPlan(tc.env)
+			if plan.Primary.Tool != "zerops_deploy" || plan.Primary.Args["sourceService"] != "apppool-4" || plan.Primary.Args["targetService"] != "appstage" {
+				t.Errorf("requested deploy plan = %+v", plan.Primary)
+			}
+			out := RenderStatus(Response{Envelope: tc.env, Plan: &plan})
+			var blocker string
+			for line := range strings.SplitSeq(out, "\n") {
+				if strings.Contains(line, "Auto-close blocked") {
+					blocker = line
+				}
+			}
+			if !strings.Contains(blocker, "pending appstage.") || strings.Contains(blocker, "zerops_deploy") || strings.Contains(blocker, "stage check") {
+				t.Errorf("Mate blocker = %q, want the pending stage without a deploy suggestion", blocker)
+			}
+			if !strings.Contains(out, `sourceService="apppool-4"`) || !strings.Contains(out, `targetService="appstage"`) {
+				t.Errorf("rendered plan does not name the requested deploy's source and target: %s", out)
+			}
+		})
+	}
+}

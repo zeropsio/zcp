@@ -171,14 +171,16 @@ func TestPoolBriefing_IG7_UsesThePlacementGuidance(t *testing.T) {
 	}
 	for _, tt := range []struct {
 		name                  string
+		phase                 Phase
 		mate, outside, inside bool
 	}{
-		{"standalone", false, true, false},
-		{"mate", true, false, true},
+		{"standalone", PhaseDevelopActive, false, true, false},
+		{"mate deploy session", PhaseDevelopActive, true, false, true},
+		{"mate edit", PhaseDevelopEdit, true, false, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			env := StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer, Mate: tt.mate,
+			env := StateEnvelope{Phase: tt.phase, Environment: EnvContainer, Mate: tt.mate,
 				Services: []ServiceSnapshot{{Hostname: "pool", RuntimeClass: topology.RuntimePool}}}
 			matches, err := Synthesize(env, corpus)
 			if err != nil {
@@ -186,6 +188,29 @@ func TestPoolBriefing_IG7_UsesThePlacementGuidance(t *testing.T) {
 			}
 			if outside, inside := atomFired(matches, "develop-dev-pool"), atomFired(matches, "develop-dev-pool-mate"); outside != tt.outside || inside != tt.inside {
 				t.Errorf("pool guidance outside=%v mate=%v, want %v, %v", outside, inside, tt.outside, tt.inside)
+			}
+			if !tt.mate {
+				return
+			}
+			for _, match := range matches {
+				if match.AtomID != "develop-dev-pool-mate" {
+					continue
+				}
+				_, stage, ok := strings.Cut(match.Body, "**Stage.**")
+				if !ok {
+					t.Fatal("Mate pool guidance has no stage section")
+				}
+				stage, _, ok = strings.Cut(stage, "**A pool or stage that is not built.**")
+				if !ok {
+					t.Fatal("Mate pool guidance has no unbuilt section after stage")
+				}
+				stage = strings.Join(strings.Fields(stage), " ")
+				const review = "the latest described head the Review build deploys to it"
+				const whenAsked = "Only when the person asks to deploy a branch to the stage, use its own lease:"
+				const branchDeploy = "`zerops_deploy sourceService=\"<alias>\" targetService=\"<stage>\"`"
+				if !strings.Contains(stage, review) || strings.Count(stage, branchDeploy) != 1 || !strings.Contains(stage, whenAsked+" "+branchDeploy) {
+					t.Errorf("Mate stage guidance does not leave the build to Review or limit branch deploys to a request: %s", stage)
+				}
 			}
 		})
 	}

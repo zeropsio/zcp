@@ -86,10 +86,9 @@ in there once. With several servers that listen, mark the one the preview
 reaches with `"preview": true` — one per pool.
 
 **Stage.** The part's stage is not where edits are seen: it runs `main` from
-its birth, then the last work deployed to it, and nothing puts `main` back
-on it. To deploy the branch, use its own lease:
-`zerops_deploy sourceService="<alias>" targetService="<stage>"`, then verify it
-with `zerops_verify serviceHostname="<stage>"`.
+its birth, then the latest described head the Review build deploys to it.
+Only when the person asks to deploy a branch to the stage, use its own lease:
+`zerops_deploy sourceService="<alias>" targetService="<stage>"`.
 To deploy `main`:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
 ships `origin/main` as the lease last fetched it: run

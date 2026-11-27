@@ -261,10 +261,12 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 	if len(pending) > 0 {
 		required := len(statuses)
 		ready := required - len(pending)
-		fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s. %s\n",
-			ready, required,
-			strings.Join(pending, ", "),
-			blockerNextAction(pending[0], needsDeploy, needsVerify, env))
+		fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s.",
+			ready, required, strings.Join(pending, ", "))
+		if next := blockerNextAction(pending[0], needsDeploy, needsVerify, env); next != "" {
+			fmt.Fprintf(b, " %s", next)
+		}
+		fmt.Fprintln(b)
 	}
 	// Close-mode is the gate's third input — surface it in the HEAD too, not
 	// just the guidance wall (B5). It fires even when pending==0 (deploy+verify
@@ -350,6 +352,11 @@ func blockerNextAction(host string, needsDeploy, needsVerify bool, env StateEnve
 		if next := poolStageDeployNext(host, env); next != "" {
 			return next
 		}
+		// A Mate's explicit deploy plan still names the lease. Do not replace
+		// the pool-stage hint with a deploy that has no source.
+		if env.Mate && ResolveWithLeases(snapshotByHostname(env.Services, host), env.Services, env.LeaseList()).SourcePool != "" {
+			return ""
+		}
 		// RC-A′ / F8: state WHY deploy is needed. A live SSHFS/dev-server edit
 		// is visible now but is NOT in the deployed artefact — it reverts on the
 		// next container cycle. Deploy is what makes the change durable, even
@@ -366,9 +373,12 @@ func blockerNextAction(host string, needsDeploy, needsVerify bool, env StateEnve
 // poolStageDeployNext is the auto-close line's deploy call for host when its
 // pair's dev half is a pool, resolved as deployActionFor resolves the plan's:
 // the cross-deploy from the sole held lease, a choice among several, or an
-// acquire when none is held. "" for any other host, and for a manual
-// close-mode, which the generic line covers.
+// acquire when none is held. "" in a Mate, for any other host, and for a
+// manual close-mode.
 func poolStageDeployNext(host string, env StateEnvelope) string {
+	if env.Mate {
+		return ""
+	}
 	intent := ResolveWithLeases(snapshotByHostname(env.Services, host), env.Services, env.LeaseList())
 	switch {
 	case intent.SourcePool == "" || intent.Delivery == DeployDeliveryManual:
