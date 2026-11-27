@@ -132,7 +132,7 @@ func TestEditBriefing_IG5_SelectsEditGuidance(t *testing.T) {
 	}
 }
 
-// witness: internal/content/atoms/develop-dev-pool.md | phases: [develop-active, develop-edit] → phases: [develop-active]
+// witness: internal/content/atoms/develop-dev-pool-mate.md | phases: [develop-active, develop-edit] → phases: [develop-active]
 func TestEditBriefing_IG6_SelectsThePoolLoop(t *testing.T) {
 	t.Parallel()
 	corpus, err := LoadAtomCorpus()
@@ -155,8 +155,66 @@ func TestEditBriefing_IG6_SelectsThePoolLoop(t *testing.T) {
 			if err != nil {
 				t.Fatalf("synthesize: %v", err)
 			}
-			if got := atomFired(matches, "develop-dev-pool"); got != tt.want {
+			if got := atomFired(matches, "develop-dev-pool-mate"); got != tt.want {
 				t.Errorf("pool guidance = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+// witness: internal/content/atoms/develop-dev-pool.md | mate: [outside] → mate: [in]
+func TestPoolBriefing_IG7_UsesThePlacementGuidance(t *testing.T) {
+	t.Parallel()
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("load atoms: %v", err)
+	}
+	for _, tt := range []struct {
+		name                  string
+		mate, outside, inside bool
+	}{
+		{"standalone", false, true, false},
+		{"mate", true, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{Phase: PhaseDevelopActive, Environment: EnvContainer, Mate: tt.mate,
+				Services: []ServiceSnapshot{{Hostname: "pool", RuntimeClass: topology.RuntimePool}}}
+			matches, err := Synthesize(env, corpus)
+			if err != nil {
+				t.Fatalf("synthesize: %v", err)
+			}
+			if outside, inside := atomFired(matches, "develop-dev-pool"), atomFired(matches, "develop-dev-pool-mate"); outside != tt.outside || inside != tt.inside {
+				t.Errorf("pool guidance outside=%v mate=%v, want %v, %v", outside, inside, tt.outside, tt.inside)
+			}
+		})
+	}
+}
+
+// witness: internal/content/atoms/idle-dev-pool-entry.md | mate: [outside] → mate: [in]
+func TestPoolIdle_IG8_UsesThePlacementGuidance(t *testing.T) {
+	t.Parallel()
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("load atoms: %v", err)
+	}
+	for _, tt := range []struct {
+		name                  string
+		mate, outside, inside bool
+	}{
+		{"standalone", false, true, false},
+		{"mate", true, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, Mate: tt.mate,
+				Services: []ServiceSnapshot{{Hostname: "pool", RuntimeClass: topology.RuntimePool}}}
+			matches, err := Synthesize(env, corpus)
+			if err != nil {
+				t.Fatalf("synthesize: %v", err)
+			}
+			if outside, inside := atomFired(matches, "idle-dev-pool-entry"), atomFired(matches, "idle-dev-pool-entry-mate"); outside != tt.outside || inside != tt.inside {
+				t.Errorf("idle pool guidance outside=%v mate=%v, want %v, %v", outside, inside, tt.outside, tt.inside)
 			}
 		})
 	}

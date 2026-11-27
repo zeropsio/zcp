@@ -365,3 +365,23 @@ func TestEditCheckout_WD9_UsesTheMountedPath(t *testing.T) {
 		})
 	}
 }
+
+// witness: internal/tools/workflow_develop_dev_pool.go | if mate { → if !mate {
+func TestPoolOnlyBriefing_WD14_SelectsThePlacementGuidance(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		mate bool
+		want string
+	}{
+		{"standalone", false, "develop-dev-pool"},
+		{"mate", true, "develop-dev-pool-mate"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := devPoolBriefingAtomID(tt.mate); got != tt.want {
+				t.Errorf("pool-only guidance = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

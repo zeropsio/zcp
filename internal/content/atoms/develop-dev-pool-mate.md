@@ -1,0 +1,265 @@
+---
+id: develop-dev-pool-mate
+priority: 1
+phases: [develop-active, develop-edit]
+mate: [in]
+runtimes: [pool]
+environments: [container]
+multiService: aggregate
+title: "A part's dev pool — lease a container, work, push, open its change, release"
+references-fields: [ops.DeployResult.Warnings, ops.LeaseView.Reused, ops.LeaseView.DevServers, ops.LeaseSyncMember.UnwatchedServers, ops.LeaseView.Idle, ops.LeaseIdle.Next, tools.leaseToolResult.Warm, ops.LeaseView.NotAnswering]
+---
+
+### A part's dev pool
+
+A pool (`swarm@1`) is not an app runtime: it holds up to ten containers that
+its orchestrator hands out by lease, one per branch you work on. The pool's
+own hostname reaches a random container — address a leased one by its alias.
+
+**Which pool.** All of this is for a part's dev pool: its zerops.yaml setup
+starts `zcp-devsup run`, or the repository's `.zcp/dev-servers.json` names it
+as a server's `service`. A pool the app calls through its orchestrator with
+`${<pool>_API_TOKEN}` is infrastructure the app uses: leave it to the app —
+never lease it, run a dev server on it or deploy to it; a lease takes one of
+its containers away from the app.
+
+**The loop**
+
+1. `zerops_lease action=acquire pool="<pool>" branch="<branch>"`
+   leases a clean container with no expiry. It writes the alias
+   `<pool>-<number>` (SSH), mounts the leased container at `/var/www/<alias>` and
+   checks the branch out there; a branch that does not exist yet is cut from
+   `main`, or from the branch `from="<branch>"` names. The repository is the
+   pool's, recorded by its stand-up.
+   The clone uses the pool's `GIT_TOKEN` service secret; zcp clones a
+   repository on this Mate's HQ itself with the Mate's project key, storing
+   nothing in the pool. You never type a credential. Each lease taken
+   carries `devServers`: each server's `status` — `running`, or
+   `starting` while it still compiles — and the preview server's `url`.
+   Check a `starting` one with
+   `zerops_dev_server action=status hostname="<alias>" name="<server>"`.
+2. Work in `/var/www/<alias>`. Run the part's dev servers with
+   `zerops_dev_server action=start hostname="<alias>" ...`.
+3. Commit and push from the leased container yourself: run every git
+   command inside the lease, over SSH to the alias —
+   `ssh <alias> "cd /var/www && git add -A && git commit -m '<what>' && git push -u origin <branch>"`
+   (the first push of a new branch sets its upstream). The same pool secret
+   authenticates it there. For a repository on this Mate's HQ run git
+   through zcp instead —
+   `zcp git <alias> add -A`, `zcp git <alias> commit -m '<what>'`,
+   `zcp git <alias> push -u origin <branch>` — which answers HQ for it; a
+   plain ssh git there has no credential. Never run git on the mount `/var/www/<alias>`
+   <!-- axis-k-keep: signal-#1 — mount-vs-lease-SSH guardrail: git on the mount has no credential -->
+   from this container: no credential reaches the mount, so a fetch or push
+   there fails asking for one. A release never commits for you.
+4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
+   — the repository and the branch come from the lease. Describe it with
+   `zerops_workflow action="describe-change" service="<alias>" description="…"`,
+   naming the branch's lease preview URLs as where to try it.
+   Pushing to the branch again moves its change,
+   a draft until described again; to add work to it, lease the branch again
+   if it was released.
+5. `zerops_lease action=release lease="<alias>"` hands the leased container
+   back: reset, as the pool's warm container, or removed when the pool
+   already has one, it runs an outdated version, or the pool is full (its
+   next acquire creates a container). It refuses while it holds
+   commits on no remote branch or uncommitted files, naming them;
+   `force=true` discards them. Files git ignores and stashes go either way.
+
+`zerops_lease action=status` lists your leases: `held`, `parked` (stopped
+and kept), `unmounted` (the record has no alias or mount), `lost` (its
+container is gone, free, or another holder's now; a plain release drops the
+record and touches nothing else) or `unknown-holder` (reserved, but no
+record of yours). A lease marked `unverified` got no answer from its pool's
+orchestrator: it may be another holder's, so nothing reads or changes it
+until a later status asks again. It
+reads each other lease's activity and unsaved work, changing
+nothing: a lease untouched for a day is `idle`, its `idle.next` naming the
+release or what a release would lose. `warm` shows each pool's warm
+container.
+
+**Preview.** With `previewPortBase` in `.zcp/dev-servers.json`, a lease
+answers on `previewPortBase + ZEROPS_StableNumber`, and the dev-server
+result's `previewUrl` is the pool's subdomain on that port: look at each
+edit there. Its first page after a start compiles for a minute or two; sign
+in there once. With several servers that listen, mark the one the preview
+reaches with `"preview": true` — one per pool.
+
+**Stage.** The part's stage is not where edits are seen: it runs `main` from
+its birth, then the last work deployed to it, and nothing puts `main` back
+on it. To deploy the branch, use its own lease:
+`zerops_deploy sourceService="<alias>" targetService="<stage>"`, then verify it
+with `zerops_verify serviceHostname="<stage>"`.
+To deploy `main`:
+`zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
+ships `origin/main` as the lease last fetched it: run
+`zcp git <alias> fetch origin` first to ship main as HQ has it now. Verify a container with
+`zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
+supervisor and the dev servers.
+
+**A pool or stage that is not built.** zcp builds a part's pool and stage
+from `main` at the Mate's birth; `zerops_standup` gives each one's state,
+cause and `next` step. A ready pool's failed stage is fixed from a branch
+lease; anything else through a change on `main`, then
+`zerops_standup` again.
+
+**Data.** Every lease of a part uses the part's dev database. The pool's
+service env reaches every leased container, so each branch's app connects
+to the database it names — wired as a dev service's is — with no change to
+the app. A migration one branch runs is
+seen by every other branch at once. Keep migrations additive (new tables and
+columns; nothing renamed or dropped), and agree a destructive one with
+whoever works on the other branches before running it — branches whose
+migrations conflict break each other. No lease gets a database or schema of
+its own.
+
+**A branch across several parts.** Give the branch one lease per part whose
+code the change edits and runs, each part its own pool; a part it only calls
+stays unleased.
+
+1. `zerops_lease action=acquire pools=["<pool>","<pool>"] repo="<https clone url>" branch="<branch>"`
+   leases one container per pool, or none. A part added later joins with
+   `pool="<pool>"` and the same branch; one already held answers
+   `reused: true`.
+2. `"siblingEnv": {"<VAR>": "<pool>"}` in `.zcp/dev-servers.json` gives each
+   server started in a lease `<VAR>` = the hostname of the branch's lease on
+   that pool, for server-side `http://${<VAR>}:<port>` calls. A browser
+   cannot resolve it: for code that runs in the browser, write
+   `"siblingPreviewEnv": {"<VAR>": "<pool>"}` instead, and `<VAR>` is that
+   lease's preview URL (`https://`), resolved again whenever a lease of the
+   branch joins or leaves — never copy it by hand. A name is in one of the
+   two, never both. Without such a lease `<VAR>` keeps its own env value:
+   set it in the calling part's pool env to the called part's stage
+   hostname (a browser variable to the stage's public URL), and run the
+   called part's dev server on its stage's port. Bind
+   servers a sibling calls to `0.0.0.0`: a loopback-only one serves its
+   preview, never a sibling. In a declaration several parts share, give each
+   entry `"service": "<its pool>"`, or every part's lease runs it.
+3. Each lease is a full checkout running its own part's servers. Commit in
+   one lease, then `zerops_lease action=sync lease="<alias>"` pushes the
+   branch and fast-forwards the other leases (uncommitted files refuse it).
+   Sync before you commit in another: a lease with commits of its own or
+   changes in the way is left as it was, named. Restart only what
+   `unwatchedServers` lists (runtime entries); declared servers reload by
+   themselves.
+4. The branch across its parts is one group, one branch, one change: open
+   it from any lease of the group (`service="<alias>"`), and describe it the
+   same way.
+5. `zerops_lease action=release branch="<branch>"` releases every lease of
+   the branch, or none: unsaved work in one refuses them all.
+
+**Parallel work.** Several pieces of work at once — subagents, or several
+conversations — each go on a branch of its own with leases of its own; the
+leases are keyed by branch, so they never meet.
+
+- Name each subagent's branch in its brief: unique, short, saying what the
+  work is, never `main` and never under `mate/`.
+- Each acquires its own group on its branch and pushes there. An
+  independent piece opens and describes its own change (step 4); subagents
+  on one piece open none: merge their branches into one and open its change.
+- Report each branch's change and its lease preview URLs to the person.
+- Once one change merges, the others are behind `main`. Bring one up to date
+  only when the person asks or it no longer merges cleanly: in a lease of
+  it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
+  (a repository outside this Mate's HQ over SSH:
+  `git fetch origin && git merge origin/main`), check the preview, push,
+  sync the group's other leases and describe it again — never rebase, never
+  force-push.
+- A change that needs another's unmerged work may be cut from that branch;
+  its description says it builds on that change.
+
+**Pitfalls**
+
+- A deploy of the pool changes only containers created after it: leased and
+  released ones keep their version, so an acquire can still hand you an
+  older one.
+  `zerops_lease action=rollout pool="<pool>"` replaces the free outdated
+  containers; a held lease keeps its version until you release it and roll
+  the pool out again.
+- A release resets a container to its image: what `run.prepareCommands`
+  wrote survives, `/var/www` included; everything written or started since
+  is gone. Bake the part's dependencies into `/var/www` there, listing every
+  file the install reads in `build.addToRunPrepare` — the lockfile, and in a
+  workspace monorepo every member's manifest and the workspace definition —
+  so the image rebuilds when one of them changes.
+  A branch whose lockfile differs declares its incremental install as
+  `prepare` in `.zcp/dev-servers.json` (e.g. `npm install --prefer-offline`):
+  acquire runs it after the checkout, before the dev servers start, and
+  reports it; a failed one leaves the lease held. One that ran a minute or
+  longer means the image lags `main`'s dependencies, so every acquire
+  reinstalls them — the acquire says so: once your change is open,
+  deploy the pool from `main`
+  (`zerops_deploy sourceService="<alias>" targetService="<pool>" sha="origin/main"`)
+  and roll it out, so the next acquire starts in seconds.
+- Import the pool with `minContainers: 0`. Containers Zerops creates for the
+  minimum cannot be reset, so releasing one deletes it (the release says
+  so). The pool's warm container takes their place: after each acquire or
+  release one is kept or created through the orchestrator, ready for the
+  next acquire at once.
+- A lease's dev servers and every command you run in it share its
+  container's RAM. An SSH command that ends with exit 255 and no output was
+  most likely killed for memory: run heavy checks one at a time and
+  single-threaded where a check allows it, or size the pool's `minRam` for
+  the dev server plus the heaviest check.
+- A lease's container holds at most 2000 tasks (processes and threads),
+  and everything you run in it over SSH — a build included — shares 300 of
+  them with every other SSH session there. A build that starts a worker per
+  core or many child processes can use them up: SSH to the lease then fails
+  with `fork/exec /bin/bash: resource temporarily unavailable` while memory
+  is fine, and the lease may then neither release nor restart cleanly. Cap
+  the build's parallelism. A stage build runs in a container of its own.
+- A lease that stops answering is reported to the person at once, never
+  waited on or polled in a loop: `zerops_lease action=status` marks it
+  `notAnswering` with why — at its process limit nothing new starts in it
+  until what fills it ends.
+- A container answers SSH only when the pool's `sshIsolation` is set as a
+  service env variable admitting the zcp service; the top-level import field
+  does not reach them.
+- A dev server needs the supervisor, `zcp-devsup`, in the pool's image:
+  install it in `run.prepareCommands` and set `run.start: zcp-devsup run`. A
+  reused container starts clean — only the image survives its reset — and `run.start` never runs in it again, so
+  `zerops_lease` and `zerops_dev_server` start the supervisor in a lease
+  themselves. A pool whose image lacks it is no dev pool: acquire says so and
+  `zerops_dev_server` refuses its leases; fix the pool's `zerops.yaml`,
+  deploy the pool, release the lease, roll the pool out, then acquire again.
+- A per-port subdomain routes only to containers listening on that port. A
+  container's `ZEROPS_StableNumber` starts at 1, so the preview ports
+  `previewPortBase + 1` through `previewPortBase + maxContainers` must be
+  declared in `run.ports` with `httpSupport: true`.
+- The orchestrator answers only inside the project.
+- A full pool refuses an acquire at once, queueing nothing, until a lease
+  is released. A pool holds at most ten
+  containers — a higher `maxContainers` is capped at ten.
+- A lease you will come back to can be parked instead of released:
+  `zerops_lease action=park lease="<alias>"` stops its container and keeps
+  `/var/www` and `$HOME` (an Ubuntu base empties `/tmp` at every start);
+  nothing reaches it, and it still counts
+  toward the pool's ten, until `action=unpark` starts it again.
+- Nothing releases a lease by itself, however long it sits idle. Status
+  and a full pool's refusal list every lease this zcp service holds, other
+  conversations' too: ask the person before releasing one this
+  conversation did not take.
+- Lowering the pool's `maxContainers` below the containers it holds deletes
+  the highest-numbered ones, leased ones included, each with its `/var/www`.
+- A stopped pool's orchestrator does not answer. A restart, or a stop and
+  start, keeps each container's number, hostname, lease, `/var/www` and
+  `/home/zerops`; its processes and `/tmp` are gone.
+- Never set `envIsolation: none` on the pool: every service of the project
+  would get its `ADMIN_TOKEN` and `API_TOKEN`. A service that needs the
+  pool's token references it under another name — this zcp service as
+  `<pool>_LEASE_TOKEN: ${<pool>_API_TOKEN}`, which an acquire writes itself
+  when it finds no usable token. A variable named
+  `<pool>_API_TOKEN` holding `${<pool>_API_TOKEN}` stays the literal text,
+  as does any reference to a pool never deployed until its first deploy.
+- A container answers from anywhere in the project on every port it listens
+  on, at `node-id-<n>.runtime.<pool>.zerops`; `run.ports` governs only the
+  public subdomain.
+- Code in a leased container reads the project's Shared vault values and the
+  pool's own; in a project with `envIsolation: none` it also reads every
+  other service's values as `<host>_KEY`, the zcp service's `ZCP_API_KEY`
+  included. Run there only code you would trust with them —
+  `zerops_knowledge uri="zerops://themes/pools-and-box"`, section "Untrusted code".
+
+The pool's import stanza, setup shape — a workspace monorepo's dependencies
+included — and a declaration several parts share:
+`zerops_knowledge uri="zerops://themes/pools-and-box"`, section "A part's dev pool".

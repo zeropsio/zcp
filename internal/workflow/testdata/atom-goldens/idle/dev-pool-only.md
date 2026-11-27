@@ -21,14 +21,16 @@ one of two things — tell which before you touch it:
     branch that spans several parts. `repo` is needed on a pool's first
     acquire only.
   - `zerops_workflow action="start" workflow="develop" intent="{task-description}" scope=["<pool>"]`
-    answers with the loop — work, commit and push, sync, release. In a linked
-    Mate a paired pool gets edit guidance; otherwise a paired pool opens a
-    deploy session on its stage. An unpaired pool opens no session: nothing
+    answers with the whole loop — work, commit and push, sync, release. For
+    a pool a stage is paired with, it opens the session on that stage, which
+    deploys from your lease; for any other pool it opens none: nothing
     deploys or verifies a pool itself.
   - Look at each edit on the lease's preview, in seconds:
     `zerops_dev_server action=status hostname="<alias>" name="<server>"`
     names its `previewUrl`, and `zerops_verify serviceHostname="<alias>"`
-    opens it in the browser.
+    opens it in the browser. A deploy of the branch to its stage builds it the
+    production way, in minutes: that stage check runs once per change, never
+    per edit or ask.
 - **Infrastructure an app uses.** The app calls its orchestrator with
   `${<pool>_API_TOKEN}`. Leave it to the app: a lease takes one of its
   containers away from it.

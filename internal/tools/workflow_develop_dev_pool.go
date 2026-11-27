@@ -20,6 +20,13 @@ import (
 // container, work in it, push, sync, release.
 const developDevPoolAtomID = "develop-dev-pool"
 
+func devPoolBriefingAtomID(mate bool) string {
+	if mate {
+		return "develop-dev-pool-mate"
+	}
+	return developDevPoolAtomID
+}
+
 // editBriefing derives the same copy and change facts as where, but renders
 // every selected copy and the edit atoms rather than the turn's short line.
 func editBriefing(ctx context.Context, client platform.Client, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, scope []string, corpus []workflow.KnowledgeAtom) ([]string, workflow.Plan, error) {
@@ -321,7 +328,7 @@ func renderDevPoolBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus())
 	}
 	guidance := []string{devPoolBriefingLead(pools)}
-	if body := atomBody(corpus, developDevPoolAtomID); body != "" {
+	if body := atomBody(corpus, devPoolBriefingAtomID(envelope.Mate)); body != "" {
 		guidance = append(guidance, body)
 	}
 	plan := workflow.Plan{Primary: workflow.LeaseAcquireAction(pools)}

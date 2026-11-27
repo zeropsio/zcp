@@ -57,7 +57,8 @@ its containers away from the app.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
    — the repository and the branch come from the lease. Describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`,
-   naming the branch's lease preview URLs as where to try it.
+   naming the branch's lease preview URLs as where to try it and which push
+   last built and verified on the stage.
    Pushing to the branch again moves its change,
    a draft until described again; to add work to it, lease the branch again
    if it was released.
@@ -87,13 +88,20 @@ edit there. Its first page after a start compiles for a minute or two; sign
 in there once. With several servers that listen, mark the one the preview
 reaches with `"preview": true` — one per pool.
 
-**Stage.** The part's stage is not where edits are seen: it runs `main` from
-its birth, then the last work deployed to it, and nothing puts `main` back
-on it. For an app's first pass, build or infrastructure work, or at the
-person's request, deploy from that branch's own lease with
-`zerops_deploy sourceService="<alias>" targetService="<stage>"`, then verify it
-with `zerops_verify serviceHostname="<stage>"` and say why you are building it.
-To deploy `main` in one of those cases:
+**Stage.** The part's stage is your test bench, not where edits are seen:
+it runs `main` from its birth, then the last work deployed to it for a
+check, and nothing puts `main` back on it.
+
+**Stage check.** The production build, once per change, before its first
+describe, and again when a push changes dependencies, build or deploy config
+or env.
+Deploy the pushed branch from its lease,
+`zerops_deploy sourceService="<alias>" targetService="<stage>"`, and verify it
+with `zerops_verify serviceHostname="<stage>"`. The stage keeps it after the
+check. A build that fails leaves the stage on what it ran; fix the branch,
+push, and check again. Run one branch's check at a time per stage: a check
+from another lease replaces it. Deploy `main` onto a stage only when you or
+the person want it there:
 `zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
 ships `origin/main` as the lease last fetched it: run
 `zcp git <alias> fetch origin` first to ship main as HQ has it now. Verify a container with
@@ -103,7 +111,7 @@ supervisor and the dev servers.
 **A pool or stage that is not built.** zcp builds a part's pool and stage
 from `main` at the Mate's birth; `zerops_standup` gives each one's state,
 cause and `next` step. A ready pool's failed stage is fixed from a branch
-lease as an app's first pass; anything else through a change on `main`, then
+lease, as a stage check; anything else through a change on `main`, then
 `zerops_standup` again.
 
 **Data.** Every lease of a part uses the part's dev database. The pool's
@@ -210,8 +218,8 @@ leases are keyed by branch, so they never meet.
   core or many child processes can use them up: SSH to the lease then fails
   with `fork/exec /bin/bash: resource temporarily unavailable` while memory
   is fine, and the lease may then neither release nor restart cleanly. Cap
-  the build's parallelism. A stage build permitted by the rule above builds
-  in a container of its own.
+  the build's parallelism, or run the full build as a deploy to the stage,
+  which builds in a container of its own.
 - A lease that stops answering is reported to the person at once, never
   waited on or polled in a loop: `zerops_lease action=status` marks it
   `notAnswering` with why — at its process limit nothing new starts in it

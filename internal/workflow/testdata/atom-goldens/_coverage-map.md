@@ -50,6 +50,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-deploy-files-self-deploy` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-deploy-modes` | 5 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/first-deploy-unset-decision, develop/standup-stage-out-of-scope |
 | `develop-dev-pool` | 1 | develop/dev-pool-dev-service |
+| `develop-dev-pool-mate` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-dev-server-reason-codes` | 3 | develop/dev-pool-dev-service, develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
 | `develop-dev-server-triage` | 3 | develop/dev-pool-dev-service, develop/multi-service-scope-narrow, develop/steady-dev-auto-container |
 | `develop-dynamic-runtime-start-container` | 13 | develop/dev-pool-dev-service, develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-unset-decision, develop/git-push-broken, develop/git-push-configured-webhook, develop/monorepo-three-parts, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/standup-dev-deployed-wired, develop/standup-stage-out-of-scope, develop/steady-dev-auto-container |
@@ -108,6 +109,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `idle-adopt-entry` | 1 | idle/adopt-only |
 | `idle-bootstrap-entry` | 1 | idle/empty |
 | `idle-dev-pool-entry` | 1 | idle/dev-pool-only |
+| `idle-dev-pool-entry-mate` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `idle-develop-entry` | 1 | idle/bootstrapped-with-managed |
 | `idle-launch-entry` | 1 | idle/bootstrapped-with-managed |
 | `launch-classify-platform-envs` | 1 | launch-production/active |
