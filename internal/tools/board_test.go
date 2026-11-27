@@ -152,6 +152,7 @@ func TestBoardPropose_BD2_RefusedBelowTheMateThatDrawsTheCard(t *testing.T) {
 }
 
 // witness: internal/tools/board.go | case t.Taker.Kind == hq.TakerPerson && t.Taker.MateProjectID == own: → case t.Taker.Kind == hq.TakerPerson && t.Taker.MateProjectID == "":
+// witness: internal/tools/board.go | return "a person, on the Board" → return t.Label
 func TestBoardList_BD3_TellsEachOpenTaskAndWhoHasIt(t *testing.T) {
 	t.Parallel()
 	h := &boardHQ{status: http.StatusOK, body: `{"tasks":[
@@ -159,7 +160,8 @@ func TestBoardList_BD3_TellsEachOpenTaskAndWhoHasIt(t *testing.T) {
 		{"id":"t2","title":"Sort orders","state":"taken","label":"","mate":{"projectId":"mate-1","name":"Ivo"},"taker":{"kind":"person","userId":"u1","mateProjectId":"mate-1"},"source":{"kind":"conversation","mateProjectId":"mate-2"}},
 		{"id":"t3","title":"Login fails","state":"working","label":"web#12","mate":{"projectId":"mate-3","name":"Pool One"},"taker":{"kind":"pool","mateProjectId":"mate-3"},"source":{"kind":"github-issue"}},
 		{"id":"t4","title":"Nightly report","state":"working","label":"the nightly schedule","mate":{"projectId":"mate-4","name":"Pool Two"}},
-		{"id":"t5","title":"Dark mode","state":"taken","label":"","mate":{"projectId":"mate-5","name":"Ada"},"taker":{"kind":"person","userId":"u2","mateProjectId":"mate-5"},"source":{"kind":"conversation","mateProjectId":"mate-5"}}
+		{"id":"t5","title":"Dark mode","state":"taken","label":"","mate":{"projectId":"mate-5","name":"Ada"},"taker":{"kind":"person","userId":"u2","mateProjectId":"mate-5"},"source":{"kind":"conversation","mateProjectId":"mate-5"}},
+		{"id":"t6","title":"Export orders","state":"queued","label":"","mate":null,"taker":null,"source":{"kind":"board","title":"Export orders","putBy":"u3"}}
 	]}`}
 	result := callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_list", map[string]any{})
 	if got := h.seen(); len(got) != 1 || got[0] != "GET /api/mate/tasks Project unit-key" {
@@ -175,6 +177,7 @@ func TestBoardList_BD3_TellsEachOpenTaskAndWhoHasIt(t *testing.T) {
 		{ID: "t3", Title: "Login fails", State: "working", With: "Pool One, an automated Mate", From: "web#12"},
 		{ID: "t4", Title: "Nightly report", State: "working", With: "Pool Two", From: "the nightly schedule"},
 		{ID: "t5", Title: "Dark mode", State: "taken", With: "a person, in Ada", From: "a conversation in another Mate"},
+		{ID: "t6", Title: "Export orders", State: "queued", From: "a person, on the Board"},
 	}
 	if fmt.Sprint(answer.Tasks) != fmt.Sprint(want) || answer.More != 0 {
 		t.Errorf("tasks = %+v, more %d; want %+v", answer.Tasks, answer.More, want)
@@ -316,11 +319,12 @@ func TestBoardPropose_BD7_APlanRefusedBelowTheMateThatDrawsIt(t *testing.T) {
 }
 
 // witness: internal/tools/board.go | title = titles[need.TaskID] → title = ""
+// witness: internal/tools/board.go | if t.State == hq.TaskHeld { → if t.State == "" {
 func TestBoardList_BD8_TellsEachTasksNeedsAndTheHeldState(t *testing.T) {
 	t.Parallel()
 	h := &boardHQ{status: http.StatusOK, body: `{"tasks":[
 		{"id":"t1","title":"Add the column","state":"working","mate":{"projectId":"mate-3","name":"Pool One"},"taker":{"kind":"pool","mateProjectId":"mate-3"}},
-		{"id":"t2","title":"Serve it","state":"held","needs":[{"taskId":"t1","state":"waiting"}]},
+		{"id":"t2","title":"Serve it","state":"held","mate":{"projectId":"mate-3","name":"Pool One"},"needs":[{"taskId":"t1","state":"waiting"}]},
 		{"id":"t3","title":"Show it","state":"held","needs":[{"taskId":"t0","state":"met","title":"Plan the discount"},{"taskId":"t2","state":"waiting"},{"taskId":"t9","state":"broken"}]}
 	]}`}
 	var answer boardListAnswer
@@ -335,7 +339,7 @@ func TestBoardList_BD8_TellsEachTasksNeedsAndTheHeldState(t *testing.T) {
 			{ID: "t0", Title: "Plan the discount", State: "met"}, {ID: "t2", Title: "Serve it", State: "waiting"}, {ID: "t9", State: "broken"},
 		}},
 	}
-	if fmt.Sprint(answer.Tasks) != fmt.Sprint(want) {
-		t.Errorf("tasks = %+v, want %+v", answer.Tasks, want)
+	if fmt.Sprint(answer.Tasks) != fmt.Sprint(want) || !strings.Contains(answer.NextActions, "A held task is on the board too") {
+		t.Errorf("tasks = %+v, %q; want %+v and the held task told", answer.Tasks, answer.NextActions, want)
 	}
 }

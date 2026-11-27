@@ -17,9 +17,17 @@ const (
 	TakerPerson = "person"
 )
 
-// SourceConversation is the kind of a task a person put on the board from a
-// conversation in a Mate.
-const SourceConversation = "conversation"
+// Kinds of where a task came from that zcp tells apart: a person put it on
+// the board from a conversation in a Mate, or on the Board itself. Any other
+// kind is told by the task's label.
+const (
+	SourceConversation = "conversation"
+	SourceBoard        = "board"
+)
+
+// TaskHeld is the state of a task on the board that waits on the tasks it
+// needs; HQ hands it to nobody until they are met.
+const TaskHeld = "held"
 
 // TaskMate is the Mate a task is with, as HQ names it now.
 type TaskMate struct {
@@ -51,8 +59,8 @@ type TaskNeed struct {
 }
 
 // Task is one open task of the Mate's application as `GET /api/mate/tasks`
-// lists it; zcp reads only what it tells the agent. Needs is absent from an
-// HQ that keeps none, as is the held state.
+// lists it; zcp reads only what it tells the agent, leniently: a missing
+// Needs is none, an unknown state or source kind is told as HQ names it.
 type Task struct {
 	ID     string      `json:"id"`
 	Title  string      `json:"title"`

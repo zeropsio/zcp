@@ -199,6 +199,12 @@ func boardListOf(tasks []hq.Task, own string) boardListAnswer {
 	default:
 		answer.NextActions = "These are the board's open tasks. Propose only work none of them already covers; when one does, tell the person in one sentence that it is on the board, and propose nothing."
 	}
+	for _, t := range tasks {
+		if t.State == hq.TaskHeld {
+			answer.NextActions += " A held task is on the board too, waiting on the tasks it needs: it covers its work like any other."
+			break
+		}
+	}
 	return answer
 }
 
@@ -232,7 +238,7 @@ func taskHolder(t hq.Task, own string) string {
 			return taskMateName(t, t.Taker.MateProjectID) + ", an automated Mate"
 		}
 	}
-	if t.State == "queued" || t.Mate == nil {
+	if t.State == "queued" || t.State == hq.TaskHeld || t.Mate == nil {
 		return ""
 	}
 	return taskMateName(t, t.Mate.ProjectID)
@@ -247,13 +253,15 @@ func taskMateName(t hq.Task, project string) string {
 }
 
 // taskFrom is where a task came from: a conversation, in this Mate or
-// another, or HQ's own label of its source.
+// another, a person on the Board itself, or HQ's own label of its source.
 func taskFrom(t hq.Task, own string) string {
-	if t.Source != nil && t.Source.Kind == hq.SourceConversation {
-		if t.Source.MateProjectID == own {
-			return "a conversation in this Mate"
-		}
+	switch {
+	case t.Source != nil && t.Source.Kind == hq.SourceConversation && t.Source.MateProjectID == own:
+		return "a conversation in this Mate"
+	case t.Source != nil && t.Source.Kind == hq.SourceConversation:
 		return "a conversation in another Mate"
+	case t.Source != nil && t.Source.Kind == hq.SourceBoard:
+		return "a person, on the Board"
 	}
 	return t.Label
 }
