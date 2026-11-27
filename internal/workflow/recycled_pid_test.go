@@ -7,7 +7,7 @@ import (
 
 // TestClassifySessions_RecycledPID_BucketsAsDead pins the registry-level effect
 // of the two-state liveness check: an entry whose PID is alive (our own) but
-// whose recorded StartTime is foreign is classified DEAD, so auto-recovery can
+// whose recorded StartTime is foreign is classified DEAD, so explicit resume can
 // reclaim the session ID instead of colliding with a wedged ghost.
 func TestClassifySessions_RecycledPID_BucketsAsDead(t *testing.T) {
 	t.Parallel()

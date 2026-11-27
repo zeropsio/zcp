@@ -41,7 +41,7 @@ Vocabulary: `StateEnvelope`, `Plan`, `NextAction`, `KnowledgeAtom`, `AxisVector`
                              │
 ```
 
-**Invariant**: Only one non-idle workflow per PID at a time. A second `start` while non-idle returns `ErrWorkflowActive` with a typed `Plan` offering close-vs-continue. We never silently run parallel sessions in one PID.
+**Invariant**: At most one non-idle stateful workflow per PID at a time.
 
 ---
 
@@ -157,7 +157,7 @@ Edge case: plan generates `[postgresql@16]` with no runtimes.
 
 ### 2.4 Route `resume` — Resume interrupted session
 
-**Precondition**: registry carries a dead-PID bootstrap session for this project. The engine auto-claims it on first call; `route=resume` is surfaced with the `sessionId` that will be reattached.
+**Precondition**: the agent resumes a dead-PID bootstrap session explicitly with its `sessionId`.
 
 - **Plan.Primary** = `{iterate bootstrap at the step where the previous session stopped, rationale: "Continue the prior bootstrap at its last completed step."}`
 - **Atoms**: `bootstrap-resume`.

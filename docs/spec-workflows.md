@@ -1185,8 +1185,7 @@ WorkflowState {
 }
 ```
 
-Lifetime = workflow duration. Survives process restart via registry
-claim-on-boot (dead-PID auto-recovery).
+Lifetime = workflow duration.
 
 ### 7.2 Work Sessions (Develop)
 
