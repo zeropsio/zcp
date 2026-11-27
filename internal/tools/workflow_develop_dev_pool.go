@@ -23,16 +23,29 @@ const developDevPoolAtomID = "develop-dev-pool"
 // editBriefing derives the same copy and change facts as where, but renders
 // every selected copy and the edit atoms rather than the turn's short line.
 func editBriefing(ctx context.Context, client platform.Client, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, scope []string, corpus []workflow.KnowledgeAtom) ([]string, workflow.Plan, error) {
+	edit, err := readEditBriefing(ctx, client, projectID, stateDir, rt, ssh, envelope, scope, corpus)
+	if err != nil {
+		return nil, workflow.Plan{}, err
+	}
+	return composeEditGuidance(envelope, corpus, edit.matches, edit.lines), edit.plan, nil
+}
+
+type editBriefingContent struct {
+	matches []workflow.MatchedRender
+	lines   []string
+	plan    workflow.Plan
+}
+
+func readEditBriefing(ctx context.Context, client platform.Client, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, scope []string, corpus []workflow.KnowledgeAtom) (editBriefingContent, error) {
 	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, SSH: ssh,
 		Swarm: ops.NewSwarmFactory(&http.Client{Timeout: leaseStatusTimeout}), Host: envelopeLeaseHost(rt)}
 	g := newWhereGatherer(deps, rt, "", time.Now(), nil)
 	var facts workflow.WhereFacts
 	read := false
 	if g != nil {
-		g.edit = true
-		err := g.gather(ctx)
+		err := g.gatherEdit(ctx, envelope)
 		if err == nil {
-			envelope, facts = g.env, g.facts()
+			facts = g.facts()
 			read = g.haveEnvelope
 			for i := range facts.Copies {
 				if facts.Copies[i].WorkUnread == whereNoAnswer {
@@ -53,20 +66,29 @@ func editBriefing(ctx context.Context, client platform.Client, projectID, stateD
 	editEnvelope.Services = editAtomServices(envelope, scope)
 	matches, err := workflow.Synthesize(editEnvelope, corpus)
 	if err != nil {
-		return nil, workflow.Plan{}, fmt.Errorf("synthesize edit guidance: %w", err)
+		return editBriefingContent{}, fmt.Errorf("synthesize edit guidance: %w", err)
 	}
-	guidance := workflow.BodiesOf(matches)
+	var lines []string
 	if !read {
-		guidance = append(guidance, "Working copies were not fully read; their next step is unknown.")
+		lines = append(lines, "Working copies were not fully read; their next step is unknown.")
 	}
 	if copies := workflow.RenderEditCopies(facts); copies != "" {
-		guidance = append(guidance, copies)
+		lines = append(lines, copies)
 	}
 	for _, pool := range missing {
-		guidance = append(guidance, fmt.Sprintf("%s: step: acquire a lease of this pool for the branch.", pool))
+		lines = append(lines, fmt.Sprintf("%s: step: acquire a lease of this pool for the branch.", pool))
 	}
-	plan := editNext(facts.Copies, missing)
-	return guidance, plan, nil
+	return editBriefingContent{matches: matches, lines: lines, plan: editNext(facts.Copies, missing)}, nil
+}
+
+// Reserve the fixed copy lines before the shared composer demotes atom bodies.
+func composeEditGuidance(envelope workflow.StateEnvelope, corpus []workflow.KnowledgeAtom, matches []workflow.MatchedRender, lines []string) []string {
+	budget := workflow.GuidanceBudget(envelope)
+	for _, line := range lines {
+		budget -= len(line) + 2*(strings.Count(line, "\n")+1)
+	}
+	matches = workflow.ComposeUnderBudget(matches, corpus, max(budget, 0))
+	return append(workflow.BodiesOf(matches), lines...)
 }
 
 // editAtomServices binds service-specific edit atoms to the targets named by
@@ -163,12 +185,12 @@ func renderEditBriefing(ctx context.Context, engine *workflow.Engine, client pla
 	return briefingResult(workflow.Response{Envelope: envelope, Guidance: guidance, Plan: &plan})
 }
 
-func statusEditBriefing(ctx context.Context, client platform.Client, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, corpus []workflow.KnowledgeAtom) ([]string, workflow.Plan, bool, error) {
+func statusEditBriefing(ctx context.Context, client platform.Client, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, corpus []workflow.KnowledgeAtom) (editBriefingContent, bool, error) {
 	if !rt.MateEnabled {
-		return nil, workflow.Plan{}, false, nil
+		return editBriefingContent{}, false, nil
 	}
 	if _, linked := openHQ(http.DefaultClient, rt); !linked {
-		return nil, workflow.Plan{}, false, nil
+		return editBriefingContent{}, false, nil
 	}
 	var scope []string
 	for _, service := range envelope.Services {
@@ -177,10 +199,10 @@ func statusEditBriefing(ctx context.Context, client platform.Client, projectID, 
 		}
 	}
 	if len(scope) == 0 {
-		return nil, workflow.Plan{}, false, nil
+		return editBriefingContent{}, false, nil
 	}
-	guidance, plan, err := editBriefing(ctx, client, projectID, stateDir, rt, ssh, envelope, scope, corpus)
-	return guidance, plan, true, err
+	edit, err := readEditBriefing(ctx, client, projectID, stateDir, rt, ssh, envelope, scope, corpus)
+	return edit, true, err
 }
 
 // devPoolStart is what a develop start makes of the project's Swarm pools

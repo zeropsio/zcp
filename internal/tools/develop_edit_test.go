@@ -103,7 +103,8 @@ func TestEditStatus_WD4_DeployAndEditAreBothVisible(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			guidance, plan := addEditStatus(tt.phase, []string{"deploy"}, deploy, []string{"edit"}, edit, tt.hasEdit)
+			matches, plan := addEditStatus(tt.phase, []workflow.MatchedRender{{Body: "deploy"}}, deploy, []workflow.MatchedRender{{Body: "edit"}}, edit, tt.hasEdit)
+			guidance := workflow.BodiesOf(matches)
 			if !reflect.DeepEqual(guidance, tt.guidance) || plan.Primary.Label != tt.next {
 				t.Errorf("status = %v, next %q; want %v, %q", guidance, plan.Primary.Label, tt.guidance, tt.next)
 			}
@@ -191,6 +192,101 @@ func TestEditAtoms_WD10_UseTheEditScope(t *testing.T) {
 			text := strings.Join(guidance, "\n")
 			if !strings.Contains(text, "common guidance") || strings.Contains(text, "classic guidance") != tt.classic || strings.Contains(text, "pool guidance") != tt.pool {
 				t.Errorf("guidance = %q, want classic %v and pool %v", text, tt.classic, tt.pool)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/workflow_develop_dev_pool.go | matches = workflow.ComposeUnderBudget(matches, corpus, max(budget, 0)) → matches = matches
+func TestEditBudget_WD11_StartAndStatusComposeAllAtoms(t *testing.T) {
+	t.Parallel()
+	corpus := []workflow.KnowledgeAtom{
+		{ID: "edit", Title: "Edit", Priority: 2, Axes: workflow.AxisVector{Phases: []workflow.Phase{workflow.PhaseDevelopEdit}}, Body: "Edit step.\n\n" + strings.Repeat("e", 28000)},
+		{ID: "deploy", Title: "Deploy", Priority: 1, Axes: workflow.AxisVector{Phases: []workflow.Phase{workflow.PhaseDevelopActive}}, Body: "Deploy step.\n\n" + strings.Repeat("d", 14000)},
+	}
+	tests := []struct {
+		name   string
+		status bool
+	}{
+		{"edit start", false},
+		{"status beside deploy", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := workflow.StateEnvelope{Phase: workflow.PhaseDevelopActive}
+			var guidance []string
+			if tt.status {
+				edit, err := readEditBriefing(context.Background(), nil, "", "", runtime.Info{}, nil, env, nil, corpus)
+				if err != nil {
+					t.Fatal(err)
+				}
+				matches, err := workflow.Synthesize(env, corpus)
+				if err != nil {
+					t.Fatal(err)
+				}
+				guidance, _ = statusGuidance(env, corpus, matches, workflow.Plan{}, edit, true)
+			} else {
+				var err error
+				guidance, _, err = editBriefing(context.Background(), nil, "", "", runtime.Info{}, nil, env, nil, corpus)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			text := strings.Join(guidance, "")
+			if len(text) > workflow.GuidanceBudget(env) || !strings.Contains(text, "Edit step.") || (tt.status && !strings.Contains(text, "Deploy step.")) {
+				t.Errorf("guidance: %d bytes, edit %v, deploy %v; budget %d", len(text), strings.Contains(text, "Edit step."), strings.Contains(text, "Deploy step."), workflow.GuidanceBudget(env))
+			}
+		})
+	}
+}
+
+// witness: internal/tools/workflow_develop_dev_pool.go | budget -= len(line) + 2*(strings.Count(line, "\n")+1) → budget -= 2*(strings.Count(line, "\n")+1)
+func TestEditBudget_WD12_ReservesCopyLines(t *testing.T) {
+	t.Parallel()
+	env := workflow.StateEnvelope{}
+	body := "Edit step.\n\n" + strings.Repeat("e", 19000)
+	corpus := []workflow.KnowledgeAtom{{ID: "edit", Title: "Edit", Priority: 1, Body: body}}
+	tests := []struct {
+		name    string
+		copies  string
+		demoted bool
+	}{
+		{"fits", "copy", false},
+		{"copy lines take the remaining room", strings.Repeat("c", 6000), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			guidance := composeEditGuidance(env, corpus, []workflow.MatchedRender{{AtomID: "edit", Body: body}}, []string{tt.copies})
+			if len(guidance) != 2 || guidance[1] != tt.copies || (guidance[0] != body) != tt.demoted || len(strings.Join(guidance, "")) > workflow.GuidanceBudget(env) {
+				t.Errorf("copy line preserved = %v, atom demoted = %v, bytes = %d", len(guidance) == 2 && guidance[1] == tt.copies, len(guidance) > 0 && guidance[0] != body, len(strings.Join(guidance, "")))
+			}
+		})
+	}
+}
+
+// witness: internal/tools/workflow_develop_dev_pool.go | err := g.gatherEdit(ctx, envelope) → err := g.gather(ctx)
+func TestEditReads_WD13_ReusesTheSuppliedEnvelope(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, want string
+		leases     []workflow.LeaseSnapshot
+	}{
+		{"empty pool", "acquire a lease", nil},
+		{"held lease", "pool-1", []workflow.LeaseSnapshot{{Alias: "pool-1", Pool: "pool", State: ops.LeaseStateHeld, Branch: "topic"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock()
+			env := workflow.StateEnvelope{Services: []workflow.ServiceSnapshot{{Hostname: "pool", DevIsPool: true}}, Leases: &tt.leases}
+			guidance, plan, err := editBriefing(context.Background(), client, "already-read", "", runtime.Info{MateEnabled: true}, nil, env, []string{"pool"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(guidance, "\n") + plan.Primary.Label; !strings.Contains(got, tt.want) || client.CallCount("GetProject") != 0 || client.CallCount("ListServices") != 0 {
+				t.Errorf("briefing = %q; project reads = %d, service reads = %d", got, client.CallCount("GetProject"), client.CallCount("ListServices"))
 			}
 		})
 	}

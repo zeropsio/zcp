@@ -44,7 +44,6 @@ type whereEvent struct {
 type whereGatherer struct {
 	deps         ops.LeaseDeps
 	rt           runtime.Info
-	edit         bool
 	alias        string
 	now          time.Time
 	active       ActiveVersionReader
@@ -90,6 +89,28 @@ func (g *whereGatherer) gather(ctx context.Context) error {
 		return fmt.Errorf("where: no project key or project")
 	}
 	g.start(ctx)
+	return g.receive(ctx)
+}
+
+// gatherEdit uses the caller's already-read project and leases, then reads
+// the checkout and change facts that the edit step needs.
+func (g *whereGatherer) gatherEdit(ctx context.Context, env workflow.StateEnvelope) error {
+	if g == nil {
+		return fmt.Errorf("where: no project key or project")
+	}
+	g.pending = 0
+	g.havePreview, g.haveEnvelope, g.env = true, true, env
+	g.changes = env.HQChanges
+	for _, service := range env.Services {
+		if len(service.PairStageHostnames()) > 0 && !service.DevIsPool {
+			g.startDev(ctx, service.Hostname, service.HQRepo)
+		}
+	}
+	g.startLeases(ctx)
+	return g.receive(ctx)
+}
+
+func (g *whereGatherer) receive(ctx context.Context) error {
 	for g.pending > 0 {
 		select {
 		case event := <-g.events:
@@ -114,9 +135,6 @@ func (g *whereGatherer) start(ctx context.Context) {
 	deps := g.deps
 	options := leaseEnvelopeOptions(deps.Client, deps.ProjectID, deps.StateDir, g.rt, 3*time.Second,
 		workflow.WithLeaseReader(leaseReaderWith(deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm, deps.Host, 3*time.Second)), preview)
-	if g.edit {
-		options = append(options, workflow.WithEditPhase())
-	}
 	go func() {
 		env, err := workflow.ComputeEnvelope(ctx, deps.Client, deps.StateDir, deps.ProjectID, g.rt, g.now, options...)
 		g.send(ctx, whereEvent{kind: "envelope", envelope: env, err: err})
@@ -181,15 +199,7 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 			return fmt.Errorf("where: platform or local project state could not be read")
 		}
 		g.haveEnvelope, g.env = true, event.envelope
-		for _, lease := range g.env.LeaseList() {
-			if ctx.Err() == nil && lease.State == ops.LeaseStateHeld && !lease.Unverified {
-				g.startStatus(ctx, lease.Alias, true)
-				_, repo, _ := hq.RepoOfURL(hqAddress(g.rt), lease.Repo)
-				if g.rt.MateEnabled && repo != "" {
-					g.startHead(ctx, lease.Alias, ops.LeaseWorkDir, repo)
-				}
-			}
-		}
+		g.startLeases(ctx)
 	case "changes":
 		g.pending--
 		g.changes = event.changes
@@ -216,6 +226,18 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 		g.work[event.host] = event.read
 	}
 	return nil
+}
+
+func (g *whereGatherer) startLeases(ctx context.Context) {
+	for _, lease := range g.env.LeaseList() {
+		if ctx.Err() == nil && lease.State == ops.LeaseStateHeld && !lease.Unverified {
+			g.startStatus(ctx, lease.Alias, true)
+			_, repo, _ := hq.RepoOfURL(hqAddress(g.rt), lease.Repo)
+			if g.rt.MateEnabled && repo != "" {
+				g.startHead(ctx, lease.Alias, ops.LeaseWorkDir, repo)
+			}
+		}
+	}
 }
 
 func (g *whereGatherer) startVersion(ctx context.Context, host, id string) {

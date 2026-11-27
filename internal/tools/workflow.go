@@ -1216,7 +1216,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	if err != nil {
 		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus()), nil, nil
 	}
-	editGuidance, editPlan, hasEdit, err := statusEditBriefing(ctx, client, projectID, engine.StateDir(), rt, sshDeployer, envelope, corpus)
+	edit, hasEdit, err := statusEditBriefing(ctx, client, projectID, engine.StateDir(), rt, sshDeployer, envelope, corpus)
 	if err != nil {
 		return convertError(wrapStageErr("Edit briefing", err), WithRecoveryStatus()), nil, nil
 	}
@@ -1224,15 +1224,8 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	if err != nil {
 		return convertError(wrapStageErr("Synthesize guidance", err), WithRecoveryStatus()), nil, nil
 	}
-	// Budget backstop (R1): keep the synthesized guidance under the payload cap
-	// by demoting the lowest-relevance atoms to a one-line head rather than
-	// letting an oversized live payload hit the MCP transport cap. The budget
-	// counts the per-service lines rendered above the guidance. No-op when the
-	// matched set already fits.
-	matches = workflow.ComposeUnderBudget(matches, corpus, workflow.GuidanceBudget(envelope))
 	plan := workflow.BuildPlan(envelope)
-	guidance := workflow.BodiesOf(matches)
-	guidance, plan = addEditStatus(envelope.Phase, guidance, plan, editGuidance, editPlan, hasEdit)
+	guidance, plan := statusGuidance(envelope, corpus, matches, plan, edit, hasEdit)
 	if !rt.InContainer && projectID != "" {
 		if extra := localDotenvGuidanceAddendum(ctx, client, projectID); extra != "" {
 			guidance = append(guidance, extra)
@@ -1257,7 +1250,12 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	}), nil, nil
 }
 
-func addEditStatus(phase workflow.Phase, guidance []string, plan workflow.Plan, editGuidance []string, editPlan workflow.Plan, hasEdit bool) ([]string, workflow.Plan) {
+func statusGuidance(envelope workflow.StateEnvelope, corpus []workflow.KnowledgeAtom, matches []workflow.MatchedRender, plan workflow.Plan, edit editBriefingContent, hasEdit bool) ([]string, workflow.Plan) {
+	matches, plan = addEditStatus(envelope.Phase, matches, plan, edit.matches, edit.plan, hasEdit)
+	return composeEditGuidance(envelope, corpus, matches, edit.lines), plan
+}
+
+func addEditStatus(phase workflow.Phase, guidance []workflow.MatchedRender, plan workflow.Plan, editGuidance []workflow.MatchedRender, editPlan workflow.Plan, hasEdit bool) ([]workflow.MatchedRender, workflow.Plan) {
 	if hasEdit {
 		if phase == workflow.PhaseIdle {
 			guidance, plan = nil, editPlan
