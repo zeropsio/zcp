@@ -70,6 +70,13 @@ const (
 	// zcp refuses the proposal there (CarriesBoard). Set at mate's release.
 	BoardMateVersion = "0.16.346"
 
+	// BoardPlanMateVersion is the first mate release whose board ask draws a
+	// plan — several tasks with their needs — as one card whose Put on board
+	// writes them all (docs/spec-mate.md §6.11): an older Mate draws no plan,
+	// so zcp refuses one there and the agent proposes its tasks one by one
+	// (CarriesBoardPlan). Set at mate's release.
+	BoardPlanMateVersion = "0.16.359"
+
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
 	// on stable v<major>.<minor>.<patch> tags, so this is the stable
@@ -303,6 +310,13 @@ func CarriesCardRestart(installed string) bool {
 func CarriesBoard(installed string) bool {
 	core, _, _ := strings.Cut(installed, "-")
 	return carriesParts(core, BoardMateVersion)
+}
+
+// CarriesBoardPlan reports whether the installed mate version draws a plan
+// of tasks as one board card. An unreadable version carries nothing.
+func CarriesBoardPlan(installed string) bool {
+	core, _, _ := strings.Cut(installed, "-")
+	return carriesParts(core, BoardPlanMateVersion)
 }
 
 func carriesParts(minimum, accepting string) bool {

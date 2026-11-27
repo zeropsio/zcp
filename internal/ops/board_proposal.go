@@ -17,16 +17,18 @@ const (
 	BoardBriefMax = 8000
 )
 
-// BoardProposal is a task the agent proposes for its application's board: Mate
-// draws a card with it in the conversation, and the person's own client puts
-// it on the board when they press Put on board. Nothing is written by the
-// proposal itself.
+// BoardProposal is what the agent proposes for its application's board: one
+// task (Title and Brief) or a plan of several (Plan). Mate draws a card with it
+// in the conversation, and the person's own client puts it on the board when
+// they press Put on board. Nothing is written by the proposal itself.
 type BoardProposal struct {
 	// Title is the task's one line on the board.
-	Title string `json:"title"`
+	Title string `json:"title,omitempty"`
 	// Brief is the whole task, written for whoever takes it, who has not seen
 	// this conversation.
-	Brief string `json:"brief"`
+	Brief string `json:"brief,omitempty"`
+	// Plan is the tasks of a plan in the agent's order (NewBoardPlan).
+	Plan []BoardPlanTask `json:"plan,omitempty"`
 }
 
 // NewBoardProposal checks a proposal and writes nothing: title is one line of

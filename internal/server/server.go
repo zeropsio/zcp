@@ -397,9 +397,9 @@ func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir 
 	tools.RegisterAppPropose(s.server, httpClient, projectID, s.rtInfo)
 	tools.RegisterMcpPropose(s.server, projectID, s.rtInfo)
 	tools.RegisterMateMessages(s.server, httpClient, s.rtInfo)
-	tools.RegisterBoard(s.server, httpClient, s.rtInfo, func() bool {
+	tools.RegisterBoard(s.server, httpClient, s.rtInfo, func() string {
 		installed, _ := mate.InstalledVersion()
-		return mate.CarriesBoard(installed)
+		return installed
 	})
 }
 

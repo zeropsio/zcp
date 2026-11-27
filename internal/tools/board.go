@@ -10,15 +10,26 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// BoardProposeInput is zerops_board_propose's input.
+// BoardProposeInput is zerops_board_propose's input: one task (Title and
+// Brief) or a plan (Tasks), never both.
 type BoardProposeInput struct {
-	Title string `json:"title" jsonschema:"The task in one line, at most 120 characters, as the board lists it."`
-	Brief string `json:"brief" jsonschema:"The whole task, at most 8000 characters, for whoever takes it: they have not seen this conversation. Every member of the organization reads the board: no secret, value or excerpt of this conversation."`
+	Title string               `json:"title,omitempty" jsonschema:"One task: the task in one line, at most 120 characters, as the board lists it."`
+	Brief string               `json:"brief,omitempty" jsonschema:"One task: the whole task, at most 8000 characters, for whoever takes it: they have not seen this conversation. Every member of the organization reads the board: no secret, value or excerpt of this conversation."`
+	Tasks []BoardPlanTaskInput `json:"tasks,omitempty" jsonschema:"A plan, instead of title and brief: 2-20 tasks in the order they must land, for work whose steps build on each other's changes."`
+}
+
+// BoardPlanTaskInput is one task of a proposed plan.
+type BoardPlanTaskInput struct {
+	Key   string   `json:"key" jsonschema:"The task's key within this plan: 1-40 characters of a-z, 0-9 and -."`
+	Title string   `json:"title" jsonschema:"The task in one line, at most 120 characters."`
+	Brief string   `json:"brief" jsonschema:"The whole task, at most 8000 characters, self-contained for whoever takes it: they have seen neither this conversation nor the plan's other briefs. No secret, value or excerpt of this conversation."`
+	Needs []string `json:"needs,omitempty" jsonschema:"The keys of this plan's tasks whose changes this one builds on: it waits until they are done and merged."`
 }
 
 type boardProposed struct {
@@ -31,13 +42,23 @@ type boardProposeAnswer struct {
 }
 
 // boardTask is one open task as zerops_board_list tells it: With is who has
-// it and From where it came from, each absent when HQ says nothing of it.
+// it, From where it came from and Needs the tasks it waits on, each absent
+// when HQ says nothing of it.
 type boardTask struct {
+	ID    string      `json:"id"`
+	Title string      `json:"title"`
+	State string      `json:"state"`
+	With  string      `json:"with,omitempty"`
+	From  string      `json:"from,omitempty"`
+	Needs []boardNeed `json:"needs,omitempty"`
+}
+
+// boardNeed is a task another one needs: its title when HQ or the list names
+// it, and HQ's state of the need (waiting, met or broken).
+type boardNeed struct {
 	ID    string `json:"id"`
-	Title string `json:"title"`
+	Title string `json:"title,omitempty"`
 	State string `json:"state"`
-	With  string `json:"with,omitempty"`
-	From  string `json:"from,omitempty"`
 }
 
 type boardListAnswer struct {
@@ -55,18 +76,19 @@ const boardListMax = 100
 // agent proposes, for its application's board, unasked work it found outside
 // every open change, after reading the board's open tasks
 // (docs/spec-mate.md §6.11). The proposal writes nothing: Mate draws a card
-// and the person's own client puts the task on the board. carriesBoard
-// reports whether the installed Mate draws that card (mate.CarriesBoard).
-func RegisterBoard(srv *mcp.Server, httpClient hq.Doer, rt runtime.Info, carriesBoard func() bool) {
+// and the person's own client puts the task, or the plan's tasks, on the
+// board. installed reads the installed Mate's version, which says whether it
+// draws that card (mate.CarriesBoard, mate.CarriesBoardPlan).
+func RegisterBoard(srv *mcp.Server, httpClient hq.Doer, rt runtime.Info, installed func() string) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_board_propose",
-		Description: "Propose a task for your application's board: unasked work you found outside every open change — another part, another repository, an unrelated bug — or work the person asks to put on the board. List the board first (zerops_board_list). Mate shows the person a card; their Put on board writes it. Writes nothing. Other asked work: do it now.",
+		Description: "Propose a task for your application's board: unasked work found outside every open change — another part or repository, an unrelated bug — or work the person asks to put there. Steps building on each other: one plan with needs. List the board first (zerops_board_list). Mate shows a card; Put on board writes it. Other asked work: do it now.",
 		Annotations: &mcp.ToolAnnotations{Title: "Propose a task for the board", ReadOnlyHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in BoardProposeInput) (*mcp.CallToolResult, any, error) {
-		proposal, err := ops.NewBoardProposal(in.Title, in.Brief)
+		proposal, err := boardProposal(in)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
@@ -75,15 +97,30 @@ func RegisterBoard(srv *mcp.Server, httpClient hq.Doer, rt runtime.Info, carries
 		}
 		// A Mate older than the card shows the call as a plain row: nobody
 		// would see the proposal, let alone put it on the board.
-		if !carriesBoard() {
+		version := installed()
+		if !mate.CarriesBoard(version) {
 			return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 				"This Mate cannot show a board card yet: it comes with a Mate update, so nothing was proposed",
 				"Tell the person in one sentence what you found and that it is outside this work; never start it yourself.")), nil, nil
 		}
+		if proposal.Plan == nil {
+			return jsonResult(boardProposeAnswer{
+				Proposed: boardProposed{Board: proposal},
+				NextActions: "Nothing was written: Mate shows the task in a card in this conversation, where the person can edit the brief and put it on the board. " +
+					"Say one sentence — that you proposed it for the board, in its card — and never start that work yourself, on no branch. " +
+					"Then go on with what the person asked for.",
+			}), nil, nil
+		}
+		// A Mate older than the plan card draws one task's card at most.
+		if !mate.CarriesBoardPlan(version) {
+			return convertError(platform.NewPlatformError(platform.ErrPrerequisiteMissing,
+				"This Mate cannot show a plan card yet: it comes with a Mate update, so nothing was proposed",
+				"Propose the plan's tasks one by one, each with title and brief, in the order they must land, and say in each brief which of them it builds on.")), nil, nil
+		}
 		return jsonResult(boardProposeAnswer{
 			Proposed: boardProposed{Board: proposal},
-			NextActions: "Nothing was written: Mate shows the task in a card in this conversation, where the person can edit the brief and put it on the board. " +
-				"Say one sentence — that you proposed it for the board, in its card — and never start that work yourself, on no branch. " +
+			NextActions: "Nothing was written: Mate shows the plan in one card in this conversation — its tasks, their order and what each needs — where the person can put them on the board together. " +
+				"Say one sentence — that you proposed the plan for the board, in its card — and start none of its tasks yourself, on no branch. " +
 				"Then go on with what the person asked for.",
 		}), nil, nil
 	})
@@ -108,6 +145,24 @@ func RegisterBoard(srv *mcp.Server, httpClient hq.Doer, rt runtime.Info, carries
 	})
 }
 
+// boardProposal checks what the agent proposes: one task, or a plan of
+// several, never both.
+func boardProposal(in BoardProposeInput) (ops.BoardProposal, error) {
+	if len(in.Tasks) == 0 {
+		return ops.NewBoardProposal(in.Title, in.Brief)
+	}
+	if strings.TrimSpace(in.Title) != "" || strings.TrimSpace(in.Brief) != "" {
+		return ops.BoardProposal{}, platform.NewPlatformError(platform.ErrInvalidParameter,
+			"A proposal is one task or a plan, never both",
+			"Pass title and brief for one task, or tasks for a plan whose steps build on each other.")
+	}
+	tasks := make([]ops.BoardPlanTask, 0, len(in.Tasks))
+	for _, task := range in.Tasks {
+		tasks = append(tasks, ops.BoardPlanTask{Key: task.Key, Title: task.Title, Brief: task.Brief, Needs: task.Needs})
+	}
+	return ops.NewBoardPlan(tasks)
+}
+
 // noBoard is why this Mate has no board to propose to or read, "" when it has
 // one or its state is not heard: HQ holds it in no application. undone says
 // what that left undone.
@@ -127,12 +182,16 @@ func noBoard(rt runtime.Info, undone string) string {
 // as the agent reads them beside own, this Mate's project.
 func boardListOf(tasks []hq.Task, own string) boardListAnswer {
 	answer := boardListAnswer{Tasks: []boardTask{}}
+	titles := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		titles[t.ID] = t.Title
+	}
 	for i, t := range tasks {
 		if i == boardListMax {
 			answer.More = len(tasks) - boardListMax
 			break
 		}
-		answer.Tasks = append(answer.Tasks, boardTask{ID: t.ID, Title: t.Title, State: t.State, With: taskHolder(t, own), From: taskFrom(t, own)})
+		answer.Tasks = append(answer.Tasks, boardTask{ID: t.ID, Title: t.Title, State: t.State, With: taskHolder(t, own), From: taskFrom(t, own), Needs: taskNeeds(t, titles)})
 	}
 	switch {
 	case len(tasks) == 0:
@@ -141,6 +200,20 @@ func boardListOf(tasks []hq.Task, own string) boardListAnswer {
 		answer.NextActions = "These are the board's open tasks. Propose only work none of them already covers; when one does, tell the person in one sentence that it is on the board, and propose nothing."
 	}
 	return answer
+}
+
+// taskNeeds is what a task needs, each named by its title: HQ's own, else
+// the title of the open task of that id; nil for a task that needs nothing.
+func taskNeeds(t hq.Task, titles map[string]string) []boardNeed {
+	var needs []boardNeed
+	for _, need := range t.Needs {
+		title := need.Title
+		if title == "" {
+			title = titles[need.TaskID]
+		}
+		needs = append(needs, boardNeed{ID: need.TaskID, Title: title, State: need.State})
+	}
+	return needs
 }
 
 // taskHolder is who has a task, "" for nobody: the taker HQ names, else, from

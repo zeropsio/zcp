@@ -64,11 +64,11 @@ func boardRuntime(t *testing.T, app bool) runtime.Info {
 }
 
 // callBoard calls one board tool with args on a server RegisterBoard alone
-// registers.
-func callBoard(t *testing.T, rt runtime.Info, h *boardHQ, carries bool, name string, args map[string]any) *mcp.CallToolResult {
+// registers, in a container whose Mate is the installed version.
+func callBoard(t *testing.T, rt runtime.Info, h *boardHQ, installed string, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	RegisterBoard(srv, h.doer(), rt, func() bool { return carries })
+	RegisterBoard(srv, h.doer(), rt, func() string { return installed })
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, st, nil)
@@ -107,7 +107,7 @@ func TestBoardPropose_BD1_AnswersTheCheckedProposalAndWritesNothing(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := &boardHQ{status: http.StatusOK, body: `{}`}
-			result := callBoard(t, boardRuntime(t, true), h, true, "zerops_board_propose", map[string]any{"title": tc.title, "brief": tc.brief})
+			result := callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_propose", map[string]any{"title": tc.title, "brief": tc.brief})
 			if n := len(h.seen()); n != 0 {
 				t.Errorf("the proposal asked HQ %d times, want none", n)
 			}
@@ -129,7 +129,7 @@ func TestBoardPropose_BD1_AnswersTheCheckedProposalAndWritesNothing(t *testing.T
 }
 
 // witness: internal/mate/manifest.go | return carriesParts(core, BoardMateVersion) → core, _, _ = strings.Cut(installed, "+"); return carriesParts(core, BoardMateVersion)
-// witness: internal/tools/board.go | if !carriesBoard() { → if carriesBoard() {
+// witness: internal/tools/board.go | if !mate.CarriesBoard(version) { → if mate.CarriesBoard(version) {
 func TestBoardPropose_BD2_RefusedBelowTheMateThatDrawsTheCard(t *testing.T) {
 	t.Parallel()
 	for installed, want := range map[string]bool{
@@ -142,8 +142,8 @@ func TestBoardPropose_BD2_RefusedBelowTheMateThatDrawsTheCard(t *testing.T) {
 			t.Errorf("CarriesBoard(%q) = %v, want %v", installed, got, want)
 		}
 	}
-	for _, carries := range []bool{true, false} {
-		result := callBoard(t, boardRuntime(t, true), &boardHQ{status: http.StatusOK}, carries, "zerops_board_propose",
+	for installed, carries := range map[string]bool{mate.BoardMateVersion: true, "0.16.0": false} {
+		result := callBoard(t, boardRuntime(t, true), &boardHQ{status: http.StatusOK}, installed, "zerops_board_propose",
 			map[string]any{"title": "Rounding", "brief": "The invoice total rounds each line first."})
 		if refused := result.IsError && strings.Contains(extractText(result), "nothing was proposed"); refused == carries {
 			t.Errorf("a Mate that draws the card = %v: refused = %v: %s", carries, refused, extractText(result))
@@ -161,7 +161,7 @@ func TestBoardList_BD3_TellsEachOpenTaskAndWhoHasIt(t *testing.T) {
 		{"id":"t4","title":"Nightly report","state":"working","label":"the nightly schedule","mate":{"projectId":"mate-4","name":"Pool Two"}},
 		{"id":"t5","title":"Dark mode","state":"taken","label":"","mate":{"projectId":"mate-5","name":"Ada"},"taker":{"kind":"person","userId":"u2","mateProjectId":"mate-5"},"source":{"kind":"conversation","mateProjectId":"mate-5"}}
 	]}`}
-	result := callBoard(t, boardRuntime(t, true), h, true, "zerops_board_list", map[string]any{})
+	result := callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_list", map[string]any{})
 	if got := h.seen(); len(got) != 1 || got[0] != "GET /api/mate/tasks Project unit-key" {
 		t.Errorf("requests = %q, want one GET /api/mate/tasks under the Mate's key", got)
 	}
@@ -184,7 +184,7 @@ func TestBoardList_BD3_TellsEachOpenTaskAndWhoHasIt(t *testing.T) {
 		tasks = append(tasks, fmt.Sprintf(`{"id":"t%d","title":"Task %d","state":"queued"}`, i, i))
 	}
 	h = &boardHQ{status: http.StatusOK, body: `{"tasks":[` + strings.Join(tasks, ",") + `]}`}
-	if err := json.Unmarshal([]byte(extractText(callBoard(t, boardRuntime(t, true), h, true, "zerops_board_list", map[string]any{}))), &answer); err != nil {
+	if err := json.Unmarshal([]byte(extractText(callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_list", map[string]any{}))), &answer); err != nil {
 		t.Fatal(err)
 	}
 	if len(answer.Tasks) != boardListMax || answer.More != 30 {
@@ -209,7 +209,7 @@ func TestBoardList_BD4_SaysEachFailureAndWhetherToAskAgain(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := &boardHQ{status: tc.status, body: tc.body}
-			result := callBoard(t, boardRuntime(t, true), h, true, "zerops_board_list", map[string]any{})
+			result := callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_list", map[string]any{})
 			if !result.IsError || !strings.Contains(extractText(result), tc.want) {
 				t.Errorf("answer = %q, want an error saying %q", extractText(result), tc.want)
 			}
@@ -232,7 +232,7 @@ func TestBoard_BD5_AMateInNoApplicationHasNoBoard(t *testing.T) {
 	} {
 		for _, app := range []bool{true, false} {
 			h := &boardHQ{status: http.StatusOK, body: `{"tasks":[]}`}
-			result := callBoard(t, boardRuntime(t, app), h, true, call.name, call.args)
+			result := callBoard(t, boardRuntime(t, app), h, mate.BoardPlanMateVersion, call.name, call.args)
 			if refused := result.IsError && strings.Contains(extractText(result), "no application"); refused == app {
 				t.Errorf("%s in an application = %v: refused = %v: %s", call.name, app, refused, extractText(result))
 			}

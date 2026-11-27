@@ -41,8 +41,18 @@ type TaskSource struct {
 	MateProjectID string `json:"mateProjectId,omitempty"`
 }
 
+// TaskNeed is a task another one needs, and HQ's state of that need:
+// waiting, met (it ended done and its changes merged) or broken. Title is
+// read when HQ names it.
+type TaskNeed struct {
+	TaskID string `json:"taskId"`
+	State  string `json:"state"`
+	Title  string `json:"title"`
+}
+
 // Task is one open task of the Mate's application as `GET /api/mate/tasks`
-// lists it; zcp reads only what it tells the agent.
+// lists it; zcp reads only what it tells the agent. Needs is absent from an
+// HQ that keeps none, as is the held state.
 type Task struct {
 	ID     string      `json:"id"`
 	Title  string      `json:"title"`
@@ -51,6 +61,7 @@ type Task struct {
 	Mate   *TaskMate   `json:"mate"`
 	Taker  *TaskTaker  `json:"taker"`
 	Source *TaskSource `json:"source"`
+	Needs  []TaskNeed  `json:"needs"`
 }
 
 // OpenTasks lists the open tasks of the application HQ holds this Mate in.
