@@ -12,3 +12,4 @@
 - WD-12 — Copy lines reserve their space before atom bodies are composed, and remain visible when atom bodies are demoted. Breaks: many working copies make guidance exceed its budget or disappear.
 - WD-13 — An edit briefing uses the caller's project and lease envelope and reads the selected work from it without fetching the project again. Breaks: each status call repeats a project read or discards the copies it already saw.
 - WD-14 — A pool-only develop start uses the standalone or Mate pool guidance for that environment. Breaks: an unpaired Mate is told to stage-check each change or a standalone pool loses that check.
+- WD-15 — A Mate decides an edit before consulting an active bootstrap, while a deploy still waits for that bootstrap. Breaks: a bootstrap refuses an unrelated edit or a deploy interrupts the active bootstrap.

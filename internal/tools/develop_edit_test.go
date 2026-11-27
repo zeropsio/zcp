@@ -14,6 +14,90 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// witness: internal/tools/workflow.go | return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer) → if result := activeWorkflowStartError(engine, input.Workflow); result != nil { return result, nil, nil }; return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer)
+func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		scope      string
+		activeHere bool
+		wantError  bool
+	}{
+		{"other conversation's interrupted bootstrap", "dev", false, false},
+		{"own active bootstrap and edit", "dev", true, false},
+		{"own active bootstrap and deploy", "stage", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+				Hostname: "dev", Mode: topology.ModeStandard, Stages: []topology.StageRef{{Hostname: "stage"}},
+				BootstrappedAt: "2026-01-01T00:00:00Z", HQ: &workflow.HQRepoRef{AppID: "app", Repo: "dev"},
+			}); err != nil {
+				t.Fatalf("write pair: %v", err)
+			}
+			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			id := "interrupted"
+			if tt.activeHere {
+				started, err := engine.BootstrapStartWithRoute("project", "bootstrap", workflow.BootstrapRouteClassic, "")
+				if err != nil {
+					t.Fatalf("start bootstrap: %v", err)
+				}
+				id = started.SessionID
+			} else {
+				state := &workflow.WorkflowState{SessionID: id, ProjectID: "project", Workflow: workflow.WorkflowBootstrap, Bootstrap: &workflow.BootstrapState{Active: true, Steps: []workflow.BootstrapStep{{Name: "discover", Status: "in_progress"}}}}
+				if err := workflow.SaveSessionState(dir, id, state); err != nil {
+					t.Fatalf("save interrupted bootstrap: %v", err)
+				}
+				if err := workflow.RegisterSession(dir, workflow.SessionEntry{SessionID: id, Workflow: workflow.WorkflowBootstrap, ProjectID: "project"}); err != nil {
+					t.Fatalf("register interrupted bootstrap: %v", err)
+				}
+				engine = workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			}
+			before, err := workflow.LoadSessionByID(dir, id)
+			if err != nil {
+				t.Fatalf("load bootstrap: %v", err)
+			}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "dev-id", Name: "dev", Status: platform.ServiceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "code", Source: "CLI", Built: true}},
+				{ID: "stage-id", Name: "stage", Status: platform.ServiceStatusRunning, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			}).WithProject(&platform.Project{ID: "project"})
+			rt := runtime.Info{InContainer: true, MateEnabled: true, HQ: &runtime.HQLink{Origin: "https://example.invalid", ProjectID: "project", Key: "test"}}
+			if !tt.activeHere {
+				status, _, err := handleWorkflowAction(context.Background(), "project", engine, client, nil, nil, nil, WorkflowInput{Action: "status"}, dir, "", nil, nil, rt, "", nil)
+				if err != nil || status == nil || status.IsError || strings.Contains(extractText(status), id) || strings.Contains(extractText(status), "session-active") {
+					t.Fatalf("other conversation's status = %#v, %v", status, err)
+				}
+			}
+			result, _, err := handleStart(context.Background(), "project", engine, client, nil, WorkflowInput{Workflow: workflowDevelop, Scope: []string{tt.scope}}, rt, nil)
+			if err != nil || result == nil || result.IsError != tt.wantError {
+				t.Fatalf("start = %#v, %v; want error %v", result, err, tt.wantError)
+			}
+			if tt.wantError && !strings.Contains(extractText(result), string(platform.ErrWorkflowActive)) {
+				t.Fatalf("deploy refusal = %q", extractText(result))
+			}
+			if !tt.wantError && !strings.Contains(extractText(result), "develop-edit") {
+				t.Fatalf("edit briefing = %q", extractText(result))
+			}
+			after, err := workflow.LoadSessionByID(dir, id)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatalf("bootstrap changed: before %#v, after %#v, error %v", before, after, err)
+			}
+			if !tt.activeHere {
+				original := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+				if resumed, err := original.Resume(id); err != nil || resumed.Bootstrap == nil || !resumed.Bootstrap.Active {
+					t.Fatalf("resume original bootstrap = %#v, %v", resumed, err)
+				}
+				status, _, err := handleWorkflowAction(context.Background(), "project", original, client, nil, nil, nil, WorkflowInput{Action: "status"}, dir, "", nil, nil, rt, "", nil)
+				if err != nil || status == nil || status.IsError || !strings.Contains(extractText(status), id) || !strings.Contains(extractText(status), "session-active") {
+					t.Fatalf("resumed conversation's status = %#v, %v", status, err)
+				}
+			}
+		})
+	}
+}
+
 // witness: internal/tools/workflow_develop.go | if service.DevIsPool { → if false && service.DevIsPool {
 func TestDevelopScope_WD2_EditOnlyForWiredDevCopies(t *testing.T) {
 	t.Parallel()

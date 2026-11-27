@@ -72,6 +72,9 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	if envelope, edit := editScopeEnvelope(ctx, client, engine.StateDir(), projectID, rt, input.Scope); edit {
 		return renderEditBriefing(ctx, engine, client, projectID, rt, sshDeployer, envelope, input.Scope), nil, nil
 	}
+	if result := activeWorkflowStartError(engine, workflowDevelop); result != nil {
+		return result, nil, nil
+	}
 	metas, err := workflow.ListServiceMetas(engine.StateDir())
 	if err != nil {
 		return convertError(platform.NewPlatformError(

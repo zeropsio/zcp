@@ -57,12 +57,9 @@ type Engine struct {
 
 // NewEngine creates a new workflow engine rooted at baseDir.
 //
-// At boot:
-//  1. Migrates away legacy state (active_session file, develop/ markers).
-//  2. Cleans stale work sessions whose PID is dead.
-//  3. Auto-claims a single dead-PID bootstrap session so an MCP server
-//     restart seamlessly continues prior work. Work sessions are
-//     per-process and never claimed — only cleaned.
+// At boot, migrate legacy state and clean dead processes' work sessions.
+// Bootstrap sessions remain available for explicit resume: the launching
+// environment does not identify the conversation that owns them.
 func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 	e := &Engine{
 		stateDir:    baseDir,
@@ -76,31 +73,6 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 	MigrateRemoveLegacyWorkState(baseDir)
 	CleanStaleWorkSessions(baseDir)
 
-	sessions, _ := ListSessions(baseDir)
-	var candidates []SessionEntry
-	for _, s := range sessions {
-		// Bootstrap is the only claimable infrastructure session. Work
-		// sessions are per-process; stale registry entries from the
-		// retired v2 recipe sub-mode must not be adopted.
-		if s.Workflow != WorkflowBootstrap {
-			continue
-		}
-		if s.PID == os.Getpid() {
-			continue
-		}
-		if isProcessAlive(s.PID, s.StartTime) {
-			continue
-		}
-		candidates = append(candidates, s)
-	}
-	if len(candidates) == 1 {
-		c := candidates[0]
-		if state, err := LoadSessionByID(baseDir, c.SessionID); err == nil {
-			if err := e.claimSession(c.SessionID, state); err == nil {
-				fmt.Fprintf(os.Stderr, "zcp: auto-recovered session %s from previous process\n", c.SessionID)
-			}
-		}
-	}
 	return e
 }
 
@@ -817,8 +789,7 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 }
 
 // Resume takes over an abandoned session (dead PID) by updating PID to current process.
-// Idempotent: if this engine already owns the session (e.g. auto-recovered at startup),
-// returns the current state without error.
+// Idempotent: if this engine already owns the session, returns the current state.
 func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 	if e.sessionID == sessionID {
 		return LoadSessionByID(e.stateDir, sessionID)

@@ -68,7 +68,7 @@ func UnregisterSession(stateDir, sessionID string) error {
 }
 
 // updateRegistryPID updates the PID for a session in the registry.
-// Used during auto-recovery to claim a session from a dead process. Writes the
+// Used during explicit resume to claim a session from a dead process. Writes the
 // claiming process's (pid,startTime) so a later liveness check identifies the
 // new owner exactly.
 func updateRegistryPID(stateDir, sessionID string, pid int, startTime string) error {
@@ -309,11 +309,16 @@ func cleanOrphanedFiles(stateDir string, liveIDs map[string]bool) {
 	}
 }
 
-// pruneDeadSessions removes entries with dead PIDs or entries older than 24h.
+// pruneDeadSessions keeps bootstrap sessions for explicit resume, and removes
+// other entries with dead PIDs or entries older than 24h.
 func pruneDeadSessions(sessions []SessionEntry) []SessionEntry {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	alive := sessions[:0]
 	for _, s := range sessions {
+		if s.Workflow == WorkflowBootstrap {
+			alive = append(alive, s)
+			continue
+		}
 		if !isProcessAlive(s.PID, s.StartTime) {
 			continue
 		}

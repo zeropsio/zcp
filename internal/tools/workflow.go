@@ -753,30 +753,17 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 }
 
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, schemaCache *schema.Cache, input WorkflowInput, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
-	// Only one session-backed workflow can be active at a time.
-	// Same-workflow starts fall through to their own handler.
-	if active, step := detectActiveWorkflow(engine); active != "" && active != input.Workflow {
-		progress := "with no steps remaining"
-		suggestion := `zerops_workflow action="status"`
-		if step != "" {
-			progress = fmt.Sprintf("at step %q", step)
-			suggestion += fmt.Sprintf(` shows the step and what completes it. Finish it with action="complete" step=%q. If that call is already running, wait for its result.`, step)
-		}
-		return convertError(platform.NewPlatformError(
-			platform.ErrWorkflowActive,
-			fmt.Sprintf("A %q workflow session %s is active %s; a %q workflow cannot start until it ends.", active, engine.SessionID(), progress, input.Workflow),
-			suggestion,
-		), WithRecoveryStatus()), nil, nil
+	// The edit variant must be decided before consulting any session.
+	if input.Workflow == workflowDevelop {
+		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer)
+	}
+	if result := activeWorkflowStartError(engine, input.Workflow); result != nil {
+		return result, nil, nil
 	}
 
 	// Bootstrap conductor — discovery + commit split.
 	if input.Workflow == workflowBootstrap {
 		return handleBootstrapStart(ctx, projectID, engine, client, schemaCache, input, sshDeployer, rt)
-	}
-
-	// Develop workflow — stateless briefing, no session created.
-	if input.Workflow == workflowDevelop {
-		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt, sshDeployer)
 	}
 
 	// The retired v2 recipe sub-mode is not reachable through
@@ -796,6 +783,25 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
 		"Valid workflows: bootstrap, develop, export, launch-production, pool-migrate."), WithRecoveryStatus()), nil, nil
+}
+
+func activeWorkflowStartError(engine *workflow.Engine, name string) *mcp.CallToolResult {
+	// Only one session-backed workflow can be active at a time.
+	// Same-workflow starts fall through to their own handler.
+	if active, step := detectActiveWorkflow(engine); active != "" && active != name {
+		progress := "with no steps remaining"
+		suggestion := `zerops_workflow action="status"`
+		if step != "" {
+			progress = fmt.Sprintf("at step %q", step)
+			suggestion += fmt.Sprintf(` shows the step and what completes it. Finish it with action="complete" step=%q. If that call is already running, wait for its result.`, step)
+		}
+		return convertError(platform.NewPlatformError(
+			platform.ErrWorkflowActive,
+			fmt.Sprintf("A %q workflow session %s is active %s; a %q workflow cannot start until it ends.", active, engine.SessionID(), progress, name),
+			suggestion,
+		), WithRecoveryStatus())
+	}
+	return nil
 }
 
 // isDevelopStep returns true if the step name is a develop workflow step.
