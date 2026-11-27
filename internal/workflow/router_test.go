@@ -322,20 +322,6 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 	}
 }
 
-func TestRoute_ResumeHint(t *testing.T) {
-	t.Parallel()
-	input := RouterInput{
-		ActiveSessions: []SessionEntry{{Workflow: "bootstrap", SessionID: "abc123"}},
-	}
-	offerings := Route(input)
-	if len(offerings) == 0 {
-		t.Fatal("expected offerings")
-	}
-	if !strings.Contains(offerings[0].Hint, "resume") {
-		t.Errorf("hint = %q, want to contain 'resume'", offerings[0].Hint)
-	}
-}
-
 func TestRoute_IncompleteMetas(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

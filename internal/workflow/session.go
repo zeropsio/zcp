@@ -205,8 +205,11 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string, mate bo
 	}
 
 	err = withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		// A Mate keeps bootstrap sessions for explicit resume.
-		reg.Sessions = pruneDeadSessions(reg.Sessions, mate)
+		var err error
+		reg.Sessions, err = pruneRegistrySessions(stateDir, reg.Sessions, mate)
+		if err != nil {
+			return nil, fmt.Errorf("init session atomic: %w", err)
+		}
 		liveIDs := make(map[string]bool, len(reg.Sessions)+1)
 		for _, s := range reg.Sessions {
 			liveIDs[s.SessionID] = true

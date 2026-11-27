@@ -165,21 +165,42 @@ func (e *Engine) RepoConfigFile() string {
 	return common
 }
 
-// claimSession takes ownership of a session: updates PID, saves state, updates registry.
+// claimSession serializes claiming with pruning and other claims.
 func (e *Engine) claimSession(sessionID string, state *WorkflowState) error {
-	state.PID = os.Getpid()
-	state.StartTime = CurrentProcessStartTime()
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
-		return err
+	err := withRegistryLock(e.stateDir, func(reg *Registry) (*Registry, error) {
+		found := false
+		for _, entry := range reg.Sessions {
+			if entry.SessionID == sessionID {
+				found = true
+				if isProcessAlive(entry.PID, entry.StartTime) {
+					return reg, fmt.Errorf("session %s still active (PID %d)", sessionID, entry.PID)
+				}
+				break
+			}
+		}
+		if !found {
+			return reg, fmt.Errorf("session %s is no longer registered", sessionID)
+		}
+		state.PID = os.Getpid()
+		state.StartTime = CurrentProcessStartTime()
+		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
+			return reg, fmt.Errorf("save claimed session: %w", err)
+		}
+		for i := range reg.Sessions {
+			if reg.Sessions[i].SessionID == sessionID {
+				reg.Sessions[i].PID = state.PID
+				reg.Sessions[i].StartTime = state.StartTime
+				reg.Sessions[i].UpdatedAt = state.UpdatedAt
+				break
+			}
+		}
+		return reg, nil
+	})
+	if err != nil {
+		return fmt.Errorf("claim session: %w", err)
 	}
 	e.setSessionID(sessionID)
-	// SPINE-3: propagate the registry update error (was discarded). On failure
-	// the state file holds the new owner but the registry holds the dead one —
-	// detectActiveWorkflow and the disk resolver would then disagree.
-	if err := updateRegistryPID(e.stateDir, sessionID, os.Getpid(), state.StartTime); err != nil {
-		return fmt.Errorf("claim session: update registry owner: %w", err)
-	}
 	return nil
 }
 

@@ -1218,7 +1218,8 @@ engine boot, never claimed.
 `.zcp/state/registry.json` — tracks both infrastructure sessions
 (`SessionID` = 16-hex) and work sessions (`SessionID` = `work-{pid}`),
 with file lock via `.registry.lock`. New-session creation keeps a Mate's
-bootstrap sessions and prunes other dead or >24h-old entries. This is the single source of session
+bootstrap sessions with a plan or incomplete meta, and prunes a dead, plan-less
+bootstrap older than 24h; other entries are pruned when dead or >24h old. This is the single source of session
 ownership; no other state files track active sessions.
 
 ### 7.4 Actions

@@ -21,6 +21,7 @@ type FlowOffering struct {
 type RouterInput struct {
 	ServiceMetas      []*ServiceMeta
 	ActiveSessions    []SessionEntry
+	Mate              bool
 	LiveServices      []string
 	LiveServiceStacks map[string]platform.ServiceStack // hostname → the service as listed; used by offerings that need deploy state (export)
 	UnmanagedRuntimes []string                         // runtime hostnames without complete ServiceMeta
@@ -53,7 +54,7 @@ func Route(input RouterInput) []FlowOffering {
 		offerings = append(offerings, FlowOffering{
 			Workflow: "bootstrap",
 			Priority: 1,
-			Hint:     resumeHint(input.ActiveSessions),
+			Hint:     resumeHint(input.Mate, input.ActiveSessions, incompleteMetas),
 		})
 	}
 
@@ -84,11 +85,11 @@ func Route(input RouterInput) []FlowOffering {
 	}
 
 	// 4. Nothing at all → create first services.
-	if len(metas) == 0 && len(input.UnmanagedRuntimes) == 0 {
+	if len(metas) == 0 && len(input.UnmanagedRuntimes) == 0 && (!input.Mate || len(incompleteMetas) == 0) {
 		offerings = append(offerings, FlowOffering{
 			Workflow: "bootstrap",
 			Priority: 1,
-			Hint:     bootstrapHint(input.ActiveSessions),
+			Hint:     resumeHint(input.Mate, input.ActiveSessions, nil),
 		})
 	}
 
@@ -101,19 +102,53 @@ func Route(input RouterInput) []FlowOffering {
 	return offerings
 }
 
-// resumeHint returns either a resume hint (if a bootstrap session exists) or a start hint.
-func resumeHint(sessions []SessionEntry) string {
-	for _, s := range sessions {
-		if s.Workflow == WorkflowBootstrap {
-			return fmt.Sprintf(`zerops_workflow action="resume" sessionId="%s"`, s.SessionID)
+// ResumableSessions excludes sessions running in another process. The caller
+// classifies the registry before passing it to the Mate router.
+func ResumableSessions(alive, dead []SessionEntry, currentPID int) []SessionEntry {
+	result := append([]SessionEntry(nil), dead...)
+	for _, s := range alive {
+		if s.PID == currentPID {
+			result = append(result, s)
 		}
 	}
-	return `zerops_workflow action="start" workflow="bootstrap"`
+	return result
 }
 
-// bootstrapHint returns either a resume hint (if a bootstrap session exists) or a start hint.
-func bootstrapHint(sessions []SessionEntry) string {
-	return resumeHint(sessions)
+// resumeHint ties Mate sessions to incomplete metas, or lists interrupted
+// sessions after the start hint when there are no metas.
+func resumeHint(mate bool, sessions []SessionEntry, incomplete []*ServiceMeta) string {
+	const start = `zerops_workflow action="start" workflow="bootstrap"`
+	if !mate {
+		for _, s := range sessions {
+			if s.Workflow == WorkflowBootstrap {
+				return fmt.Sprintf(`zerops_workflow action="resume" sessionId="%s"`, s.SessionID)
+			}
+		}
+		return start
+	}
+
+	owners := make(map[string]bool, len(incomplete))
+	for _, meta := range incomplete {
+		owners[meta.BootstrapSession] = true
+	}
+	var candidates []string
+	for _, s := range sessions {
+		if s.Workflow != WorkflowBootstrap {
+			continue
+		}
+		if len(incomplete) > 0 && !owners[s.SessionID] {
+			continue
+		}
+		candidates = append(candidates, fmt.Sprintf(`zerops_workflow action="resume" sessionId=%q (intent=%q, created=%q)`, s.SessionID, s.Intent, s.CreatedAt))
+	}
+	if len(candidates) == 0 {
+		return start
+	}
+	lead := "Incomplete bootstrap sessions:"
+	if len(incomplete) == 0 {
+		lead = start + "\nInterrupted bootstrap sessions:"
+	}
+	return lead + "\nOnly the conversation that began a session should resume it:\n" + strings.Join(candidates, "\n")
 }
 
 // filterStaleMetas returns only metas whose Hostname appears in liveServices.

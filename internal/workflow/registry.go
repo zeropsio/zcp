@@ -67,24 +67,6 @@ func UnregisterSession(stateDir, sessionID string) error {
 	})
 }
 
-// updateRegistryPID updates the PID for a session in the registry.
-// Used during explicit resume to claim a session from a dead process. Writes the
-// claiming process's (pid,startTime) so a later liveness check identifies the
-// new owner exactly.
-func updateRegistryPID(stateDir, sessionID string, pid int, startTime string) error {
-	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		for i := range reg.Sessions {
-			if reg.Sessions[i].SessionID == sessionID {
-				reg.Sessions[i].PID = pid
-				reg.Sessions[i].StartTime = startTime
-				reg.Sessions[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-				break
-			}
-		}
-		return reg, nil
-	})
-}
-
 // CurrentProcessStartTime returns this process's start-time string (or "" when
 // unreadable), stamped into new/claimed sessions so a later liveness check can
 // detect a recycled PID. Exported so the tools layer can stamp its own session
@@ -309,23 +291,75 @@ func cleanOrphanedFiles(stateDir string, liveIDs map[string]bool) {
 	}
 }
 
-// pruneDeadSessions keeps a Mate's bootstrap sessions for explicit resume and
-// removes other entries with dead PIDs or entries older than 24h.
-func pruneDeadSessions(sessions []SessionEntry, mate bool) []SessionEntry {
+type sessionRetention struct {
+	entry             SessionEntry
+	alive             bool
+	hasPlan           bool
+	hasIncompleteMeta bool
+}
+
+// pruneRegistrySessions reads the facts owned by session and meta files before
+// deciding retention. A failed read stops the start before anything is pruned.
+func pruneRegistrySessions(stateDir string, sessions []SessionEntry, mate bool) ([]SessionEntry, error) {
 	cutoff := time.Now().Add(-24 * time.Hour)
-	alive := sessions[:0]
-	for _, s := range sessions {
-		if mate && s.Workflow == WorkflowBootstrap {
-			alive = append(alive, s)
-			continue
+	facts := make([]sessionRetention, len(sessions))
+	needsOwners := false
+	for i, s := range sessions {
+		facts[i] = sessionRetention{entry: s, alive: isProcessAlive(s.PID, s.StartTime)}
+		if mate && s.Workflow == WorkflowBootstrap && !facts[i].alive && olderThan(s.CreatedAt, cutoff) {
+			needsOwners = true
 		}
-		if !isProcessAlive(s.PID, s.StartTime) {
-			continue
-		}
-		if t, err := time.Parse(time.RFC3339, s.CreatedAt); err == nil && t.Before(cutoff) {
-			continue
-		}
-		alive = append(alive, s)
 	}
-	return alive
+	if needsOwners {
+		metas, err := ListServiceMetas(stateDir)
+		if err != nil {
+			return nil, fmt.Errorf("prune sessions: %w", err)
+		}
+		owners := make(map[string]bool, len(metas))
+		for _, meta := range metas {
+			if !meta.IsComplete() && meta.BootstrapSession != "" {
+				owners[meta.BootstrapSession] = true
+			}
+		}
+		for i := range facts {
+			s := &facts[i]
+			if s.entry.Workflow != WorkflowBootstrap || s.alive || !olderThan(s.entry.CreatedAt, cutoff) {
+				continue
+			}
+			s.hasIncompleteMeta = owners[s.entry.SessionID]
+			if s.hasIncompleteMeta {
+				continue
+			}
+			state, err := LoadSessionByID(stateDir, s.entry.SessionID)
+			if err != nil {
+				return nil, fmt.Errorf("prune sessions: %w", err)
+			}
+			s.hasPlan = state.Bootstrap != nil && state.Bootstrap.Plan != nil
+		}
+	}
+	return pruneDeadSessions(facts, mate, cutoff), nil
+}
+
+func olderThan(created string, cutoff time.Time) bool {
+	t, err := time.Parse(time.RFC3339, created)
+	return err == nil && t.Before(cutoff)
+}
+
+// pruneDeadSessions keeps Mate bootstrap work and otherwise preserves the
+// standalone dead-process and age rules.
+func pruneDeadSessions(sessions []sessionRetention, mate bool, cutoff time.Time) []SessionEntry {
+	var kept []SessionEntry
+	for _, s := range sessions {
+		old := olderThan(s.entry.CreatedAt, cutoff)
+		if mate && s.entry.Workflow == WorkflowBootstrap {
+			if s.alive || !old || s.hasPlan || s.hasIncompleteMeta {
+				kept = append(kept, s.entry)
+			}
+			continue
+		}
+		if s.alive && !old {
+			kept = append(kept, s.entry)
+		}
+	}
+	return kept
 }

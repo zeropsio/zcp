@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -61,10 +62,15 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 	}
 
 	sessions, _ := workflow.ListSessions(stateDir)
+	if rt.MateEnabled {
+		alive, dead := workflow.ClassifySessions(sessions)
+		sessions = workflow.ResumableSessions(alive, dead, os.Getpid())
+	}
 	ws, _ := workflow.CurrentWorkSession(stateDir)
 	return jsonResult(workflow.Route(workflow.RouterInput{
 		ServiceMetas:      metas,
 		ActiveSessions:    sessions,
+		Mate:              rt.MateEnabled,
 		LiveServices:      liveHostnames,
 		LiveServiceStacks: liveStacks,
 		UnmanagedRuntimes: unmanagedRuntimes,
