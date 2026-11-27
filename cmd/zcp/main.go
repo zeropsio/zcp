@@ -413,15 +413,18 @@ func runServe() int {
 }
 
 func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, error) {
-	// Org mode (docs/spec-mate.md §2.11, §3.11): the Chief HQ says this Mate answers to names the
-	// project this serve belongs to. The identity is read through the
-	// container's live env store, so an agent whose MCP launcher strips the
-	// environment still reaches HQ.
+	// The container's identity and its gates are read through its live env
+	// store, so the zcp of an agent whose MCP launcher strips the environment
+	// (a crewmate under Cursor) is still the Mate's and still reaches HQ
+	// (docs/spec-mate.md §2.0).
 	getenv := mate.LiveLookup(mate.LiveEnvStorePath)
-	if rt := runtime.DetectFrom(getenv); rt.MateEnabled {
+	rtInfo := runtime.DetectFrom(getenv)
+	// Org mode (docs/spec-mate.md §2.11, §3.11): the Chief HQ says this Mate
+	// answers to names the project this serve belongs to.
+	if rtInfo.MateEnabled {
 		if id := mate.HQIdentity(getenv); chiefAccess(id, os.Stderr) {
-			rt.Chief = true
-			return runOrgServer(mcpStdout, tel, id, rt)
+			rtInfo.Chief = true
+			return runOrgServer(mcpStdout, tel, id, rtInfo)
 		}
 	}
 
@@ -454,8 +457,6 @@ func runServer(mcpStdout io.Writer, tel telemetry.Emitter) (*server.Server, erro
 		return nil, fmt.Errorf("knowledge store: %w", err)
 	}
 
-	// Detect runtime environment (Zerops container vs local dev).
-	rtInfo := runtime.Detect()
 	if rtInfo.MateEnabled {
 		watchLiveKeyRefusal(client)
 	}
