@@ -24,6 +24,36 @@ type whereBlockedSSH struct {
 	once    sync.Once
 }
 
+// witness: internal/tools/where.go | env = env.WithParts(nil) → env = env.WithParts(serverStates)
+func TestWhere_WGPart_UsesTheStatusPartName(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, setup, server, want string
+	}{
+		{"preview", "preview", "web", "preview"},
+		{"app preview", "app-preview", "web", "app-preview"},
+		{"no pair", "", "web", "web"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var services []workflow.ServiceSnapshot
+			if tc.setup != "" {
+				services = []workflow.ServiceSnapshot{{Hostname: "pool", DevIsPool: true, Stages: []topology.StageRef{{Hostname: "stage", SetupName: tc.setup}}}}
+			}
+			leases := []workflow.LeaseSnapshot{{Alias: "pool-1", Pool: "pool", State: "held", Branch: "feature"}}
+			env := workflow.StateEnvelope{Services: services, Leases: &leases}
+			servers := map[string]ops.DevServerRead{"pool-1": {Servers: []topology.DevServerState{{Name: tc.server, Status: "running"}}}}
+			facts := whereFacts(env, nil, nil, servers, nil, nil, runtime.Info{}, "", time.Time{}, nil, nil)
+			if len(facts.Copies) != 1 || facts.Copies[0].Part != tc.want || len(facts.Copies[0].DevServers) != 1 || facts.Copies[0].DevServers[0].Name != tc.server {
+				t.Fatalf("copies = %+v, want part %q and server %q", facts.Copies, tc.want, tc.server)
+			}
+			if tc.setup != "" && (len(facts.Stages) != 1 || facts.Stages[0].Part != tc.want) {
+				t.Errorf("stages = %+v, want part %q", facts.Stages, tc.want)
+			}
+		})
+	}
+}
+
 // WG-STANDING — Where lists only open changes without a working copy, while their standing leaves existing tool JSON unchanged.
 // witness: internal/tools/hq_change_status.go | line.Labels, line.Merged = nil, true → line.Labels, line.Merged, line.Open = nil, true, true
 func TestWhere_WGStanding_ListsOnlyOpenChanges(t *testing.T) {

@@ -321,6 +321,7 @@ func Events(
 	if err != nil {
 		return nil, err
 	}
+	nameEventAppVersions(ctx, client, projectID, appVersionCandidates)
 
 	// Sort by parsed instant, descending (parse-compare — see
 	// sortTimelineDescending). Then trim to limit.
@@ -352,6 +353,30 @@ func Events(
 		},
 		AppVersions: appVersionCandidates,
 	}, nil
+}
+
+// The direct version list has no names; build processes carry the version ID
+// and name. A missing process leaves its version name unknown.
+func nameEventAppVersions(ctx context.Context, client platform.Client, projectID string, candidates []AppVersionCandidate) {
+	if len(candidates) == 0 {
+		return
+	}
+	processes, err := client.GetProjectProcessesDirect(ctx, projectID)
+	if err != nil {
+		return
+	}
+	for _, process := range processes {
+		version := process.AppVersion
+		if process.ActionName != "stack.build" || version == nil || version.Name == "" {
+			continue
+		}
+		for i := range candidates {
+			candidate := &candidates[i]
+			if candidate.ID == version.ID {
+				candidate.Name = version.Name
+			}
+		}
+	}
 }
 
 // readProcessErrors fills a failed process's FailReason from its by-ID read

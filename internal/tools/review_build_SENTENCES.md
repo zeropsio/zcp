@@ -14,7 +14,8 @@
 - RB-RESULT — One result includes all stage parts; a failed part prevents a mixed failed and unavailable result from being retried as unavailable.
 - RB-OBSERVE — An identified private stage already active at the ready head returns that version without starting another build.
 - RB-RESUME — A named in-flight head is waited to its result and returned without starting another build.
-- RB-FAILLOG — A failed public stage reports the last build-log line while retaining its public host in the result, whether the failure was already known or was joined in flight.
+- RB-FAILLOG — A failed public stage reports a build-log diagnostic while retaining its public host in the result, whether the failure was already known or was joined in flight.
+- RB-ERROR — A failed Review build reports the last recognizable error from its log instead of the builder's generic wrapper, keeping the reason within 300 characters.
 - RB-UNAVAILABLE — A stage lock or build wait that ends without a verdict is unavailable, with the step and its last error line.
 - RB-HEALTH — A public stage's probe uses its setup's declared health path, including an inherited path, or the default when none is declared.
 - RB-SOURCE — A public stage's probe reads its setup from the head built by its version, even when Zerops stores no yaml for that version.

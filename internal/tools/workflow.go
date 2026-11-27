@@ -1225,7 +1225,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(wrapStageErr("Synthesize guidance", err), WithRecoveryStatus()), nil, nil
 	}
 	plan := workflow.BuildPlan(envelope)
-	guidance, plan := statusGuidance(envelope, corpus, matches, plan, edit, hasEdit)
+	guidance, plan := statusGuidance(&envelope, corpus, matches, plan, edit, hasEdit)
 	if !rt.InContainer && projectID != "" {
 		if extra := localDotenvGuidanceAddendum(ctx, client, projectID); extra != "" {
 			guidance = append(guidance, extra)
@@ -1250,15 +1250,17 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	}), nil, nil
 }
 
-func statusGuidance(envelope workflow.StateEnvelope, corpus []workflow.KnowledgeAtom, matches []workflow.MatchedRender, plan workflow.Plan, edit editBriefingContent, hasEdit bool) ([]string, workflow.Plan) {
-	matches, plan = addEditStatus(envelope.Phase, matches, plan, edit.matches, edit.plan, hasEdit)
-	return composeEditGuidance(envelope, corpus, matches, edit.lines), plan
+func statusGuidance(envelope *workflow.StateEnvelope, corpus []workflow.KnowledgeAtom, matches []workflow.MatchedRender, plan workflow.Plan, edit editBriefingContent, hasEdit bool) ([]string, workflow.Plan) {
+	matches, plan = addEditStatus(envelope, matches, plan, edit.matches, edit.plan, hasEdit)
+	return composeEditGuidance(*envelope, corpus, matches, edit.lines), plan
 }
 
-func addEditStatus(phase workflow.Phase, guidance []workflow.MatchedRender, plan workflow.Plan, editGuidance []workflow.MatchedRender, editPlan workflow.Plan, hasEdit bool) ([]workflow.MatchedRender, workflow.Plan) {
+func addEditStatus(envelope *workflow.StateEnvelope, guidance []workflow.MatchedRender, plan workflow.Plan, editGuidance []workflow.MatchedRender, editPlan workflow.Plan, hasEdit bool) ([]workflow.MatchedRender, workflow.Plan) {
 	if hasEdit {
-		if phase == workflow.PhaseIdle {
+		if envelope.Phase == workflow.PhaseIdle {
 			guidance, plan = nil, editPlan
+			envelope.Phase = workflow.PhaseDevelopEdit
+			envelope.IdleScenario = ""
 		}
 		guidance = append(guidance, editGuidance...)
 	}

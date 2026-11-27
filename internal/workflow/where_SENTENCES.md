@@ -1,6 +1,7 @@
 # Where the work stands (`where.go`)
 
 - WH-COPY — The where text names each working copy with its part, branch, what is uncommitted and unpushed, its change and each dev server's state, the caller's own first and marked, and is empty when there is nothing to name. Breaks: an agent back from a compaction works in another conversation's copy, or asks status to learn its branch.
+- WH-COUNTS — A working copy names one uncommitted file or unpushed commit in the singular and larger counts in the plural.
 - WH-DETACHED — A detached working copy's branch is named as detached, while a named branch keeps its name.
 - WH-UNREAD — A fact that was not read says not read with why, never clean, none or nothing. Breaks: a copy whose container did not answer reads clean and its unsaved work is released.
 - WH-STAGE — A stage's line says the name of the version it runs exactly as the platform holds it, and says when it runs none. Breaks: the agent rebuilds a stage that already runs its commit, or tests one that runs another branch.

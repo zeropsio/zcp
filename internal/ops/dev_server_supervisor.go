@@ -605,13 +605,19 @@ var (
 	logNoErrorLine = regexp.MustCompile(`(?i)\b(0|no) errors?\b`)
 )
 
+// IsErrorLogLine recognizes diagnostics without treating filenames or
+// zero-error summaries as errors.
+func IsErrorLogLine(line string) bool {
+	return logErrorLine.MatchString(line) && !logNoErrorLine.MatchString(line)
+}
+
 // newLogOf is what a status carries of lines, the lines a server's log gained
 // (DevServerNewLog); dropped are lines it gained that the read did not hand
 // over.
 func newLogOf(lines []string, dropped int) DevServerNewLog {
 	var errs, rest []string
 	for _, l := range lines {
-		if logErrorLine.MatchString(l) && !logNoErrorLine.MatchString(l) {
+		if IsErrorLogLine(l) {
 			errs = append(errs, l)
 		} else {
 			rest = append(rest, l)

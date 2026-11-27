@@ -242,6 +242,13 @@ func whereMoreLines(n int) string {
 	return fmt.Sprintf("%d more lines: zerops_workflow action=\"status\" lists them.", n)
 }
 
+func whereCountWord(count int, word string) string {
+	if count == 1 {
+		return word
+	}
+	return word + "s"
+}
+
 func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 	name := worktree.Name
 	if named {
@@ -258,7 +265,7 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 	case worktree.Lease:
 		var unsaved []string
 		if worktree.Unsaved.FileCount > 0 {
-			unsaved = append(unsaved, fmt.Sprintf("%d files uncommitted", worktree.Unsaved.FileCount))
+			unsaved = append(unsaved, fmt.Sprintf("%d %s uncommitted", worktree.Unsaved.FileCount, whereCountWord(worktree.Unsaved.FileCount, "file")))
 		}
 		unpushed := worktree.Unsaved.UnpushedCommits
 		if worktree.Step != nil {
@@ -268,7 +275,7 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 			}
 		}
 		if unpushed > 0 {
-			unsaved = append(unsaved, fmt.Sprintf("%d commits unpushed", unpushed))
+			unsaved = append(unsaved, fmt.Sprintf("%d %s unpushed", unpushed, whereCountWord(unpushed, "commit")))
 		}
 		if len(unsaved) > 0 {
 			work = strings.Join(unsaved, ", ")

@@ -5,3 +5,4 @@
 - KL-5 — A setup selects its Review build's platform lines or health observation, and a failed read is not said to mean no log. Breaks: an agent cannot diagnose the named part or mistakes an outage for missing logs.
 - KL-6 — HQ's refusal says whether the change was merged, closed, or is simply not open. Breaks: a queued notice sends the agent to repair a finished change.
 - KL-7 — A GitHub log names the run's head and says when the change now has another head. Breaks: the agent attributes an older failure to the current commit.
+- KL-8 — A Review build log omits a complete startup banner but keeps a truncated or unfamiliar log. Breaks: the agent reads the builder's art instead of the failure, or loses log output.

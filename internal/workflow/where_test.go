@@ -66,6 +66,27 @@ func TestWhere_WHDetached_NamesTheBranch(t *testing.T) {
 	}
 }
 
+// witness: internal/workflow/where.go | if count == 1 { → if count == 0 {
+func TestWhere_WHCounts_NamesSingularAndPluralWork(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		count int
+		want  string
+	}{
+		{"one", 1, "pool-1: part api, branch feat, 1 file uncommitted, 1 commit unpushed; no dev server"},
+		{"many", 2, "pool-1: part api, branch feat, 2 files uncommitted, 2 commits unpushed; no dev server"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			worktree := WhereCopy{Name: "pool-1", Part: "api", Branch: "feat", Lease: true, State: "held", Unsaved: &topology.LeaseUnsaved{FileCount: tc.count, UnpushedCommits: tc.count}, DevServers: []topology.DevServerState{}}
+			if got := whereCopyLine(worktree, false, 0); got != tc.want {
+				t.Errorf("line = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // WH-UNREAD — A fact that was not read says not read with why, never clean, none or nothing.
 // witness: internal/workflow/where.go | work = "working copy not read (no answer)" → work = "clean"
 func TestWhere_WHUNREAD_ExplainsMissingFacts(t *testing.T) {

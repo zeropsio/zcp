@@ -313,6 +313,51 @@ func TestReviewStage_RBFaillog_PublicFailure_ReportsLastBuildLine(t *testing.T) 
 	}
 }
 
+// witness: internal/tools/review_build_run.go | if line := reviewFailureLine(lines); line != "" { → if line := lines[len(lines)-1]; line != "" {
+func TestReviewStage_RBError_ReportsTheDiagnostic(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, log, want string
+	}{
+		{"recorded syntax failure", `/build/source/server.js:40
+const = ;
+^
+
+SyntaxError: Unexpected token '='
+at checkSyntax (node:internal/main/check_syntax:84:5)
+
+Node.js v26.13.0
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+
+━━━━  ❌ npm run check  ━━━━
+
+[BUILD ERROR] running build commands failed`, "build: SyntaxError: Unexpected token '='"},
+		{"last diagnostic", "Error: first\nfatal: second\n[BUILD ERROR] running build commands failed", "build: fatal: second"},
+		{"no failed tests", "Error: real cause\nTests: 0 failed, 12 passed\n[BUILD ERROR] running build commands failed", "build: Error: real cause"},
+		{"error in filename", "Error: real cause\npage reload src/lib/onError.ts\n[BUILD ERROR] running build commands failed", "build: Error: real cause"},
+		{"unmarked diagnostic", "compiling\nmissing module\n[BUILD ERROR] running build commands failed", "build: missing module"},
+		{"wrapper only", "[BUILD ERROR] running build commands failed", "build: [BUILD ERROR] running build commands failed"},
+		{"bounded", "Error: " + strings.Repeat("x", 400) + "\n[BUILD ERROR] running build commands failed", "build: Error: " + strings.Repeat("x", 286)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc", Name: "stage"}}).
+				WithServiceAppVersions("svc", []platform.AppVersionEvent{{ID: "v1"}}).
+				WithLogAccess(&platform.LogAccess{URL: "https://logs.example"})
+			fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{{Facility: "local0", Tag: "zbuilder@v1", Message: tc.log}})
+			d := devGitDeps{client: client, logFetcher: fetcher, rt: runtime.Info{ProjectID: "project"}}
+			part := reviewFailedPart(context.Background(), d, "stage", hq.ReviewBuildPart{}, reviewVersion{id: "v1", status: "BUILD_FAILED", reason: "FAILED"})
+			if part.Reason != tc.want {
+				t.Errorf("reason = %q, want %q", part.Reason, tc.want)
+			}
+		})
+	}
+}
+
 // witness: internal/tools/review_build_run.go | part.Outcome, part.Reason = reviewUnavailable, reviewReason(step, err.Error()) → part.Outcome, part.Reason = reviewOutcomeFailed, reviewReason(step, err.Error())
 func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.T) {
 	t.Parallel()

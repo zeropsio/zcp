@@ -23,6 +23,7 @@ const maxRollbackCandidates = 5
 // harvest the list from the refusal error.
 type AppVersionCandidate struct {
 	ID       string `json:"id"`
+	Name     string `json:"name,omitempty"`
 	Status   string `json:"status"`
 	Sequence int    `json:"sequence"`
 	Created  string `json:"created,omitempty"`

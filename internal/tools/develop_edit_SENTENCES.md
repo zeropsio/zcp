@@ -2,7 +2,7 @@
 
 - WD-2 — A linked Mate's develop start answers a wired pool, a held lease, or a running classic dev half with live code as an edit, and keeps other targets in deploy. Breaks: an edit opens a deploy session or an undeployed service misses its first deploy.
 - WD-3 — An edit scoped to a pool names every held copy of that pool, while a lease scope names that lease. Breaks: a second held copy's work disappears from the briefing.
-- WD-4 — Status adds the edit briefing beside a deploy session, and an idle status takes its next step from the edit. Breaks: one kind of work hides the other, or idle status asks for a stage deploy.
+- WD-4 — Status adds the edit briefing beside a deploy session; without a deploy session it names the edit phase and takes its next step from the edit. Breaks: one kind of work hides the other, or status names the wrong phase or next step.
 - WD-5 — A mount may pass the workflow guard for an edit's dev half or held lease, but a pool itself is not a mount target. Breaks: an agent cannot mount its edit, or attempts to mount a pool.
 - WD-6 — Every edit briefing synthesizes the edit phase's atoms, even beside a deploy session. Breaks: a resumed edit receives the wrong guidance.
 - WD-7 — The edit's next step says to acquire an empty pool or names each selected copy's own step. Breaks: an agent cannot recover where to continue after compaction.

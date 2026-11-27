@@ -84,29 +84,35 @@ func TestEditCopies_WD3_PoolNamesEveryHeldLease(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/workflow.go | if phase == workflow.PhaseIdle { → if true {
+// witness: internal/tools/workflow.go | envelope.Phase = workflow.PhaseDevelopEdit → envelope.Phase = workflow.PhaseIdle
 func TestEditStatus_WD4_DeployAndEditAreBothVisible(t *testing.T) {
 	t.Parallel()
 	deploy := workflow.Plan{Primary: workflow.NextAction{Label: "deploy"}}
 	edit := workflow.Plan{Primary: workflow.NextAction{Label: "commit"}}
 	tests := []struct {
-		name     string
-		phase    workflow.Phase
-		hasEdit  bool
-		guidance []string
-		next     string
+		name      string
+		phase     workflow.Phase
+		hasEdit   bool
+		guidance  []string
+		next      string
+		wantPhase workflow.Phase
 	}{
-		{"idle edit", workflow.PhaseIdle, true, []string{"edit"}, "commit"},
-		{"active deploy and edit", workflow.PhaseDevelopActive, true, []string{"deploy", "edit"}, "deploy"},
-		{"deploy alone", workflow.PhaseDevelopActive, false, []string{"deploy"}, "deploy"},
+		{"idle edit", workflow.PhaseIdle, true, []string{"edit"}, "commit", workflow.PhaseDevelopEdit},
+		{"active deploy and edit", workflow.PhaseDevelopActive, true, []string{"deploy", "edit"}, "deploy", workflow.PhaseDevelopActive},
+		{"deploy alone", workflow.PhaseDevelopActive, false, []string{"deploy"}, "deploy", workflow.PhaseDevelopActive},
+		{"idle alone", workflow.PhaseIdle, false, []string{"deploy"}, "deploy", workflow.PhaseIdle},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			matches, plan := addEditStatus(tt.phase, []workflow.MatchedRender{{Body: "deploy"}}, deploy, []workflow.MatchedRender{{Body: "edit"}}, edit, tt.hasEdit)
+			env := workflow.StateEnvelope{Phase: tt.phase}
+			matches, plan := addEditStatus(&env, []workflow.MatchedRender{{Body: "deploy"}}, deploy, []workflow.MatchedRender{{Body: "edit"}}, edit, tt.hasEdit)
 			guidance := workflow.BodiesOf(matches)
-			if !reflect.DeepEqual(guidance, tt.guidance) || plan.Primary.Label != tt.next {
-				t.Errorf("status = %v, next %q; want %v, %q", guidance, plan.Primary.Label, tt.guidance, tt.next)
+			if !reflect.DeepEqual(guidance, tt.guidance) || plan.Primary.Label != tt.next || env.Phase != tt.wantPhase {
+				t.Errorf("status = %v, next %q, phase %q; want %v, %q, %q", guidance, plan.Primary.Label, env.Phase, tt.guidance, tt.next, tt.wantPhase)
+			}
+			if text := workflow.RenderStatus(workflow.Response{Envelope: env}); !strings.Contains(text, "Phase: "+string(tt.wantPhase)+"\n") {
+				t.Errorf("status text = %q, want phase %q", text, tt.wantPhase)
 			}
 		})
 	}
@@ -225,7 +231,7 @@ func TestEditBudget_WD11_StartAndStatusComposeAllAtoms(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				guidance, _ = statusGuidance(env, corpus, matches, workflow.Plan{}, edit, true)
+				guidance, _ = statusGuidance(&env, corpus, matches, workflow.Plan{}, edit, true)
 			} else {
 				var err error
 				guidance, _, err = editBriefing(context.Background(), nil, "", "", runtime.Info{}, nil, env, nil, corpus)

@@ -362,7 +362,17 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 	for host, read := range servers {
 		serverStates[host] = read.Servers
 	}
-	env = env.WithParts(serverStates)
+	// Match the part named by the ordinary status envelope. Fresh server
+	// reads below still describe each server, but do not rename a paired part.
+	withServers := env.WithParts(serverStates)
+	env = env.WithParts(nil)
+	if env.Leases != nil {
+		for i := range *env.Leases {
+			if (*env.Leases)[i].Part == "" {
+				(*env.Leases)[i].Part = (*withServers.Leases)[i].Part
+			}
+		}
+	}
 	facts := workflow.WhereFacts{ReadAt: now, Lease: alias, EditSteps: rt.MateEnabled}
 	repos := map[string]string{}
 	for _, service := range env.Services {

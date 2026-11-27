@@ -324,3 +324,80 @@ func TestCheckLog_KL7_LabelsTheLogWithItsOwnHead(t *testing.T) {
 		})
 	}
 }
+
+// witness: internal/tools/hq_check_log.go | lines = reviewLogWithoutBanner(lines) → lines = append([]string{}, lines...)
+func TestCheckLog_KL8_OmitsTheCompleteStartupBanner(t *testing.T) {
+	t.Parallel()
+	const recordedLog = `BUILD appVersionId: yZHABS53Q9AQ3B9rW2vz6A
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃   ZEROPS BUILD CONTAINER STARTED   ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Zerops will now prepare the container
+and run your build commands based on
+the zerops.yml instructions.
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@             @@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@                           @@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@                                     @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@            @@@@@@@@@@@@@            @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@       @@@@@@@@@@@@@@@@@@@@@@        @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@       @@@@@@@@@@@@@@@@@             @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@       @@@@@@@@@@@@@              @@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@       @@@@@@@@@              @@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@    @@@@@@@              @@@@@@@@    @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@              @@@@@@@@@       @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@              @@@@@@@@@@@@@       @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@            @@@@@@@@@@@@@@@@@@       @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@        @@@@@@@@@@@@@@@@@@@@@@       @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@            @@@@@@@@@@@@@            @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@                                     @@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@                           @@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@             @@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃   DOWNLOADING APPLICATION SOURCE CODE   ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Zerops is now downloading your application,
+source, and unpacking it on the container.
+
+[BUILD INFO] Application source code downloaded in 0s. Downloaded size 2.1 KiB. Extracted size 3.2 KiB.`
+	const recordedBody = `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃   DOWNLOADING APPLICATION SOURCE CODE   ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Zerops is now downloading your application,
+source, and unpacking it on the container.
+
+[BUILD INFO] Application source code downloaded in 0s. Downloaded size 2.1 KiB. Extracted size 3.2 KiB.`
+	for _, tc := range []struct {
+		name, log, want string
+	}{
+		{"complete", recordedLog, recordedBody},
+		{"truncated", "┃   ZEROPS BUILD CONTAINER STARTED   ┃\n@@@@@@@@@@@@@@@@@@@@\n@@@@@@        @@@@@@", "┃   ZEROPS BUILD CONTAINER STARTED   ┃\n@@@@@@@@@@@@@@@@@@@@\n@@@@@@        @@@@@@"},
+		{"ordinary log", "compiling\ncompile error", "compiling\ncompile error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "svc", Name: "stage"}}).
+				WithServiceAppVersions("svc", []platform.AppVersionEvent{{ID: "v1"}}).
+				WithLogAccess(&platform.LogAccess{URL: "https://logs.example"})
+			fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{{Facility: "local0", Tag: "zbuilder@v1", Message: tc.log}})
+			checks := hq.ChecksAnswer{ReviewBuild: &hq.CheckReviewBuild{Head: "head", Parts: []hq.ReviewBuildPart{{Setup: "api", Stage: "stage", Phase: "build", AppVersionID: "v1", Reason: "failed"}}}}
+			got := reviewBuildLog(context.Background(), client, fetcher, "project", "api", checks)
+			const prefix = " Last platform log lines:\n"
+			_, body, found := strings.Cut(got, prefix)
+			if !found || body != tc.want {
+				t.Errorf("log = %q, want %q", body, tc.want)
+			}
+		})
+	}
+}

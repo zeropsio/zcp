@@ -153,6 +153,7 @@ func reviewBuildLog(ctx context.Context, client platform.Client, fetcher platfor
 			b.WriteString(" The platform keeps no log for this version.")
 		default:
 			b.WriteString(" Last platform log lines:")
+			lines = reviewLogWithoutBanner(lines)
 			for _, line := range lines {
 				fmt.Fprintf(&b, "\n%s", line)
 			}
@@ -160,6 +161,47 @@ func reviewBuildLog(ctx context.Context, client platform.Client, fetcher platfor
 		return b.String()
 	}
 	return fmt.Sprintf("No failing Review build part for setup %s.", setup)
+}
+
+// Remove the complete builder startup banner only when it begins the read;
+// a partial tail or unfamiliar output must remain available for diagnosis.
+func reviewLogWithoutBanner(entries []string) []string {
+	lines := strings.Split(strings.Join(entries, "\n"), "\n")
+	title := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "ZEROPS BUILD CONTAINER STARTED") {
+			title = i
+			break
+		}
+		if trimmed != "" && !strings.HasPrefix(trimmed, "BUILD appVersionId:") && !strings.HasPrefix(trimmed, "┏") {
+			return entries
+		}
+	}
+	if title < 0 {
+		return entries
+	}
+	for i := title + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "┏") {
+			return entries
+		}
+		if len(strings.ReplaceAll(trimmed, " ", "")) < 10 || strings.Trim(trimmed, "@ ") != "" {
+			continue
+		}
+		start := i
+		for i < len(lines) && strings.Trim(strings.TrimSpace(lines[i]), "@ ") == "" && strings.Contains(lines[i], "@") {
+			i++
+		}
+		if i-start < 2 || strings.Trim(strings.TrimSpace(lines[i-1]), "@") != "" {
+			return entries
+		}
+		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+			i++
+		}
+		return lines[i:]
+	}
+	return entries
 }
 
 // checkLogValue keeps an absent HQ value distinct from an empty string.

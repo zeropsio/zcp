@@ -226,10 +226,48 @@ func reviewFailedPart(ctx context.Context, d devGitDeps, serviceHostname string,
 	reason := version.reason
 	lines, err := ops.FetchVersionBuildLogs(ctx, d.client, d.logFetcher, d.rt.ProjectID, serviceHostname, version.id, 200)
 	if err == nil && len(lines) > 0 {
-		reason = lines[len(lines)-1]
+		if line := reviewFailureLine(lines); line != "" {
+			reason = line
+		}
 	}
 	part.Reason = reviewReason(part.Phase, reason)
 	return part
+}
+
+// Build output is unstructured: prefer the last recognizable diagnostic to
+// the builder's generic final wrapper, and retain a line when none is marked.
+func reviewFailureLine(entries []string) string {
+	lines := strings.Split(strings.Join(entries, "\n"), "\n")
+	fallback, wrapper := "", ""
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if lower == "[build error] running build commands failed" {
+			wrapper = line
+			continue
+		}
+		if strings.HasPrefix(lower, "npm notice") || strings.HasPrefix(line, "━━") || strings.HasPrefix(lower, "at ") {
+			continue
+		}
+		if fallback == "" {
+			fallback = line
+		}
+		if ops.IsErrorLogLine(line) {
+			return line
+		}
+		for _, marker := range []string{"not found", "undefined", "permission denied", "out of memory", "oom alert", "oom-kill", "killed"} {
+			if strings.Contains(lower, marker) {
+				return line
+			}
+		}
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return wrapper
 }
 
 func reviewWait(ctx context.Context, client platform.Client, process string) (string, error) {
