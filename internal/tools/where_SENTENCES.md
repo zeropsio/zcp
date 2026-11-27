@@ -19,6 +19,6 @@
 - WG-ACKHEAD — An acknowledgement for one commit cannot discard identical words kept for another commit.
 - WG-DESCRIBECOPY — Describing cannot choose arbitrarily between several addressed checkouts.
 - WG-REVIEWPROMISE — A handover says it is checking the build only when HQ reports that for the described head.
-- WG-POOLADDRESS — A handover directs the person to the draft and the app through Mate, saying the address to bookmark and share shows added work without a raw address or a promise that the draft was added.
+- WG-POOLADDRESS — A handover directs the person to the draft and the app through Mate, distinguishes an app with an address from an added part without one, and promises neither an address nor an added draft.
 - WG-OPENREPLY — Opening with a description preserves the open's settled-change and lost-answer notes and whether it was created, alongside the description's answer or refusal.
 - WG-OPENSTEP — The open's reply asks for a description only when this call did not already supply it.

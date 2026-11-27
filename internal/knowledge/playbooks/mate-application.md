@@ -32,7 +32,7 @@ Your person's Mates in their other projects can be listed with `zerops_list_mate
 
 ## 6. Addresses
 
-The person puts a project on their own domain, turns a service's zerops.app address off and opens a port straight to the internet in Mate's Addresses. Adding a domain there shows the DNS records to add, with copy buttons, and the domain's state until it is live. Send them there; this container cannot do it for stage and production. The DNS facts still hold: on the free shared IPv4 a domain needs both an A record to that IPv4 and an AAAA record to the project's IPv6; behind Cloudflare, SSL/TLS mode is Full (strict) — Flexible loops redirects.
+The person puts a project on their own domain, turns a service's zerops.app address off and opens a port straight to the internet in Mate's Addresses. The person can turn a stage service's zerops.app address on there, too. Adding a domain there shows the DNS records to add, with copy buttons, and the domain's state until it is live. Send them there; this container cannot do it for stage and production. The DNS facts still hold: on the free shared IPv4 a domain needs both an A record to that IPv4 and an AAAA record to the project's IPv6; behind Cloudflare, SSL/TLS mode is Full (strict) — Flexible loops redirects.
 
 ## 7. What serves only the person
 

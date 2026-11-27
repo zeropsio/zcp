@@ -11,7 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// witness: internal/content/templates/skills/guided/phases/review-deploy.md | Describing it does not build the stage. → Describing it builds the stage.
+// witness: internal/content/templates/agents_shared.md | This part has no address other people can open; this is how it is set up, not a failure, and you can turn an address on in Mate's **Addresses**. →
 func TestTemplates_TP1_MateDraftAndApp(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +137,7 @@ func TestTemplates_TP1_MateDraftAndApp(t *testing.T) {
 	if !strings.Contains(standalone, "The stage half is **your preview**") {
 		t.Error("standalone guidance does not call the stage the person's preview")
 	}
+	assertMateAddressGuidance(t, agents, standalone)
 	_, afterMate, found := strings.Cut(review, "### In a Mate\n")
 	if !found {
 		t.Fatal("guided review lacks the Mate path")
@@ -159,6 +160,28 @@ func TestTemplates_TP1_MateDraftAndApp(t *testing.T) {
 	for _, want := range []string{"checkpoint", "zerops_deploy", "zerops_verify"} {
 		if !strings.Contains(outside, want) {
 			t.Errorf("standalone guided review lacks %q", want)
+		}
+	}
+}
+
+func assertMateAddressGuidance(t *testing.T, agents, standalone string) {
+	t.Helper()
+	const publicAddress = "Your app shows what has been added to it and is the address to bookmark and share; a draft is seen only in Mate until it is added."
+	const privateAddress = "This part has no address other people can open; this is how it is set up, not a failure, and you can turn an address on in Mate's **Addresses**."
+	for _, want := range []string{
+		"using the part's observed stage access, including domains",
+		"before its first add the app has no address yet",
+		"after an add, for an app with an address, say: " + publicAddress,
+		"after an add with no address, say: " + privateAddress,
+		"If an added part's access is unread, say you cannot tell yet.",
+	} {
+		if !strings.Contains(agents, want) {
+			t.Errorf("Mate address guidance lacks %q", want)
+		}
+	}
+	for _, unwanted := range []string{"Mate's **Addresses**", "The person can turn a stage service's zerops.app address on there, too."} {
+		if strings.Contains(standalone, unwanted) {
+			t.Errorf("standalone guidance contains Mate address instruction %q", unwanted)
 		}
 	}
 }
