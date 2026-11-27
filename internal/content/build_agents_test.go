@@ -638,14 +638,14 @@ func TestBuildAgentsMD_Container_GroupAndGitHost(t *testing.T) {
 			name:      "not a Mate",
 			rt:        runtime.Info{InContainer: true, ServiceName: "zcp"},
 			want:      []string{"zcli project list", "what it may do there is the token's"},
-			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "Chief", "addresses sheet", "zerops_propose_mcp"},
+			wantNever: []string{"zerops_observe", "zcp hq git-credential", "zcp git <host>", "HQ", "Your group", "403", "Chief", "addresses sheet", "zerops_propose_mcp", "zerops_board_propose"},
 		},
 		{
 			name: "a Mate",
 			rt:   runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true},
 			want: []string{
 				"`zerops_observe`", "other Mates", "zcp git <host>",
-				"`zerops_propose_mcp`", "never ask the person to paste a key in chat",
+				"`zerops_propose_mcp`", "never ask the person to paste a key in chat", "`zerops_board_propose`",
 			},
 			wantNever: []string{"zcli project list", "READ them", "403", "grants", "HTTP Routing → Add Domain", "zcp hq git-credential",
 				// Mate's UI paths live in Mate's own instructions, not here.

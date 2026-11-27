@@ -855,7 +855,7 @@ func TestServer_PublishPageToolGating(t *testing.T) {
 }
 
 // TestServer_AppProposeToolGating: a Mate's proposals for its application's
-// stage and production are registered in a Mate's container only, where a
+// stage, production and board, and the board's read, are registered in a Mate's container only, where a
 // client draws the card — never in a standalone zcp that observes through a
 // configured HQ, which no client draws cards for.
 func TestServer_AppProposeToolGating(t *testing.T) {
@@ -896,7 +896,7 @@ func TestServer_AppProposeToolGating(t *testing.T) {
 			if err != nil {
 				t.Fatalf("list tools: %v", err)
 			}
-			for _, name := range []string{"zerops_propose_service", "zerops_propose_env", "zerops_propose_mcp", "zerops_propose_reveal", "zerops_propose_create_service", "zerops_propose_release"} {
+			for _, name := range []string{"zerops_propose_service", "zerops_propose_env", "zerops_propose_mcp", "zerops_propose_reveal", "zerops_propose_create_service", "zerops_propose_release", "zerops_board_propose", "zerops_board_list"} {
 				found := false
 				for _, tool := range result.Tools {
 					found = found || tool.Name == name

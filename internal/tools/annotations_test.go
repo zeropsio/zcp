@@ -771,6 +771,7 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 
 		"zerops_propose_create_service": "Propose creating a service",
 		"zerops_propose_release":        "Propose a release",
+		"zerops_board_propose":          "Propose a task for the board",
 	} {
 		tool := tools[name]
 		if tool == nil {
@@ -783,6 +784,11 @@ func TestAnnotations_AppProposeTools(t *testing.T) {
 		if words := len(strings.Fields(tool.Description)); words > 60 {
 			t.Errorf("%s description has %d words (max 60)", name, words)
 		}
+	}
+	// Reading the board's open tasks reads only, and twice reads the same.
+	if list := tools["zerops_board_list"]; list == nil || list.Annotations == nil || !list.Annotations.ReadOnlyHint || !list.Annotations.IdempotentHint ||
+		list.Annotations.DestructiveHint == nil || *list.Annotations.DestructiveHint || len(strings.Fields(list.Description)) > 60 {
+		t.Errorf("zerops_board_list = %+v, want registered in a Mate, read-only, idempotent, not destructive, at most 60 words", list)
 	}
 	// A release is proposed when the person asks for it, never announced after a merge.
 	if d := tools["zerops_propose_release"].Description; !strings.Contains(d, "Only when the person asks to release") || !strings.Contains(d, "Never by yourself after a merge") {
