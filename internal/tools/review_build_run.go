@@ -18,17 +18,17 @@ import (
 
 // executeReviewBuild takes the entire stage set only after holding its locks.
 // The lock scope includes HQ's asynchronous merge decision.
-func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app string, change hq.MateChange, metas []*workflow.ServiceMeta, stages []topology.StageRef, read func() (hq.MateStateDocument, error), log func(string)) (bool, string, error) {
+func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app string, change hq.MateChange, metas []*workflow.ServiceMeta, stages []topology.StageRef, read func() (hq.MateStateDocument, error), log func(string)) reviewBuildResult {
 	if err := reviewResolveSetups(ctx, hqc, app, change.Repo, metas, stages); err != nil {
-		return true, "", fmt.Errorf("read stage setups: %w", err)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("read stage setups: %w", err)}
 	}
 	bindings, err := reviewBindStages(ctx, d, stages)
 	if err != nil {
-		return true, "", fmt.Errorf("find stages: %w", err)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("find stages: %w", err)}
 	}
 	release, err := reviewLockStages(ctx, d, bindings, log)
 	if err != nil {
-		return true, "", fmt.Errorf("lock stages: %w", err)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("lock stages: %w", err)}
 	}
 	defer release()
 
@@ -41,32 +41,32 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 	})
 	doc, err := read()
 	if err != nil {
-		return true, "", fmt.Errorf("read current Mate state: %w", err)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("read current Mate state: %w", err)}
 	}
 	if doc.Link != hq.MateLinkLinked || doc.Mate == nil {
-		return true, "", fmt.Errorf("read current Mate state: HQ is not linked")
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("read current Mate state: HQ is not linked")}
 	}
 	current, repo := reviewCurrent(doc.Mate, change.Repo, change.Number)
 	if current == nil || repo == nil {
-		return false, "", nil
+		return reviewBuildResult{updatedAt: change.UpdatedAt, noTake: true}
 	}
 	if current.State == hq.ChangeMerging {
-		return false, "", reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, "", doc.Mate.Rev, true)
+		return reviewBuildResult{err: reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, "", doc.Mate.Rev, true)}
 	}
 	if current.State != hq.ChangeAdding || current.Head == nil || *current.Head == "" || current.ChecksGivenUp != nil {
-		return false, "", nil
+		return reviewBuildResult{updatedAt: current.UpdatedAt, noTake: true}
 	}
 	// The local stage records can change while the locks were being acquired.
 	latest, err := workflow.ListServiceMetas(d.stateDir)
 	if err != nil {
-		return true, "", fmt.Errorf("reread stage records: %w", err)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("reread stage records: %w", err)}
 	}
 	fresh := reviewStages(latest, app, change.Repo)
 	if err := reviewResolveSetups(ctx, hqc, app, change.Repo, latest, fresh); err != nil {
-		return true, "", fmt.Errorf("reread stage setups: %w", err)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("reread stage setups: %w", err)}
 	}
 	if !reviewSameStages(stages, fresh) {
-		return true, "", fmt.Errorf("stage set changed while waiting")
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("stage set changed while waiting")}
 	}
 
 	head := *current.Head
@@ -76,19 +76,19 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 	}
 	take, err := hqc.TakeReviewBuild(ctx, change.Repo, change.Number, hq.ReviewTake{Head: head, Main: repo.MainHead, Stages: selected})
 	if err != nil {
-		return true, "", fmt.Errorf("take Review build: %w", err)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("take Review build: %w", err)}
 	}
 	switch take.Decision {
-	case "declined":
-		return false, "", nil
+	case reviewDeclined:
+		return reviewBuildResult{updatedAt: current.UpdatedAt, noTake: true}
 	case hq.ReviewDecisionMerging:
-		return false, "", reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, take.Take, doc.Mate.Rev, false)
+		return reviewBuildResult{updatedAt: current.UpdatedAt, err: reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, take.Take, doc.Mate.Rev, false)}
 	case hq.ReviewDecisionBuild:
 		if take.Take == "" {
-			return true, "", fmt.Errorf("take Review build: HQ returned no take")
+			return reviewBuildResult{unavailable: true, err: fmt.Errorf("take Review build: HQ returned no take")}
 		}
 	default:
-		return true, "", fmt.Errorf("take Review build: unknown decision %q", take.Decision)
+		return reviewBuildResult{unavailable: true, err: fmt.Errorf("take Review build: unknown decision %q", take.Decision)}
 	}
 	version := reviewCandidateName(repo.MainHead, head)
 	var source ops.DeploySource
@@ -114,14 +114,14 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 	wg.Wait()
 	result, err := reviewFinishResult(ctx, hqc, change.Repo, change.Number, take.Take, parts, watch)
 	if err != nil {
-		return true, "", fmt.Errorf("write Review build: %w", err)
+		return reviewBuildResult{unavailable: true, updatedAt: current.UpdatedAt, err: fmt.Errorf("write Review build: %w", err)}
 	}
 	if result.Decision == hq.ReviewDecisionMerging {
 		if err := reviewAwaitDecision(ctx, watch, read, change.Repo, change.Number, take.Take, doc.Mate.Rev, false); err != nil {
-			return true, "", err
+			return reviewBuildResult{unavailable: true, updatedAt: current.UpdatedAt, err: err}
 		}
 	}
-	return result.Decision == hq.ReviewDecisionUnavailable, "", nil
+	return reviewBuildResult{unavailable: result.Decision == hq.ReviewDecisionUnavailable, updatedAt: current.UpdatedAt, decision: result.Decision}
 }
 
 // A caller holding all stage locks keeps them past this function, through HQ's decision.

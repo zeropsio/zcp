@@ -11,6 +11,8 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+const reviewDeclined = "declined"
+
 type reviewKey struct {
 	repo   string
 	number int
@@ -18,24 +20,35 @@ type reviewKey struct {
 
 type reviewAttempt struct {
 	head, main, updatedAt       string
+	openAt                      string
 	tries                       int
 	next                        time.Time
 	running, completed, stopped bool
+	sawOpen                     bool
 }
 
 type reviewDone struct {
-	key         reviewKey
-	head        string
-	main        string
-	updatedAt   string
+	key  reviewKey
+	head string
+	main string
+	reviewBuildResult
+}
+
+type reviewBuildResult struct {
 	unavailable bool
+	updatedAt   string
+	decision    string
+	noTake      bool
 	err         error
 }
+
+type reviewRunner func(context.Context, devGitDeps, hq.Client, string, hq.MateChange, []*workflow.ServiceMeta, []topology.StageRef, func() (hq.MateStateDocument, error), func(string)) reviewBuildResult
 
 type reviewObserver struct {
 	read     func() (hq.MateStateDocument, error)
 	log      func(string)
 	deps     func(context.Context) (devGitDeps, bool)
+	build    reviewRunner
 	attempts map[reviewKey]*reviewAttempt
 	done     chan reviewDone
 	timer    *time.Timer
@@ -57,7 +70,7 @@ func KeepMateReviewBuild(ctx context.Context, env func() func(string) string, st
 	})
 	o := &reviewObserver{read: func() (hq.MateStateDocument, error) {
 		return hqIdentity(runtime.DetectFrom(env())).ReadMateState()
-	}, log: log, deps: liveDevGitDeps(env, log),
+	}, log: log, deps: liveDevGitDeps(env, log), build: executeReviewBuild,
 		attempts: make(map[reviewKey]*reviewAttempt), done: make(chan reviewDone)}
 	o.run(watchCtx, changed, standupDone)
 	return nil
@@ -165,6 +178,16 @@ func (o *reviewObserver) look(ctx context.Context) {
 
 func (o *reviewObserver) consider(ctx context.Context, key reviewKey, change hq.MateChange, app, main string) {
 	a := o.attempts[key]
+	if a != nil && a.running {
+		// Keep one runner for this change, even when its head or main moves.
+		if change.State != hq.ChangeAdding && change.State != hq.ChangeMerging {
+			a.sawOpen, a.openAt = true, change.UpdatedAt
+		}
+		if reviewUpdated(change.UpdatedAt, a.updatedAt) {
+			a.updatedAt = change.UpdatedAt
+		}
+		return
+	}
 	if a == nil || a.head != *change.Head || a.main != main || (a.stopped && reviewUpdated(change.UpdatedAt, a.updatedAt)) {
 		a = &reviewAttempt{head: *change.Head, main: main, updatedAt: change.UpdatedAt}
 		o.attempts[key] = a
@@ -213,16 +236,16 @@ func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.Mat
 	}
 	a.running = true
 	go func() {
-		unavailable, updatedAt, runErr := func() (unavailable bool, updatedAt string, err error) {
+		result := func() (result reviewBuildResult) {
 			defer func() {
 				if r := recover(); r != nil {
-					unavailable, err = true, fmt.Errorf("worker stopped: %v", r)
+					result.unavailable, result.err = true, fmt.Errorf("worker stopped: %v", r)
 				}
 			}()
-			return executeReviewBuild(ctx, d, hqc, app, change, metas, stages, o.read, o.log)
+			return o.build(ctx, d, hqc, app, change, metas, stages, o.read, o.log)
 		}()
 		select {
-		case o.done <- reviewDone{key: key, head: *change.Head, main: a.main, updatedAt: updatedAt, unavailable: unavailable, err: runErr}:
+		case o.done <- reviewDone{key: key, head: *change.Head, main: a.main, reviewBuildResult: result}:
 		case <-ctx.Done():
 		}
 	}()
@@ -236,10 +259,31 @@ func (o *reviewObserver) finish(result reviewDone) {
 	if reviewUpdated(result.updatedAt, a.updatedAt) {
 		a.updatedAt = result.updatedAt
 	}
-	a.running, a.completed = false, true
+	a.running = false
 	if result.err != nil {
 		o.log(fmt.Sprintf("Review build: %v", result.err))
 	}
+	if result.decision == reviewDeclined {
+		delete(o.attempts, result.key)
+		return
+	}
+	if result.noTake {
+		// A stale frame must not make a declined take spin; a newer frame
+		// (or a moved head or main) makes it eligible again.
+		if reviewUpdated(a.updatedAt, result.updatedAt) {
+			delete(o.attempts, result.key)
+			return
+		}
+		a.stopped = true
+		return
+	}
+	// The runner may have waited for the locks and taken the later addition.
+	if a.sawOpen && !reviewUpdated(result.updatedAt, a.openAt) {
+		delete(o.attempts, result.key)
+		return
+	}
+	a.sawOpen = false
+	a.completed = true
 	if result.unavailable {
 		o.schedule(a, time.Now())
 	}

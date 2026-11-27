@@ -19,6 +19,7 @@
 - RB-WATCH — The Review observer reads a replacement after its state watch ends and is opened again, or uses its stand-up wake when reopening fails.
 - RB-DESCRIBEHEAD — A description write addresses the checkout's captured head so HQ refuses words for a moved change.
 - RB-ADDING — Only an adding code change starts a Review build; an already running build is not started again.
+- RB-READD — A stopped and re-added change gets one new take after its old build ends, even when no stop was seen; an accepted take is not built again.
 - RB-BASE — A changed main starts a new attempt even if the change head stayed the same.
 - RB-NEEDED — A stage builds the selected source when it is not the active version and no build is running.
 - RB-CURRENT — An active stage version at the selected source is probed without another build.

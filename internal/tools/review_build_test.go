@@ -213,7 +213,7 @@ func TestReviewRetry_RBRetry_Unavailable_IsBounded(t *testing.T) {
 			a := &reviewAttempt{head: "head", main: "main", tries: i, running: true}
 			o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: a}}
 			now := time.Now()
-			o.finish(reviewDone{key: key, head: "head", main: "main", unavailable: true})
+			o.finish(reviewDone{key: key, head: "head", main: "main", reviewBuildResult: reviewBuildResult{unavailable: true}})
 			if delay == 0 {
 				if !a.stopped || !a.next.IsZero() {
 					t.Fatalf("retry %d: %+v, want stopped", i, a)
@@ -228,6 +228,160 @@ func TestReviewRetry_RBRetry_Unavailable_IsBounded(t *testing.T) {
 		if !a.completed || !a.next.IsZero() || a.stopped {
 			t.Fatalf("failed build scheduled a retry: %+v", a)
 		}
+	})
+}
+
+// witness: internal/tools/review_build_watch.go | if result.decision == reviewDeclined { → if result.decision != reviewDeclined {
+func TestReviewObserver_RBReadd_StoppedAdding_TakesAgainAfterTheBuild(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, decision, resultAt string
+		open, updated, noTake    bool
+		moveHead, moveMain       bool
+		wantAnother              bool
+	}{
+		{name: "stop observed", decision: "declined", open: true, updated: true, wantAnother: true},
+		{name: "stop between looks", decision: "declined", updated: true, wantAnother: true},
+		{name: "accepted failure", decision: "failed"},
+		{name: "accepted pass", decision: "merging"},
+		{name: "accepted after an unrelated update", decision: "failed", updated: true},
+		{name: "accepted before stop", decision: "failed", resultAt: "2026-11-27T10:00:00Z", open: true, updated: true, wantAnother: true},
+		{name: "accepted after re-add", decision: "failed", resultAt: "2026-11-27T10:02:00Z", open: true, updated: true},
+		{name: "no take before re-add", resultAt: "2026-11-27T10:01:00Z", open: true, updated: true, noTake: true, wantAnother: true},
+		{name: "declined take waits for a change", resultAt: "2026-11-27T10:00:00Z", noTake: true},
+		{name: "head moves during build", decision: "declined", moveHead: true, wantAnother: true},
+		{name: "main moves during build", decision: "declined", moveMain: true, wantAnother: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				head, main := "head", "main"
+				key := reviewKey{repo: "code", number: 7}
+				change := hq.MateChange{Repo: "code", Number: 7, State: hq.ChangeAdding, Head: &head, UpdatedAt: "2026-11-27T10:00:00Z"}
+				app := "app"
+				doc := hq.MateStateDocument{Link: hq.MateLinkLinked, Mate: &hq.MateState{AppID: &app, Changes: []hq.MateChange{change}, Repos: []hq.MateRepo{{Name: "code", MainHead: &main}}}}
+				started := make(chan hq.MateChange, 3)
+				results := make(chan reviewBuildResult, 3)
+				d := devGitDeps{stateDir: t.TempDir(), rt: runtime.Info{HQ: &runtime.HQLink{Origin: "https://hq.example", ProjectID: "project", Key: "unit-key"}}}
+				o := &reviewObserver{
+					read: func() (hq.MateStateDocument, error) { return doc, nil },
+					deps: func(context.Context) (devGitDeps, bool) { return d, true },
+					build: func(ctx context.Context, _ devGitDeps, _ hq.Client, _ string, change hq.MateChange, _ []*workflow.ServiceMeta, _ []topology.StageRef, _ func() (hq.MateStateDocument, error), _ func(string)) reviewBuildResult {
+						started <- change
+						select {
+						case result := <-results:
+							return result
+						case <-ctx.Done():
+							return reviewBuildResult{err: ctx.Err()}
+						}
+					},
+					attempts: make(map[reviewKey]*reviewAttempt),
+					done:     make(chan reviewDone, 3),
+					log:      func(string) {},
+				}
+				look := func() {
+					doc.Mate.Changes[0] = change
+					o.look(ctx)
+				}
+				look()
+				if first := <-started; first.State != hq.ChangeAdding || *first.Head != head {
+					t.Fatalf("first take = %+v", first)
+				}
+				if tc.open {
+					change.State = hq.ChangeOpen
+					change.UpdatedAt = "2026-11-27T10:01:00Z"
+					look()
+				}
+				change.State = hq.ChangeAdding
+				if tc.updated {
+					change.UpdatedAt = "2026-11-27T10:02:00Z"
+				}
+				wantHead := head
+				if tc.moveHead {
+					wantHead = "new-head"
+					change.Head = &wantHead
+				}
+				if tc.moveMain {
+					main = "new-main"
+				}
+				look()
+				synctest.Wait()
+				select {
+				case another := <-started:
+					t.Fatalf("another take started before the first ended: %+v", another)
+				default:
+				}
+				results <- reviewBuildResult{decision: tc.decision, updatedAt: tc.resultAt, noTake: tc.noTake}
+				o.finish(<-o.done)
+				look()
+				synctest.Wait()
+				select {
+				case another := <-started:
+					if !tc.wantAnother || another.State != hq.ChangeAdding || *another.Head != wantHead || o.attempts[key].main != main {
+						t.Fatalf("unexpected next take: %+v", another)
+					}
+					look()
+					synctest.Wait()
+					select {
+					case extra := <-started:
+						t.Fatalf("duplicate take: %+v", extra)
+					default:
+					}
+				default:
+					if tc.wantAnother {
+						t.Fatal("re-added change did not start its next take")
+					}
+					if tc.noTake {
+						change.UpdatedAt = "2026-11-27T10:03:00Z"
+						look()
+						synctest.Wait()
+						select {
+						case <-started:
+						default:
+							t.Fatal("a later change did not make the declined take eligible")
+						}
+					}
+				}
+			})
+		})
+	}
+	t.Run("HQ decline reaches the observer", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			dir := t.TempDir()
+			stage := topology.StageRef{Hostname: "apistage", SetupName: "api"}
+			meta := &workflow.ServiceMeta{Hostname: "appdev", HQ: &workflow.HQRepoRef{AppID: "app", Repo: "code"}, Stages: []topology.StageRef{stage}}
+			if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+				t.Fatal(err)
+			}
+			head, main := "head", "main"
+			candidate := reviewCandidateName(&main, head)
+			svc := platform.ServiceStack{ID: "stage", Name: "apistage", ProjectID: "project"}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+				WithProject(&platform.Project{ID: "project"}).
+				WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "BUILD_FAILED"}}).
+				WithProjectProcesses([]platform.Process{reviewTestProcess(ops.AppVersionName(candidate), "FAILED")})
+			doer := checkLogDoer(func(r *http.Request) (*http.Response, error) {
+				body := `{"take":"take-1","decision":"declined"}`
+				if strings.HasSuffix(r.URL.Path, "/take") {
+					body = `{"take":"take-1","decision":"build"}`
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})
+			d := devGitDeps{client: client, httpClient: doer, stateDir: dir, rt: runtime.Info{ProjectID: "project", HQ: &runtime.HQLink{Origin: "https://hq.example", ProjectID: "project", Key: "unit-key", StatePath: filepath.Join(dir, "state.json")}}}
+			hqc, err := hq.Open(doer, hq.Identity{Origin: "https://hq.example", ProjectID: "project", Key: "unit-key"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			change := hq.MateChange{Repo: "code", Number: 7, State: hq.ChangeAdding, Head: &head, UpdatedAt: "2026-11-27T10:00:00Z"}
+			doc := hq.MateStateDocument{Link: hq.MateLinkLinked, Mate: &hq.MateState{Changes: []hq.MateChange{change}, Repos: []hq.MateRepo{{Name: "code", MainHead: &main}}}}
+			result := executeReviewBuild(t.Context(), d, hqc, "app", change, []*workflow.ServiceMeta{meta}, []topology.StageRef{stage}, func() (hq.MateStateDocument, error) { return doc, nil }, func(string) {})
+			if result.decision != "declined" || result.unavailable || result.noTake || result.err != nil {
+				t.Fatalf("HQ's declined result was not carried back: %+v", result)
+			}
+		})
 	})
 }
 
@@ -509,12 +663,12 @@ func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.
 				stage := topology.StageRef{Hostname: "apistage", SetupName: "api"}
 				if tc.busyLock {
 					waiting := make(chan string, 1)
-					unavailable, updated, err := executeReviewBuild(ctx, d, hq.Client{}, "app", hq.MateChange{Repo: "code"}, nil, []topology.StageRef{stage}, func() (hq.MateStateDocument, error) {
+					result := executeReviewBuild(ctx, d, hq.Client{}, "app", hq.MateChange{Repo: "code"}, nil, []topology.StageRef{stage}, func() (hq.MateStateDocument, error) {
 						t.Fatal("read HQ state before obtaining the stage lock")
 						return hq.MateStateDocument{}, nil
 					}, func(line string) { waiting <- line })
-					if !unavailable || updated != "" || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "lock stages: lock apistage:") {
-						t.Fatalf("lock stage: unavailable=%t updated=%q err=%v", unavailable, updated, err)
+					if !result.unavailable || result.updatedAt != "" || !errors.Is(result.err, context.DeadlineExceeded) || !strings.Contains(result.err.Error(), "lock stages: lock apistage:") {
+						t.Fatalf("lock stage: %+v", result)
 					}
 					select {
 					case line := <-waiting:
