@@ -6,7 +6,8 @@
 - RB-FLIGHT — A stage build already running for the ready head is joined after a restart.
 - RB-ACTIVE — An active stage version identified as the ready head is probed without another build.
 - RB-FAILED — An identified failed version of the ready head is reported instead of built again.
-- RB-AGAIN — A stage builds the ready head only when its named versions contain no version of that head; an unfinished version is not built again.
+- RB-AGAIN — A stage builds the ready head only when its named versions contain no finished or progressing build of that head.
+- RB-CUT — A cut upload is removed before the ready head is built; a finished or progressing version of that head still prevents another build.
 - RB-STAGES — A Review build covers every recorded stage of the change's repository and writes nothing for a repository with none.
 - RB-SETUP — A stage whose setup is not recorded takes the setup from its repository's stand-up tier; a missing row is not guessed.
 - RB-RETRY — An unavailable Review build is retried after one, five and fifteen minutes and no fourth time.

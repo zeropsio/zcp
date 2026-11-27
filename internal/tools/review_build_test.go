@@ -141,7 +141,6 @@ func TestReviewVersion_RBAgain_NamedVersions_BuildOnlyWhenAbsent(t *testing.T) {
 	}{
 		{nil, reviewBuild},
 		{[]platform.AppVersionEvent{{ID: "other", Name: "zcp another", Status: "BACKUP"}}, reviewBuild},
-		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "UPLOADING"}}, reviewUnknown},
 		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "BACKUP"}}, reviewComplete},
 	} {
 		got := reviewVersionOf("abcdef", "stage", "", tc.versions, nil)
@@ -160,6 +159,49 @@ func TestReviewVersion_RBAgain_NamedVersions_BuildOnlyWhenAbsent(t *testing.T) {
 	part := reviewBuildStage(context.Background(), d, reviewTestSource{}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 	if part.AppVersionID != "av-stage-zcp abcdef" || part.Outcome != "unavailable" || !strings.Contains(part.Reason, "was not returned") {
 		t.Fatalf("absent version: %+v", part)
+	}
+}
+
+// witness: internal/tools/review_build.go | v.Name != ops.AppVersionName(head) || v.Status == platform.AppVersionStatusUploading → v.Name != ops.AppVersionName(head)
+func TestReviewStage_RBCut_InterruptedUpload_CleansBeforeBuild(t *testing.T) {
+	t.Parallel()
+	cut := platform.AppVersionEvent{ID: "cut", ProjectID: "project", ServiceStackID: "stage", Name: "zcp abcdef", Status: "UPLOADING"}
+	for _, tc := range []struct {
+		name, reason, version string
+		deleteErr             error
+	}{
+		{"cleanup refused", "delete refused", "", errors.New("delete refused")},
+		{"cleanup succeeds", "was not returned", "av-stage-zcp abcdef", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := platform.NewMock().
+				WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}}).
+				WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: cut.ID, Status: cut.Status}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{cut}).
+				WithProcess(&platform.Process{ID: "build-av-stage-zcp abcdef", Status: "FINISHED"})
+			if tc.deleteErr != nil {
+				client.WithError("DeleteAppVersion", tc.deleteErr)
+			}
+			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
+			part := reviewBuildStage(context.Background(), d, reviewTestSource{}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			if part.Outcome != "unavailable" || part.AppVersionID != tc.version || !strings.Contains(part.Reason, tc.reason) {
+				t.Fatalf("cut upload: %+v", part)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		status string
+		want   reviewVersionAction
+	}{
+		{"BACKUP", reviewComplete},
+		{"BUILDING", reviewUnknown},
+		{"DEPLOYING", reviewUnknown},
+	} {
+		versions := []platform.AppVersionEvent{cut, {ID: "built", Name: "zcp abcdef", Status: tc.status}}
+		if got := reviewVersionOf("abcdef", "stage", "", versions, nil); got.action != tc.want || got.id != "built" {
+			t.Fatalf("cut beside %s: got %+v, want %v for built", tc.status, got, tc.want)
+		}
 	}
 }
 

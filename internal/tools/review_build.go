@@ -130,7 +130,7 @@ func reviewVersionOf(head, service, active string, versions []platform.AppVersio
 		}
 	}
 	for _, v := range versions {
-		if v.Name != ops.AppVersionName(head) {
+		if v.Name != ops.AppVersionName(head) || v.Status == platform.AppVersionStatusUploading {
 			continue
 		}
 		reason := v.Status

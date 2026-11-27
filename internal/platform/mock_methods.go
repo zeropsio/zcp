@@ -288,11 +288,21 @@ func (m *Mock) BuildAndDeployAppVersion(_ context.Context, appVersionID, _, _ st
 	return &Process{ID: "build-" + appVersionID, ActionName: "stack.build", Status: ProcessStatusPending}, nil
 }
 
-// ListUploadingAppVersions answers none; WithError("ListUploadingAppVersions",
-// err) refuses it.
-func (m *Mock) ListUploadingAppVersions(_ context.Context, _, _ string) ([]AppVersionEvent, error) {
+// ListUploadingAppVersions returns the matching seeded search events.
+func (m *Mock) ListUploadingAppVersions(_ context.Context, projectID, serviceID string) ([]AppVersionEvent, error) {
 	m.trackCall("ListUploadingAppVersions")
-	return nil, m.getError("ListUploadingAppVersions")
+	if err := m.getError("ListUploadingAppVersions"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var uploading []AppVersionEvent
+	for _, event := range m.appVersionEvents {
+		if event.ProjectID == projectID && event.ServiceStackID == serviceID && event.Status == AppVersionStatusUploading {
+			uploading = append(uploading, event)
+		}
+	}
+	return uploading, nil
 }
 
 // DeleteAppVersion records the call; WithError("DeleteAppVersion", err)
