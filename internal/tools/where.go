@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ type whereEvent struct {
 	kind, host, value string
 	head, repo, root  string
 	ref               *topology.BranchRef
+	baseUnpushed      *int
 	change            *hq.Change
 	envelope          workflow.StateEnvelope
 	ids               map[string]string
@@ -209,10 +211,14 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 	case "branch":
 		g.pending--
 		g.branches[event.host] = event
-		if event.err == nil && g.rt.MateEnabled && event.repo != "" && event.value != "" && event.value != hqBase && event.head != "" {
-			g.startEditReads(ctx, event)
+		if event.err == nil && g.rt.MateEnabled && event.repo != "" && event.value != "" && event.head != "" {
+			if event.value == hqBase {
+				g.startBaseRead(ctx, event)
+			} else {
+				g.startEditReads(ctx, event)
+			}
 		}
-	case "ref":
+	case "ref", "base":
 		g.pending--
 		g.refs[event.host] = event
 	case "hq":
@@ -295,6 +301,39 @@ func (g *whereGatherer) startHead(ctx context.Context, host, root, repo string) 
 			err = ctx.Err()
 		}
 		g.send(ctx, whereEvent{kind: "branch", host: host, value: branch, head: head, repo: repo, root: root, dirty: dirty, err: err})
+	}()
+}
+
+// readBaseUnpushed reads the checkout's local origin/main ref over SSH. A
+// missing ref or object cannot establish that the base holds no unpushed work.
+func readBaseUnpushed(ctx context.Context, ssh ops.SSHDeployer, workcopy whereEvent) whereEvent {
+	result := whereEvent{kind: "base", host: workcopy.host}
+	runner := git.SSHRunner{Executor: ssh, Hostname: workcopy.host}
+	const readGit = "GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 git "
+	baseRef := "refs/remotes/origin/" + hqBase
+	script := readGit + "rev-parse --verify -q " + ops.ShellQuote(baseRef) + " >/dev/null && " +
+		readGit + "rev-list --count --missing=print " + ops.ShellQuote(workcopy.head) + " --not " + ops.ShellQuote(baseRef)
+	out, _, err := runner.Run(ctx, workcopy.root, script)
+	if err != nil {
+		result.err = fmt.Errorf("read unpushed commits: %w", err)
+		return result
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil || count < 0 {
+		result.err = errors.New("unpushed commits were not read")
+		return result
+	}
+	result.baseUnpushed = &count
+	return result
+}
+
+func (g *whereGatherer) startBaseRead(ctx context.Context, workcopy whereEvent) {
+	if ctx.Err() != nil {
+		return
+	}
+	g.pending++
+	go func() {
+		g.send(ctx, readBaseUnpushed(ctx, g.deps.SSH, workcopy))
 	}()
 }
 
@@ -505,6 +544,15 @@ func planWhereEdits(facts *workflow.WhereFacts, repos map[string]string, branche
 		input := workflow.EditCopy{Name: workcopy.Name}
 		branch, read := branches[workcopy.Name]
 		if workcopy.Branch == hqBase && read && branch.err == nil && branch.value == hqBase {
+			workcopy.NothingToHandOver = true
+			if branch.head == "" {
+				step := workflow.EditStep{Action: workflow.EditUnknown, Copy: workcopy.Name, Reason: "checkout has no commit"}
+				workcopy.Step = &step
+				continue
+			}
+			if base, found := refs[workcopy.Name]; found && base.err == nil {
+				workcopy.BaseUnpushed = base.baseUnpushed
+			}
 			continue
 		}
 		switch {

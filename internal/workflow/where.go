@@ -57,6 +57,8 @@ type WhereCopy struct {
 	Change             *HQChangeLine
 	Step               *EditStep
 	BranchRef          *topology.BranchRef
+	NothingToHandOver  bool
+	BaseUnpushed       *int
 }
 
 // EditCopy is the checkout and branch ref as read for this call.
@@ -188,10 +190,17 @@ func MissingEditCopyStep(branch string, classic *WhereCopy) EditStep {
 	if classic.Branch == "" {
 		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " is not on a branch"}
 	}
-	if classic.Step == nil {
-		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " handover was not read"}
-	}
-	if classic.Step.Action != EditHandedOver && (classic.Step.Action != EditRefreshBase || !classic.Step.ReadyToSwitch) {
+	switch {
+	case classic.NothingToHandOver:
+		if classic.BaseUnpushed == nil {
+			return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " unpushed commits were not read"}
+		}
+		if *classic.BaseUnpushed > 0 {
+			return occupied
+		}
+	case classic.Step == nil:
+		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " handover has not been checked"}
+	case classic.Step.Action != EditHandedOver && (classic.Step.Action != EditRefreshBase || !classic.Step.ReadyToSwitch):
 		return occupied
 	}
 	return EditStep{Action: "checkout " + branch, Copy: classic.Name}
@@ -354,6 +363,21 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 		}
 	case worktree.Dirty:
 		work = "uncommitted changes"
+	}
+	if !worktree.Lease && worktree.NothingToHandOver && worktree.WorkUnread == "" {
+		unpushed := ""
+		if worktree.BaseUnpushed == nil {
+			unpushed = "unpushed commits not read"
+		} else if count := *worktree.BaseUnpushed; count > 0 {
+			unpushed = fmt.Sprintf("%d %s unpushed", count, whereCountWord(count, "commit"))
+		}
+		if unpushed != "" {
+			if work == "clean" {
+				work = unpushed
+			} else {
+				work += ", " + unpushed
+			}
+		}
 	}
 	if worktree.Unverified {
 		work += " (unverified)"

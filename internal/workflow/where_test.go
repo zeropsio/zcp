@@ -16,6 +16,7 @@ import (
 func TestWhere_WHCOPY_NamesWorkingCopies(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	two := 2
 	change := &HQChangeLine{Number: 42, Branch: "feat/b", Labels: []string{"draft", "behind main"}}
 	copies := []WhereCopy{
 		{Name: "pool-1", Part: "api", Branch: "feat/a", Lease: true, State: "held", Unsaved: &topology.LeaseUnsaved{FileCount: 2, UnpushedCommits: 3}, HasHQ: true, DevServers: []topology.DevServerState{{Name: "api", Status: "running", URL: "http://api:3000"}, {Name: "jobs", Status: "stopped"}}},
@@ -34,6 +35,9 @@ func TestWhere_WHCOPY_NamesWorkingCopies(t *testing.T) {
 		{"named second", WhereFacts{ReadAt: at, Lease: "pool-2", Copies: copies}, header + "\n" + strings.Replace(second, "pool-2:", "pool-2 (this conversation's):", 1) + "\n" + first + "\n" + dev},
 		{"no alias", WhereFacts{ReadAt: at, Copies: copies}, header + "\n" + first + "\n" + second + "\n" + dev},
 		{"unknown alias", WhereFacts{ReadAt: at, Lease: "missing", Copies: copies}, header + "\n" + first + "\n" + second + "\n" + dev},
+		{"base has unpushed commits", WhereFacts{ReadAt: at, Copies: []WhereCopy{{Name: "appdev", Part: "api", Branch: "main", NothingToHandOver: true, BaseUnpushed: &two, DevServers: []topology.DevServerState{}}}}, header + "\nappdev: part api, branch main, 2 commits unpushed; no dev server"},
+		{"base unpushed unread", WhereFacts{ReadAt: at, Copies: []WhereCopy{{Name: "appdev", Part: "api", Branch: "main", NothingToHandOver: true, DevServers: []topology.DevServerState{}}}}, header + "\nappdev: part api, branch main, unpushed commits not read; no dev server"},
+		{"base dirty and unpushed", WhereFacts{ReadAt: at, Copies: []WhereCopy{{Name: "appdev", Part: "api", Branch: "main", Dirty: true, NothingToHandOver: true, BaseUnpushed: &two, DevServers: []topology.DevServerState{}}}}, header + "\nappdev: part api, branch main, uncommitted changes, 2 commits unpushed; no dev server"},
 		{"parked and landed", WhereFacts{ReadAt: at, Copies: []WhereCopy{{Name: "pool-3", Part: "api", Branch: "feat/c", Lease: true, State: "parked", Unverified: true, HasHQ: true, Change: &HQChangeLine{Number: 43, LandedWith: 41}, ServersUnread: "lease parked"}}, Changes: []WhereChange{{HQChangeLine: HQChangeLine{Number: 44, Branch: "feat/d", Labels: []string{"draft"}}}}}, header + "\n" + "pool-3: part api, branch feat/c, parked (unverified), change #43 merged as part of #41; dev servers not read (lease parked)\nchange #44 feat/d (draft): no working copy"},
 		{"empty", WhereFacts{ReadAt: at}, ""},
 	} {
@@ -210,11 +214,13 @@ func TestPlanEdit_WHAcquire_NoCopy(t *testing.T) {
 // witness: internal/workflow/where.go | return EditStep{Action: "checkout " + branch, Copy: classic.Name} → return EditStep{Action: "acquire"}
 func TestWhere_WHCheckout_ClassicBranchNeedsCheckout(t *testing.T) {
 	t.Parallel()
+	zero := 0
 	for _, tc := range []struct {
 		name, want string
 		classic    *WhereCopy
 	}{
 		{"classic", "change #7 feature: no working copy; step: checkout feature in appdev", &WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditHandedOver}}},
+		{"clean main", "change #7 feature: no working copy; step: checkout feature in appdev", &WhereCopy{Name: "appdev", Branch: "main", NothingToHandOver: true, BaseUnpushed: &zero}},
 		{"pool", "change #7 feature: no working copy; step: acquire", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,21 +233,26 @@ func TestWhere_WHCheckout_ClassicBranchNeedsCheckout(t *testing.T) {
 	}
 }
 
-// witness: internal/workflow/where.go | if classic.Dirty { → if false && classic.Dirty {
+// witness: internal/workflow/where.go | if *classic.BaseUnpushed > 0 { → if *classic.BaseUnpushed < 0 {
 func TestWhere_WHOccupied_ClassicBranchCannotBeMoved(t *testing.T) {
 	t.Parallel()
+	zero, one := 0, 1
 	for _, tc := range []struct {
 		name    string
 		classic WhereCopy
 		want    EditStep
 	}{
 		{"dirty even if handed over", WhereCopy{Name: "appdev", Branch: "other", Dirty: true, Step: &EditStep{Action: EditHandedOver}}, EditStep{Action: "occupied by other: ask the person"}},
+		{"dirty main", WhereCopy{Name: "appdev", Branch: "main", Dirty: true, NothingToHandOver: true, BaseUnpushed: &zero}, EditStep{Action: "occupied by main: ask the person"}},
+		{"unpushed main", WhereCopy{Name: "appdev", Branch: "main", NothingToHandOver: true, BaseUnpushed: &one}, EditStep{Action: "occupied by main: ask the person"}},
+		{"main unpushed unread", WhereCopy{Name: "appdev", Branch: "main", NothingToHandOver: true}, EditStep{Action: EditUnknown, Reason: "checkout appdev unpushed commits were not read"}},
+		{"main branch unread", WhereCopy{Name: "appdev", Branch: "main", WorkUnread: "no answer"}, EditStep{Action: EditUnknown, Reason: "checkout appdev branch was not read"}},
 		{"dirty detached", WhereCopy{Name: "appdev", Dirty: true}, EditStep{Action: "occupied by (detached): ask the person"}},
 		{"clean detached", WhereCopy{Name: "appdev"}, EditStep{Action: EditUnknown, Reason: "checkout appdev is not on a branch"}},
 		{"clean but not handed over", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: "describe change"}}, EditStep{Action: "occupied by other: ask the person"}},
 		{"handed over but behind", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditRefreshBase, ReadyToSwitch: true}}, EditStep{Action: "checkout feature", Copy: "appdev"}},
 		{"undescribed and behind", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditRefreshBase}}, EditStep{Action: "occupied by other: ask the person"}},
-		{"unread handover", WhereCopy{Name: "appdev", Branch: "other"}, EditStep{Action: EditUnknown, Reason: "checkout appdev handover was not read"}},
+		{"unread handover", WhereCopy{Name: "appdev", Branch: "other"}, EditStep{Action: EditUnknown, Reason: "checkout appdev handover has not been checked"}},
 		{"HQ unread", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditUnknown, Reason: "HQ was not read"}}, EditStep{Action: EditUnknown, Reason: "HQ was not read"}},
 		{"checkout unread", WhereCopy{Name: "appdev", WorkUnread: "no answer"}, EditStep{Action: EditUnknown, Reason: "checkout appdev branch was not read"}},
 	} {

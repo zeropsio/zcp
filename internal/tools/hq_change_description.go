@@ -128,7 +128,18 @@ func readDescriptionCopy(ctx context.Context, ssh ops.SSHDeployer, stateDir, add
 		return descriptionCopy{}, fmt.Errorf("read the addressed checkout %s: %w", workcopy.name, err)
 	}
 	if !workcopy.lease && target.Branch != "" && branch != target.Branch {
-		return descriptionCopy{}, missingDescriptionCopy(target, &workflow.WhereCopy{Name: workcopy.name, Branch: branch, Dirty: dirty})
+		classic := workflow.WhereCopy{Name: workcopy.name, Branch: branch, Dirty: dirty, HasHQ: true}
+		if branch == hqBase {
+			read := whereEvent{host: workcopy.name, root: workcopy.root, value: branch, head: head, dirty: dirty}
+			refs := map[string]whereEvent{}
+			if !dirty && head != "" {
+				refs[workcopy.name] = readBaseUnpushed(ctx, ssh, read)
+			}
+			facts := workflow.WhereFacts{Copies: []workflow.WhereCopy{classic}}
+			planWhereEdits(&facts, nil, map[string]whereEvent{workcopy.name: read}, refs, nil, time.Time{})
+			classic = facts.Copies[0]
+		}
+		return descriptionCopy{}, missingDescriptionCopy(target, &classic)
 	}
 	if head == "" || branch == "" || branch == hqBase || (target.Branch != "" && branch != target.Branch) {
 		return descriptionCopy{}, fmt.Errorf("the addressed checkout %s has branch %q and head %q; it must hold the named branch and a commit", workcopy.name, branch, head)

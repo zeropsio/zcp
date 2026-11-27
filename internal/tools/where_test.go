@@ -265,7 +265,7 @@ func TestWhere_WGReviewStep_FreshFailureReachesPlanner(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/where.go | classicDevs[service.HQRepo] = service.Hostname → classicDevs[service.HQRepo] = ""
+// witness: internal/tools/where.go | workcopy.NothingToHandOver = true → workcopy.NothingToHandOver = false
 func TestWhere_WGNoCopy_SelectsTheRepositorysDevHalf(t *testing.T) {
 	t.Parallel()
 	env := workflow.StateEnvelope{Services: []workflow.ServiceSnapshot{
@@ -276,22 +276,41 @@ func TestWhere_WGNoCopy_SelectsTheRepositorysDevHalf(t *testing.T) {
 		{Repo: "classic", Changes: []workflow.HQChangeLine{{Number: 7, Branch: "feature", Open: true}}},
 		{Repo: "pool", Changes: []workflow.HQChangeLine{{Number: 8, Branch: "other", Open: true}}},
 	}
-	head := "head"
+	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for _, tc := range []struct {
-		name  string
-		dirty bool
-		ready bool
-		want  string
+		name, branch, baseRead, want string
+		dirty, ready, baseReadFails  bool
 	}{
-		{"handed over", false, true, "checkout feature in appdev"},
-		{"dirty", true, true, "occupied by earlier: ask the person"},
-		{"draft", false, false, "occupied by earlier: ask the person"},
+		{name: "handed over", branch: "earlier", ready: true, want: "checkout feature in appdev"},
+		{name: "dirty", branch: "earlier", dirty: true, ready: true, want: "occupied by earlier: ask the person"},
+		{name: "draft", branch: "earlier", want: "occupied by earlier: ask the person"},
+		{name: "clean main", branch: "main", baseRead: "0\n", want: "checkout feature in appdev"},
+		{name: "dirty main", branch: "main", dirty: true, baseRead: "0\n", want: "occupied by main: ask the person"},
+		{name: "main commit only on another remote branch", branch: "main", baseRead: "1\n", want: "occupied by main: ask the person"},
+		{name: "main read failed", branch: "main", baseReadFails: true, want: "unknown: checkout appdev unpushed commits were not read"},
+		{name: "main history missing", branch: "main", baseRead: "?missing\n0\n", want: "unknown: checkout appdev unpushed commits were not read"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			branches := map[string]whereEvent{"appdev": {value: "earlier", head: head, dirty: tc.dirty}}
+			branches := map[string]whereEvent{"appdev": {value: tc.branch, head: head, dirty: tc.dirty}}
 			refs := map[string]whereEvent{"appdev": {ref: &topology.BranchRef{Head: head, Published: true}}}
 			reads := map[string]whereEvent{"appdev": {change: &hq.Change{Number: 6, Head: &head, Ready: &tc.ready}}}
+			if tc.branch == "main" {
+				ssh := &stubSSH{output: []byte(tc.baseRead)}
+				if tc.baseReadFails {
+					ssh.err = errors.New("checkout did not answer")
+				}
+				g := newWhereGatherer(ops.LeaseDeps{Client: platform.NewMock(), ProjectID: "proj-1", SSH: ssh}, runtime.Info{MateEnabled: true}, "", time.Time{}, nil)
+				g.pending = 1
+				err := g.process(context.Background(), whereEvent{kind: "branch", host: "appdev", root: "/var/www", repo: "classic", value: tc.branch, head: head, dirty: tc.dirty})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := g.receive(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				branches, refs = g.branches, g.refs
+			}
 			answer := renderWhereAnswer(env, nil, branches, nil, nil, changes, runtime.Info{MateEnabled: true}, "", time.Time{}, refs, reads)
 			for _, want := range []string{"change #7 feature: no working copy; step: " + tc.want, "change #8 other: no working copy; step: acquire"} {
 				if !strings.Contains(answer, want) {
@@ -347,17 +366,25 @@ func TestOpenChange_WGOpenBranch_UsesClassicCheckout(t *testing.T) {
 func TestDescription_WGNeedCopy_NamesLeaseOrClassicNextStep(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, service, status, want string
-		pair                        *workflow.ServiceMeta
+		name, service, branch, status, baseRead, want string
+		pair                                          *workflow.ServiceMeta
+		baseReadFails                                 bool
 	}{
-		{"pool without lease", "apppool", "clean", `zerops_lease action=acquire branch="feature" pool="apppool"`, &workflow.ServiceMeta{Hostname: "apppool", DevPool: &workflow.DevPoolRef{}}},
-		{"classic dirty on another branch", "appdev", "dirty", "occupied by other: ask the person", &workflow.ServiceMeta{Hostname: "appdev"}},
-		{"classic clean without handover read", "appdev", "clean", "unknown: checkout appdev handover was not read; run zcp where", &workflow.ServiceMeta{Hostname: "appdev"}},
+		{name: "pool without lease", service: "apppool", branch: "other", status: "clean", want: `zerops_lease action=acquire branch="feature" pool="apppool"`, pair: &workflow.ServiceMeta{Hostname: "apppool", DevPool: &workflow.DevPoolRef{}}},
+		{name: "classic dirty on another branch", service: "appdev", branch: "other", status: "dirty", want: "occupied by other: ask the person", pair: &workflow.ServiceMeta{Hostname: "appdev"}},
+		{name: "classic clean without handover read", service: "appdev", branch: "other", status: "clean", want: "unknown: checkout appdev handover has not been checked; run zcp where", pair: &workflow.ServiceMeta{Hostname: "appdev"}},
+		{name: "clean main", service: "appdev", branch: "main", status: "clean", baseRead: "0\n", want: "checkout feature in appdev", pair: &workflow.ServiceMeta{Hostname: "appdev"}},
+		{name: "dirty main", service: "appdev", branch: "main", status: "dirty", want: "occupied by main: ask the person", pair: &workflow.ServiceMeta{Hostname: "appdev"}},
+		{name: "unpushed main", service: "appdev", branch: "main", status: "clean", baseRead: "2\n", want: "occupied by main: ask the person", pair: &workflow.ServiceMeta{Hostname: "appdev"}},
+		{name: "main read failed", service: "appdev", branch: "main", status: "clean", baseReadFails: true, want: "unknown: checkout appdev unpushed commits were not read; run zcp where", pair: &workflow.ServiceMeta{Hostname: "appdev"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			ssh := &stubSSH{output: []byte("checkout-head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ncheckout-branch:other\ncheckout-" + tc.status + "\n")}
+			ssh := &stubSSHWithCommands{statusOutput: []byte("checkout-head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ncheckout-branch:" + tc.branch + "\ncheckout-" + tc.status + "\n"), pushOutput: []byte(tc.baseRead)}
+			if tc.baseReadFails {
+				ssh.pushErr = errors.New("checkout did not answer")
+			}
 			_, err := readDescriptionCopy(context.Background(), ssh, dir, targetHQ, changeTarget{AppID: "app", Repo: "app", Branch: "feature", Pair: tc.pair}, tc.service)
 			var refusal *platform.PlatformError
 			if !errors.As(err, &refusal) || refusal.Code != platform.ErrPrerequisiteMissing || !strings.Contains(refusal.Suggestion, tc.want) {
