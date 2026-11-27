@@ -18,7 +18,7 @@ If the same test, verify failure, or review finding repeats twice, stop patching
 
 ## Step 2 — verify on the dev URL
 
-The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes the dev service for reachability + health, and the acceptance tests are green. Combined with a clean review, these checks form a composite:
+The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes the dev service for reachability + health, and the acceptance tests are green. Combined with a clean review, the slice is **verified** — a composite:
 
 | Check | Owner | Mechanism |
 |---|---|---|
@@ -27,7 +27,7 @@ The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes
 | Reachable / healthy | ZCP | `zerops_verify` on the dev URL |
 | Looks & feels right | you | rendering the dev URL against the design chapter + the floor (screenshot if you can) |
 
-Surface the composite to the user ("acceptance tests green + reviewed + the dev URL serves it + I checked it looks right"). Outside a Mate, call the slice verified only as that composite, never as a bare "verified" that implies test quality. In a Mate, report the change as verified only when its Review build passes at the described head. `zerops_verify` proves reachability only — it is not a design or test guarantee.
+Surface the composite to the user. State it as the composite ("acceptance tests green + reviewed + the dev URL serves it + I checked it looks right"), never as a bare "verified" that implies test quality. `zerops_verify` proves reachability only — it is not a design or test guarantee.
 
 **Delayed effects:** if the slice touched async work, cache, search indexing, webhook/email/notification, auth/session, or a migration, do not call it verified on the first HTTP response alone. Probe the delayed result explicitly after the expected delay: job result, notification record, searchable item, session behavior, migrated read path, or failure/status log. If there is no observable delayed path, add one before advancing.
 
@@ -45,8 +45,8 @@ Deploy through `zerops_deploy` on the develop pipeline; the work session scopes 
 
 ## Step 4 — narrate, then advance
 
-Hand the user **working software**, not a status dump:
+Hand the user **working software**, not a status dump. In a Mate, use the dev copy's **Preview** and its address; elsewhere, use the preview address chosen above:
 
-> "I built **[what it does, in their words]** — you can now **[concrete thing]** on your preview at **[its URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow. Next I'll add **[the next slice, in their words]** unless that is off."
+> "I built **[what it does, in their words]** — you can now **[concrete thing]** on **[your Preview in a Mate; your preview outside a Mate]** at **[its URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow. Next I'll add **[the next slice, in their words]** unless that is off."
 
 A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. In a Mate, end the turn after handing over the described change. Elsewhere, advance to the next slice (phase 4); read `zerops_workflow action="status"` to confirm where things stand.

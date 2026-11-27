@@ -186,10 +186,10 @@ func prodSetupGuidanceWithBlock(wantName string, availableNames []string, propos
 
 // prodSetupMateFramingNote is said with a proposed block derived from a setup
 // that lets Mate's preview pane frame the app — only then: production keeps
-// the app's strict framing, and a stage building Mate's preview variant runs a
-// setup production never builds.
+// the app's strict framing, and a stage can build a framing setup for its part
+// that production never builds.
 const prodSetupMateFramingNote = "\n**Production keeps the app's strict framing.** The setup this block is derived from lets Mate's preview pane frame the app (a `frame-ancestors` naming `https://mate.zerops.io`, no `X-Frame-Options`); the proposed block leaves Mate's sources out (`'none'` where nothing else is left). " +
-	"A stage that builds Mate's preview variant of a setup — one that `extends` it and changes only the framing — runs a setup production never builds: re-call with `prodSetupNameOverride=\"<the setup it extends>\"`.\n"
+	"A part's stage can build a setup that `extends` another and changes only the framing; production never builds that setup: re-call with `prodSetupNameOverride=\"<the setup it extends>\"`.\n"
 
 // prodSetupMissingGenericMessage is the fallback used when deriveProdSetupBlock
 // cannot produce a template (malformed source yaml, zero non-prod setups).

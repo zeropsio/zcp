@@ -1,13 +1,18 @@
 package content
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // witness: internal/content/templates/skills/guided/phases/review-deploy.md | The Review build puts the described head on the stage → The stage half is their preview
+// witness: internal/knowledge/playbooks/standup.md | tell the person each part's stage is ready for its Review build → give the person this Mate's preview, with its address
 func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 	t.Parallel()
 
@@ -41,6 +46,49 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 		texts = append(texts, struct{ name, body string }{atom.Name, atom.Content})
 	}
 
+	// Scan knowledge sources including playbooks and recipe companions. The
+	// store exposes only selected documents, while the source is the corpus.
+	err = filepath.WalkDir("../knowledge", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || (filepath.Ext(path) != ".md" && filepath.Ext(path) != ".yml" && filepath.Ext(path) != ".yaml") {
+			return nil
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		texts = append(texts, struct{ name, body string }{path, string(body)})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("read knowledge corpus: %v", err)
+	}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("load embedded knowledge: %v", err)
+	}
+	for _, docCase := range []struct {
+		uri   string
+		wants []string
+	}{
+		{"zerops://playbooks/standup", []string{"dev copy's Preview is up", "each part's stage is ready for its Review build"}},
+		{"zerops://playbooks/preview-pane", []string{"stage setup for its part", "Keep an existing setup's name"}},
+	} {
+		doc, getErr := store.Get(docCase.uri)
+		if getErr != nil {
+			t.Fatalf("read embedded %s: %v", docCase.uri, getErr)
+		}
+		body := doc.Description + "\n" + doc.Content
+		for _, want := range docCase.wants {
+			if !strings.Contains(body, want) {
+				t.Errorf("embedded %s lacks %q", docCase.uri, want)
+			}
+		}
+		texts = append(texts, struct{ name, body string }{docCase.uri, body})
+	}
+
 	// The standalone AGENTS.md is rendered separately. Shared skill and atom
 	// instructions name that environment explicitly when its stage is a preview.
 	forbidden := []string{
@@ -58,6 +106,10 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 		"their preview (the stage half)",
 		"preview is the stage",
 		"stage half's url instead — still their preview",
+		"until a part's stage stands never tell the person that part's preview is up",
+		"give the person this mate's preview, with its address",
+		"stage's preview variant",
+		"give the stage mate's preview variant",
 	}
 	for _, text := range texts {
 		body := strings.ToLower(strings.Join(strings.Fields(text.body), " "))
@@ -91,6 +143,9 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 	}
 	if strings.Contains(mate, "zerops_deploy") {
 		t.Error("guided Mate handover names zerops_deploy")
+	}
+	if !strings.Contains(review, "In a Mate, use the dev copy's **Preview** and its address") {
+		t.Error("guided narration does not name the dev copy's Preview")
 	}
 	for _, want := range []string{"checkpoint", "zerops_deploy", "zerops_verify"} {
 		if !strings.Contains(outside, want) {

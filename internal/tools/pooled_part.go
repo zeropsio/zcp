@@ -220,7 +220,7 @@ func pooledPlanStoodLine(headline mate.StandupHeadline, rows []pooledPlanRow, pa
 	}
 	line := fmt.Sprintf("The plan's parts stand, verdict %s: %s.", headline, strings.Join(said, ", "))
 	if headline == mate.HeadlineReady {
-		line += " A stage that is not built has its row's cause; until it runs its part has no preview, so never tell the person it is up."
+		line += " A stage that is not built has its row's cause; the part's Preview is its dev copy's running dev server."
 	}
 	return line + fmt.Sprintf(" Work in a part through a lease of its pool, a branch per lease: zerops_lease action=\"acquire\" pools=[%s] branch=\"<your branch>\".", strings.Join(pools, ", "))
 }

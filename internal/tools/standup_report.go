@@ -149,8 +149,8 @@ func buildStandupResponse(src standupSource, pairs []*standupPair, live map[stri
 		resp.Next = standupPooledNext(pooled)
 	case stood == containers:
 		resp.StandUp = standupReady
-		resp.Next = "Every pair stands: each dev half runs main's code, and each stage runs main as this Mate's preview. " +
-			"Start each dev half's dev server as its next step says if it is not running yet, verify, then tell the person this Mate's preview is up, with its address — a preview with test data, never \"stage\" or \"online\". " +
+		resp.Next = "Every pair stands: each dev half and each part's stage run main's code. " +
+			"Start each dev half's dev server as its next step says if it is not running yet, verify, then tell the person each dev copy's Preview is up, with its address — a copy with test data. " +
 			"Nothing was committed, pushed or proposed."
 	case devs == containers && stood+queued == containers:
 		resp.StandUp = standupDevelopment
@@ -250,12 +250,12 @@ func standupPooledNext(pooled pooledOutcome) string {
 	var next string
 	switch pooled.verdict.Headline {
 	case mate.HeadlineDone:
-		next = "Every pooled part's pool and stages run main: the pools lease, and each stage is this Mate's preview. " +
-			"Tell the person this Mate's preview is up, with each stage's address — a preview with test data. " +
+		next = "Every pooled part's pool and stages run main: the pools lease, and each part's stage is set up for its Review build. " +
+			"The dev copy's Preview is where the person tries work once its dev server is running and verified. " +
 			"Work on a part goes through zerops_workflow action=\"start\" workflow=\"develop\" scope=[\"<pool>\"], each branch in a lease of its own."
 	case mate.HeadlineReady:
 		next = "The pools are ready to work and lease; a stage is not built — its verdict row says why and its next step how to fix it. " +
-			"Until a stage runs, its part has no preview: never tell the person it is up before."
+			"The part's Preview is its dev copy's running dev server."
 	case mate.HeadlineBuilding, mate.HeadlineFailed:
 		next = "Each pooled service's verdict row names its state, the cause in the source's words and its next step; " +
 			"zerops_standup continues from there and never builds twice."
@@ -273,8 +273,8 @@ const standupCallAgain = "Call zerops_standup again."
 // standupDevelopmentNext is the model's way on once every dev half stands and
 // the stages are queued: development first, then the stages on a second call.
 const standupDevelopmentNext = "Every dev half runs main's code; the stages are queued. " +
-	"Start each dev half's dev server with zerops_dev_server as its next step says, verify it, and tell the person development is up, with each dev half's address. " +
-	"Then call zerops_standup again in this turn: it builds the stages — this Mate's preview of main — each after its dev half and what its build reads, and waits for them. " +
+	"Start each dev half's dev server with zerops_dev_server as its next step says, verify it, and tell the person the Preview of each dev copy is up, with its address. " +
+	"Then call zerops_standup again in this turn: it builds each part's stage from main, after its dev half and what its build reads, and waits for them. " +
 	"Until that call the stages wait for their first deploy (READY_TO_DEPLOY), which breaks nothing. Nothing was committed, pushed or proposed."
 
 // standupStoppedNext is the model's way on from a stand-up that stopped short:
@@ -333,7 +333,7 @@ func standupStageService(sp *standupPair, st *standupStage) standupService {
 	case d == nil:
 		s.Next = standupCallAgain
 	case d.running():
-		s.Next = fmt.Sprintf("Verify it: zerops_verify serviceHostname=%q. It is this Mate's preview of main", stage.Hostname)
+		s.Next = fmt.Sprintf("Verify it: zerops_verify serviceHostname=%q. It is the part's stage running main", stage.Hostname)
 		if d.URL != "" {
 			s.Next += ", at " + d.URL
 		}

@@ -12,13 +12,13 @@ You have already told the person what you are about to set up and roughly how lo
 
 ## 2. The first call
 
-It reads the project's recipe from HQ, adopts every dev/stage pair, checks the repository's `main` out onto your branch in each dev half, deploys the dev halves, and answers once they stand, with every service's next step and the stages queued. A part whose dev half is its dev pool (a Swarm pool named like its stage, `apipool` beside `apistage`) gets its pool's first image of `main` with the dev halves, and its stage is deployed from a lease of the pool: the pool's and the stage's next steps name the lease of the pool on `main`, the stage's deploy from it and the part's dev servers in it — make those calls too, and until a part's stage stands never tell the person that part's preview is up.
+It reads the project's recipe from HQ, adopts every dev/stage pair, checks the repository's `main` out onto your branch in each dev half, deploys the dev halves, and answers once they stand, with every service's next step and the stages queued. A part whose dev half is its dev pool (a Swarm pool named like its stage, `apipool` beside `apistage`) gets its pool's first image of `main` with the dev halves, and its stage is deployed from a lease of the pool: the pool's and the stage's next steps name the lease of the pool on `main`, the stage's deploy from it and the part's dev servers in it. Take the lease and start its dev servers; once running and verified, tell the person that dev copy's Preview is up with its address, then deploy the part's stage from that lease as its next step says.
 
-Then do what it leaves you: start each dev half's dev server with `zerops_dev_server` (no dev command is recorded anywhere zcp reads — take it from the repository), verify, and tell the person development is up, with each dev half's address.
+Then do what it leaves you: start each remaining dev half's dev server with `zerops_dev_server` (no dev command is recorded anywhere zcp reads — take it from the repository), verify, and tell the person each dev copy's Preview is up, with its address.
 
 ## 3. The second call
 
-Then call `zerops_standup` again in the same turn: it builds the stages, and once they stand, give the person this Mate's preview, with its address — never "stage" or "online". Nothing is committed, pushed or proposed by it.
+Then call `zerops_standup` again in the same turn: it builds the stages, and once they stand, tell the person each part's stage is ready for its Review build. The dev copy's Preview is where they try the work. Nothing is committed, pushed or proposed by it.
 
 ## 4. A failure
 

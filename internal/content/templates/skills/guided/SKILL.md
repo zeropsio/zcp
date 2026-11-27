@@ -78,7 +78,7 @@ Every guided app runs as a **dev/stage pair** — tier sets scale + managed mode
 
 ## What "verified" means
 
-Name the checks: acceptance tests went red→green (yours), review is clean (yours), and `zerops_verify` reports reachable/healthy (ZCP). Tests and review are host-reported — your own work, never a platform fact; `zerops_verify` proves reachability only. Outside a Mate, "verified" is this composite, never a bare claim. In a Mate, report the change as verified only when its Review build passes at the described head. The per-phase table (with the looks-&-feels-right part) lives in `phases/review-deploy.md`.
+"Verified" is a **composite** — name the parts, never collapse them to a bare "verified": acceptance tests went red→green (yours), review is clean (yours), and `zerops_verify` reports reachable/healthy (ZCP). Tests and review are host-reported — your own work, never a platform fact; `zerops_verify` proves reachability only. The per-phase table (with the looks-&-feels-right part) lives in `phases/review-deploy.md`.
 
 ---
 
