@@ -16,13 +16,10 @@ package tools
 import (
 	"context"
 	"os"
-	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -218,70 +215,5 @@ func TestHandleWorkSessionClose_IgnoresUnrelatedInputFields(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("close should ignore unrelated fields, got:\n%s", extractText(result))
-	}
-}
-
-// unproposedHQ is the HQ the Mate of these tests presents itself to.
-const unproposedHQ = "https://hq.example.com"
-
-// writeUnproposedLeaseRecord records zcp's lease noolapool-1 of the Mate's HQ
-// repository app-1/noola on branch.
-func writeUnproposedLeaseRecord(t *testing.T, stateDir, branch string) {
-	t.Helper()
-	dir := filepath.Join(stateDir, "leases")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	record := `{"poolHostname":"noolapool","poolServiceId":"svc-noolapool","containerId":"c-1","containerNumber":1,` +
-		`"containerHostname":"node-id-1.runtime.noolapool.zerops","lease":"secret-lease-value","branch":"` + branch + `",` +
-		`"repo":"` + unproposedHQ + `/git/org-1/app-1/noola.git","acquiredAt":"2026-10-27T09:30:00Z"}`
-	if err := os.WriteFile(filepath.Join(dir, "noolapool-1.json"), []byte(record), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// TestUnproposedLeaseBranches_OffersOnlyTheMatesOwnOpenChangesInTheRepository:
-// the close-out note naming a lease branch no change proposes also offers
-// the Mate's own open changes in that repository to add the work to — never
-// one a person handed it, one in another repository or one told merged, which
-// AGENTS.md's "What one change holds" never adds to or which no longer takes
-// work (docs/spec-mate.md §10.10, docs/spec-workflows.md DP-37).
-// witness: internal/tools/hq_change_unproposed.go | c.Source == workflow.HQChangeFromHanded || c.Branch == "" → c.Branch == ""
-func TestUnproposedLeaseBranches_OffersOnlyTheMatesOwnOpenChangesInTheRepository(t *testing.T) {
-	t.Parallel()
-	mate := runtime.Info{InContainer: true, MateEnabled: true, OrgID: "org-1", HQ: &runtime.HQLink{Origin: unproposedHQ}}
-	tests := []struct {
-		name   string
-		change *workflow.HQChange
-		want   []int
-	}{
-		{name: "its own open change in the repository", change: &workflow.HQChange{AppID: "app-1", Repo: "noola", Number: 2, Branch: "polish", Source: workflow.HQChangeFromOpen}, want: []int{2}},
-		{name: "a change handed to it", change: &workflow.HQChange{AppID: "app-1", Repo: "noola", Number: 3, Branch: "mate/gone/3", Source: workflow.HQChangeFromHanded}},
-		{name: "its open change in another repository", change: &workflow.HQChange{AppID: "app-1", Repo: "api", Number: 4, Branch: "polish", Source: workflow.HQChangeFromOpen}},
-		{name: "its change told merged", change: &workflow.HQChange{AppID: "app-1", Repo: "noola", Number: 5, Branch: "polish", Source: workflow.HQChangeFromOpen, Told: &workflow.HQChangeTold{State: hq.ChangeMerged}}},
-		{name: "no change at all"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			writeUnproposedLeaseRecord(t, dir, "dev-pools")
-			if tt.change != nil {
-				if err := workflow.RecordHQChange(dir, *tt.change); err != nil {
-					t.Fatal(err)
-				}
-			}
-			branches := unproposedLeaseBranches(dir, mate, nil, true)
-			if len(branches) != 1 || branches[0].branch != "dev-pools" {
-				t.Fatalf("unproposed branches = %+v, want dev-pools alone", branches)
-			}
-			got := make([]int, 0, len(branches[0].addTo))
-			for _, c := range branches[0].addTo {
-				got = append(got, c.Number)
-			}
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("open changes offered = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }

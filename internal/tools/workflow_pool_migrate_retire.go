@@ -1519,7 +1519,7 @@ func (r *poolRetireRun) finish(ctx context.Context) *mcp.CallToolResult {
 	resp := poolRetireRecordAnswer(r.resp, r.rec)
 	// In a Mate the work goes on in the pool's leases, and reaches main only
 	// through a change: name a lease branch no change proposes yet.
-	if note := unproposedNote(unproposedLeaseBranches(r.d.stateDir, r.d.rt, r.rec.pools(), false)); note != "" {
+	if note := unproposedNote(unproposedLeaseBranches(r.d.stateDir, r.d.rt, r.rec.pools())); note != "" {
 		resp.NextUnavailable += " " + note
 	}
 	return r.d.respond(resp)
