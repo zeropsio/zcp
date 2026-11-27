@@ -4258,6 +4258,70 @@ attributes hops, from the open-message window it records between `message-taken`
 `HQ_MATE_MESSAGES_PER_HOUR` (default 60), counted across all their Mates; answers count toward
 neither.
 
+### 6.11 A Mate proposes a task for its application's board
+
+An application's **Board** is HQ's task record for it: every task, who put it there, who has it.
+A person puts work on it from a conversation, and the application's Mates take it — the automated
+pool by itself, a person's own Mate only when that person takes it. An agent never puts a task on
+the board: it proposes one, Mate draws a card in that conversation, and the person's own client
+writes the task when they press Put on board. Work the person asked for, and anything it needs, is
+done now in its own change (*What one change holds*, §10.10) and never proposed instead; work the
+agent finds unasked outside every open change — another part, another repository, an unrelated bug
+— is proposed, after a read of the board, and never started.
+
+**The tools.** Both register in a Mate's container (§2.0) and nowhere else, the Chief's org mode
+included (`internal/tools/board.go`). Both answer, without asking HQ, that a Mate whose state (§2.8)
+names no application has no board.
+
+- `zerops_board_propose` takes `{ title, brief }`: `title` one line of 1–120 characters, `brief`
+  1–8,000, both trimmed, each the same bounds HQ takes for a task put on the board; outside them
+  nothing is proposed and the refusal names the bound. It writes nothing and asks HQ nothing. It
+  answers `{"proposed":{"board":{"title":"<title>","brief":"<brief>"}},"nextActions":"…"}`,
+  telling the agent that nothing was written, to say one sentence — that it proposed the task for
+  the board, in the card above — never to start that work itself on any branch, and to go on with
+  what the person asked for. Its annotations are those of a proposal: read-only, since it writes
+  nothing, and not idempotent, since each call draws a new card.
+- `zerops_board_list` takes `{}` and reads `GET /api/mate/tasks` under the project key, once, within
+  3 s to connect and 10 s to answer. It answers `{"tasks":[{"id","title","state","with"?,"from"?}],
+  "more"?,"nextActions":"…"}`, the open tasks in HQ's order, at most 100, `more` counting the rest.
+  `with` is who has the task: "your person, in this Mate" for a task this Mate's person took into
+  it, "a person, in <Mate>" for another Mate's person, "<Mate>, an automated Mate" for the pool's,
+  the Mate a task is with where HQ names no taker, absent for nobody. `from` is where the task came
+  from: "a conversation in this Mate" or "in another Mate" for a conversation's, else HQ's label of
+  its source, absent when HQ has none. `nextActions` tells the agent to propose only work no open
+  task covers, and, when one does, to say so in one sentence and propose nothing. Its annotations
+  are read-only and idempotent. HQ not answering, HQ refusing this Mate's access (its key, Zerops, or
+  its project gone: the one derivation describe-change uses), a `404` (an HQ that keeps no board
+  for it yet) and any other refusal are each said in plain words that tell the agent whether asking
+  again helps; where only the read failed, the agent may still propose, since the person sees the
+  board before they put a task there.
+
+**The route,** under `Authorization: Project <ZCP_API_KEY>`: `GET /api/mate/tasks` →
+`200 {"tasks":[task]}`, the open tasks (`queued`, `assigned`, `working`, `waiting`, `taken`) of the
+application HQ holds the Mate in. zcp reads of each task `id`, `title`, `state`, `label`, `mate`
+(`{projectId, name}`, nullable), `taker` (`null`, `{kind: "pool", mateProjectId}` or
+`{kind: "person", userId, mateProjectId}`) and `source.kind` with, for `conversation`, its
+`mateProjectId`; the task's other fields are HQ's (`zeropsio/mate-hq:spec/protocol.md`).
+
+**mate.** The engine opens a board ask from a `proposed.board` answer and draws its card in that
+conversation: the brief, editable, and **Put on board**, which posts the task from the person's own
+client (`POST /api/apps/:appId/tasks`, HQ's person door) and settles the card "On the board".
+
+**Where the agent reads it.** AGENTS.md's *What one change holds* names `zerops_board_propose` for
+unasked work found outside every open change and points at
+`zerops_knowledge uri="zerops://playbooks/board"`, which holds the rest: list first, never start
+it, one sentence, never a token asked of the person.
+
+The first Mate that draws the board card is `BoardMateVersion` (`internal/mate/manifest.go`); below
+it `zerops_board_propose` refuses, nothing proposed, and tells the agent to name what it found in one
+sentence and never start it.
+
+### Invariants
+
+| ID | Invariant |
+|---|---|
+| MT-1 | A Mate's agent proposes a board task and lists the board's open tasks only in a Mate's container: the proposal writes nothing, asks HQ nothing, answers `proposed.board` with the trimmed title (1–120 characters, one line) and brief (1–8,000), and is refused below `BoardMateVersion`; the list is one bounded `GET /api/mate/tasks` under the project key, at most 100 tasks with who has each and where it came from, and each failure says whether asking again helps; a Mate in no application has no board for either (§6.11). zcp `internal/tools/board_SENTENCES.md`. |
+
 ## 8. Agent sign-in
 
 A person signs an agent CLI in from inside Mate, and the Mate server owns that sign-in. What zcp
@@ -4316,7 +4380,8 @@ checks (`GET /api/mate/changes/:repo/:n/checks`) and a check's log (`GET
 /api/mate/changes/:repo/:n/checks/:check/log`), shown by `zerops_check_log` as HQ answers, without
 zcp's judgement; a tier of the recipe
 (`GET /api/mate/recipe/:tier`); the organization's AI key (`POST /api/mate/ai-key`, §5.8); a Chief's
-reads of its organisation as its registered person (`POST /api/mate/chief/read`, §3.11); a read
+reads of its organisation as its registered person (`POST /api/mate/chief/read`, §3.11); its
+application's open tasks (`GET /api/mate/tasks`, §6.11); a read
 token for a GitHub repository at that call (`GET
 /api/mate/git-credential?host=github.com&path=…&access=read`, §5.10 — never one that can write);
 git over HTTPS at `/git/<orgId>/<appId>/<repo>.git` (the organisation is the project's Zerops `clientId`; the address without it answers 404) with the Mate's Git credential (§3.3) or its project key (§2.8), which today takes a Mate's push only
