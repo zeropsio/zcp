@@ -210,7 +210,7 @@ func readHandoverStep(ctx context.Context, ssh ops.SSHDeployer, hqc hq.Client, s
 			item.Unread = "checkout was not read"
 		} else if head, branch, dirty, err := ops.ReadEditHead(ctx, ssh, copy.name, copy.root); err != nil || head == "" || branch != addressed.branch {
 			item.Unread = "checkout head, branch or work was not read"
-		} else if ref, err := ops.ReadBranchRef(ctx, ssh, copy.name, copy.root, branch, head); err != nil {
+		} else if ref, err := ops.ReadBranchRef(ctx, ssh, nil, copy.name, copy.root, branch, head); err != nil {
 			item.Unread = "branch remote ref or checkout history was not read"
 		} else {
 			item.Dirty, item.Ref = dirty, &ref
@@ -350,7 +350,7 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 	if stateErr == nil {
 		fresh = &state
 		if openedPick == nil {
-			place := repoDevHost(stateDir, target.AppID, target.Repo).readingCopy(classicCopyRead(ctx, ssh, rt, stateDir), target.Repo)
+			place := repoDevHost(stateDir, target.AppID, target.Repo).readingCopy(classicCopyRead(ctx, ops.LeaseDeps{SSH: ssh, StateDir: stateDir}, rt), target.Repo)
 			if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state, place); learned != "" {
 				return jsonResult(changeDescriptionResult{
 					Service: service, Parts: parts,

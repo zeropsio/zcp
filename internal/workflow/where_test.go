@@ -221,6 +221,7 @@ func TestWhere_WHCheckout_ClassicBranchNeedsCheckout(t *testing.T) {
 	}{
 		{"classic", "change #7 feature: no working copy; step: checkout feature in appdev", &WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditHandedOver}}},
 		{"clean main", "change #7 feature: no working copy; step: checkout feature in appdev", &WhereCopy{Name: "appdev", Branch: "main", NothingToHandOver: true, BaseUnpushed: &zero}},
+		{"a branch main holds", "change #7 feature: no working copy; step: checkout feature in appdev", &WhereCopy{Name: "appdev", Branch: "fresh", BaseUnpushed: &zero, Step: &EditStep{Action: "push", Copy: "appdev"}}},
 		{"pool", "change #7 feature: no working copy; step: acquire", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

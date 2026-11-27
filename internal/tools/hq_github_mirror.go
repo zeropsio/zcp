@@ -39,8 +39,10 @@ const realignBranch = "realign-github"
 // `github` exactly when the organisation's app connects its remote, so the
 // application's repositories with their remotes (GET /api/apps/:appId/repos)
 // are read only while the state names one so; a read HQ does not answer says
-// nothing, and the next pass reads again.
-func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.MateState) []string {
+// nothing, and the next pass reads again. read reads a plain pair's
+// checkout, once per repository, for words that would switch its branch
+// (repoRoute.readingCopy).
+func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.MateState, read copyReader) []string {
 	if state.AppID == nil {
 		return nil
 	}
@@ -52,10 +54,10 @@ func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.
 		}
 	}
 	repos := hqChangeRepos(stateDir, hqc.Address(), app, hqChanges(stateDir))
-	var read []string
+	var listing []string
 	for _, repo := range repos {
 		if mirrored[repo] {
-			read = append(read, repo)
+			listing = append(listing, repo)
 			continue
 		}
 		// No longer mirrored, as the state says without a read: forgotten,
@@ -67,7 +69,7 @@ func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.
 			})
 		}
 	}
-	if len(read) == 0 {
+	if len(listing) == 0 {
 		return nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
@@ -81,12 +83,13 @@ func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.
 		remotes[r.Name] = r.Remote
 	}
 	var lines []string
-	for _, repo := range read {
+	for _, repo := range listing {
 		remote, ok := remotes[repo]
 		if !ok {
 			continue
 		}
-		for _, line := range tellMirror(stateDir, hqc, app, repo, remote, state.MergeLimited) {
+		route := repoDevHost(stateDir, app, repo).readingCopy(read, repo)
+		for _, line := range tellMirror(stateDir, hqc, app, repo, remote, state.MergeLimited, route) {
 			lines = append(lines, fmt.Sprintf("repository %q: %s", repo, line))
 		}
 	}
@@ -98,8 +101,8 @@ func hqMirrorPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.
 // not told so of that GitHub repository; that GitHub and HQ diverged, when
 // they did since a time the agent was not told of. What it says is recorded
 // in the same hold; a record that cannot be written leaves it to be said
-// again rather than never.
-func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.RepoRemote, limited bool) []string {
+// again rather than never. route is where repo's git runs.
+func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.RepoRemote, limited bool, route repoRoute) []string {
 	now := workflow.HQRepoTold{}
 	if remote != nil && remote.Via == hq.RemoteViaApp {
 		now = workflow.HQRepoTold{Mirror: gitHubRepoName(remote.URL), DivergedSince: remote.DivergedSince}
@@ -113,7 +116,7 @@ func tellMirror(stateDir string, hqc hq.Client, app, repo string, remote *hq.Rep
 			lines = append(lines, mirroredWords(now.Mirror))
 		}
 		if now.DivergedSince != "" && now.DivergedSince != told.DivergedSince {
-			lines = append(lines, divergedWords(stateDir, hqc, app, repo, remote.URL, now.DivergedSince, limited))
+			lines = append(lines, divergedWords(hqc, app, repo, route, remote.URL, now.DivergedSince, limited))
 		}
 		*told = now
 		return nil
@@ -138,19 +141,19 @@ func mirroredWords(name string) string {
 // GitHub and pushes it, which the realignment reads (a branch HQ did not
 // make there it never pushes) — opened as a change and merged in Mate; HQ
 // squash-merges its pull request on GitHub and moves `main` onto that
-// squash. Its git runs where the repository's git runs (repoDevHost), every
+// squash. Its git runs where the repository's git runs (route), every
 // command of it through `zcp git` — in a lease by its alias, whose own git
-// over ssh holds no credential for GitHub or for HQ's address. The
+// over ssh holds no credential for GitHub or for HQ's address — and its
+// branch is cut only where the checkout may move (moved). The
 // checkout's origin is HQ, whose `main` no longer is GitHub's, so GitHub's
 // tip is fetched by its address, which zcp answers in a fetch's argv with a
 // read token; the fetch and the push of HQ name its address, answered with
 // the Mate's credential.
-func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since string, limited bool) string {
+func divergedWords(hqc hq.Client, app, repo string, route repoRoute, github, since string, limited bool) string {
 	address, err := hqc.RepoURL(app, repo)
 	if err != nil {
 		address = "<its repository's address in HQ>"
 	}
-	route := repoDevHost(stateDir, app, repo)
 	return fmt.Sprintf("GitHub's default branch and HQ's `main` have diverged (since %s): neither holds the other, so HQ's follow moves neither. "+
 		"One change brings them back in step — a branch holding both, which %s merges in Mate: HQ squash-merges its pull request on GitHub and moves `main` onto that squash. "+
 		"Make it %s: take GitHub's default branch by its address, which zcp answers with a read token (%s), and HQ's `main` (%s), "+
@@ -161,7 +164,7 @@ func divergedWords(stateDir string, hqc hq.Client, app, repo, github, since stri
 		since, whoMerges(limited), route.where(),
 		route.git("fetch "+github+" +HEAD:"+gitHubTipRef),
 		route.git("fetch "+address+" +main:refs/remotes/hq/main"),
-		route.git("checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),
+		route.moved(realignBranch, "checkout -b "+realignBranch+" "+gitHubTipRef, "merge refs/remotes/hq/main"),
 		route.git("push "+address+" "+realignBranch), realignBranch)
 }
 

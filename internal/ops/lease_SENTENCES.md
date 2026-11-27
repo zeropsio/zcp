@@ -1,4 +1,4 @@
-# Lease and pool decisions (`lease_ownership.go`, `lease_group.go`, `lease_park.go`, `pool_preview_ports.go`, `lease_warm_clone.go`)
+# Lease and pool decisions (`lease_ownership.go`, `lease_group.go`, `lease_park.go`, `pool_preview_ports.go`, `lease_warm_clone.go`, `lease_checkout.go`)
 
 - LP-MATE-ACQUIRE — A lease record adds its alias and branch to the Mate status file without exposing its credential, while retaining the other held leases.
 - LP-MATE-RELEASE — Dropping a lease record replaces the Mate's lease set without the released lease and retains the other held leases.
@@ -17,3 +17,4 @@
 - LP-WARM-HQ — In a Mate, the clone of a pool's repository on the Mate's HQ into a free warm container is handed to a zcp process of its own, which holds its relayed session until the clone ends; the process that warmed the container, which may end first (a zcp lease call, an MCP server), never runs it.
 - LP-WARM-HELD — A held clone's process records what the clone did: done once it finished, skipped when it left the work dir alone (a checkout took it, or it held a repository), failed naming the clone's exit status, and failed — never tried again into a skip — when the session ended while the clone ran.
 - LP-WARM-LOST — A held clone that still reads running past its bound never reported back (the process holding its session ended first, as at a restart): status says it failed, never that it runs and an acquire waits for it.
+- LP-BRANCHREF — A checkout's branch is compared with its ref on origin, read through the git relay: no ref is unpublished, a ref at the checkout's head is current, one elsewhere counts what the checkout is ahead and behind or says its history is unknown, and a ref the relay does not answer, or answers for another branch, is not read. Breaks: an unpushed branch reads published and its copy is handed over or moved.

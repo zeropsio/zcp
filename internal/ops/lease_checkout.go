@@ -1240,20 +1240,38 @@ func ReadEditHead(ctx context.Context, ssh SSHDeployer, alias, root string) (str
 	return head, branch, lines[2] == "checkout-dirty", nil
 }
 
-// ReadBranchRef compares this checkout to the branch's current origin ref.
-// zcp git provides the same credential relay as a person's git command; the
-// read does not fetch or change the checkout's remote-tracking refs.
-func ReadBranchRef(ctx context.Context, ssh SSHDeployer, alias, root, branch, head string) (topology.BranchRef, error) {
+// GitRelay runs git with args for alias's checkout as `zcp git <alias>`
+// does, answering its origin with the Mate's credential (docs/spec-mate.md
+// §6.8), and returns git's standard output.
+type GitRelay func(ctx context.Context, alias string, args ...string) ([]byte, error)
+
+// zcpGitRelay is GitRelay through this zcp's own `zcp git`.
+func zcpGitRelay(ctx context.Context, alias string, args ...string) ([]byte, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("find zcp: %w", err)
+	}
+	out, err := exec.CommandContext(ctx, executable, append([]string{"git", alias}, args...)...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("zcp git %s: %w", alias, err)
+	}
+	return out, nil
+}
+
+// ReadBranchRef compares this checkout to the branch's current origin ref,
+// read through relay (nil: zcpGitRelay), the same credential relay as a
+// person's git command; the read does not fetch or change the checkout's
+// remote-tracking refs.
+func ReadBranchRef(ctx context.Context, ssh SSHDeployer, relay GitRelay, alias, root, branch, head string) (topology.BranchRef, error) {
 	ref := topology.BranchRef{Head: head}
 	if !topology.IsCommitID(head) {
 		return ref, errors.New("checkout head was not read")
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return ref, fmt.Errorf("find zcp: %w", err)
+	if relay == nil {
+		relay = zcpGitRelay
 	}
 	name := "refs/heads/" + branch
-	out, err := exec.CommandContext(ctx, executable, "git", alias, "ls-remote", "origin", name).Output()
+	out, err := relay(ctx, alias, "ls-remote", "origin", name)
 	if err != nil {
 		return ref, fmt.Errorf("branch remote ref was not read: %w", err)
 	}

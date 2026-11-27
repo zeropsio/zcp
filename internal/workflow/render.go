@@ -58,7 +58,7 @@ func RenderEditCopies(facts WhereFacts) string {
 		if copy.Path != "" {
 			fmt.Fprintf(&b, "; checkout %s", copy.Path)
 		}
-		if copy.Step == nil && copy.Branch == "main" {
+		if copy.Step == nil && copy.Branch == mainBranch {
 			b.WriteString("; nothing to hand over on main")
 		}
 		if copy.Step != nil && copy.Step.Action == "handed over" {

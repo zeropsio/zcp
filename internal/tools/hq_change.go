@@ -81,18 +81,21 @@ func hqReleasedBranch(hqc hq.Client) string { return "mate/" + hqc.ProjectID() }
 // change's work on holds it as the Mate's own branch (hqReleasedBranch),
 // which git cannot keep beside the change's branch beneath it: that one is
 // renamed instead — and only where the checkout may move (mayMove), as the
-// rename checks the branch out. A lease checks its branch out afresh, so a
-// dev pool has nothing to rename.
+// rename checks the branch out; that branch's work is the Mate's own
+// (carrying). A lease checks its branch out afresh, so a dev pool has nothing
+// to rename.
 func takeChangeBranch(route repoRoute, hqc hq.Client, branch string) string {
+	released := hqReleasedBranch(hqc)
+	renames := strings.HasPrefix(branch, released+"/") && route.pool == ""
+	if renames {
+		route = route.carrying(workflow.OwnBranch{Name: released})
+	}
 	take := fmt.Sprintf("%s take it (%s)", route.where(), route.take(branch))
-	if _, free := route.mayMove(branch); !free {
+	if _, free := route.mayMove(branch); !free || !renames {
 		return take
 	}
-	if released := hqReleasedBranch(hqc); strings.HasPrefix(branch, released+"/") && route.pool == "" {
-		take += fmt.Sprintf(" — or, where the checkout still has the branch %q an older zcp kept this work on, which git cannot keep beside it, rename that one instead (%s)",
-			released, route.git("branch -m "+released+" "+branch, "checkout "+branch))
-	}
-	return take
+	return take + fmt.Sprintf(" — or, where the checkout still has the branch %q an older zcp kept this work on, which git cannot keep beside it, rename that one instead (%s)",
+		released, route.git("branch -m "+released+" "+branch, "checkout "+branch))
 }
 
 // hqOpenChangeWork says, on an HQ that keeps one open change per repository,
@@ -254,7 +257,9 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 // merged change's note, none of which reads a squash of the change's own.
 // The change is forgotten as soon as it is no longer open. "" while it is
 // open, which is the ordinary state and worth no words — or unknown. route is
-// where c's repository's git runs (repoDevHost).
+// where c's repository's git runs (repoDevHost); a checkout still on c's
+// branch at the head HQ landed holds only the Mate's own work, which main
+// already has, so the note may move it to main.
 func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.MateState, route repoRoute) string {
 	outcome, s := outcomeOf(state, c)
 	if outcome == changeStillOpen || outcome == changeUnknown {
@@ -263,6 +268,10 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	forgot, err := workflow.ForgetHQChangeAtState(stateDir, c.AppID, c.Repo, c.Number, state.Rev)
 	if err != nil || !forgot {
 		return ""
+	}
+	if s != nil && s.Head != nil {
+		// The change's branch at the head HQ landed holds only work on main.
+		route = route.carrying(workflow.OwnBranch{Name: c.Branch, Head: *s.Head})
 	}
 	switch outcome {
 	case changeMerged:

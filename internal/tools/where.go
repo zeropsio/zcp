@@ -286,15 +286,17 @@ func devCheckoutRoot(stateDir, host string) string {
 
 // classicCopyRead reads a plain pair's dev-service checkout as where reads
 // it, for words that would switch its branch (repoRoute.mayMove): its branch
-// and work, then main's unpushed commits or its branch's remote ref and HQ's
-// open change on it, planned as where plans them (planWhereEdits). Each read
-// still unanswered at whereReadBound stays unread.
-func classicCopyRead(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, stateDir string) copyReader {
+// and work, then main's unpushed commits or its branch's remote ref, what of
+// it origin's main lacks and HQ's open change on it, planned as where plans
+// them (planWhereEdits) — over deps' SSH and git relay. Each read still
+// unanswered at whereReadBound stays unread.
+func classicCopyRead(ctx context.Context, deps ops.LeaseDeps, rt runtime.Info) copyReader {
+	stateDir := deps.StateDir
 	return func(host, repo string) workflow.WhereCopy {
 		ctx, cancel := context.WithTimeout(ctx, whereReadBound)
 		defer cancel()
 		g := &whereGatherer{
-			deps: ops.LeaseDeps{SSH: ssh, StateDir: stateDir}, rt: rt, havePreview: true,
+			deps: deps, rt: rt, havePreview: true,
 			events: make(chan whereEvent, 4), branches: map[string]whereEvent{},
 			refs: map[string]whereEvent{}, hqReads: map[string]whereEvent{},
 		}
@@ -367,15 +369,18 @@ func (g *whereGatherer) startBaseRead(ctx context.Context, workcopy whereEvent) 
 	}()
 }
 
-// startEditReads asks both owners once, in parallel under where's deadline.
+// startEditReads asks both owners once, in parallel under where's deadline:
+// the branch's ref on origin, then what of its head origin's main lacks
+// (readBaseUnpushed), and HQ's open change on it.
 func (g *whereGatherer) startEditReads(ctx context.Context, workcopy whereEvent) {
 	if ctx.Err() != nil {
 		return
 	}
 	g.pending += 2
 	go func() {
-		ref, err := ops.ReadBranchRef(ctx, g.deps.SSH, workcopy.host, workcopy.root, workcopy.value, workcopy.head)
-		g.send(ctx, whereEvent{kind: "ref", host: workcopy.host, ref: &ref, err: err})
+		ref, err := ops.ReadBranchRef(ctx, g.deps.SSH, g.deps.GitRelay, workcopy.host, workcopy.root, workcopy.value, workcopy.head)
+		base := readBaseUnpushed(ctx, g.deps.SSH, workcopy)
+		g.send(ctx, whereEvent{kind: "ref", host: workcopy.host, ref: &ref, err: err, baseUnpushed: base.baseUnpushed})
 	}()
 	go func() {
 		client, ok := openHQ(http.DefaultClient, g.rt)
@@ -615,6 +620,9 @@ func planWhereEdits(facts *workflow.WhereFacts, repos map[string]string, branche
 				input.Ref = ref.ref
 			} else {
 				input.Unread = "branch remote ref or checkout history was not read"
+			}
+			if found {
+				workcopy.BaseUnpushed = ref.baseUnpushed
 			}
 		}
 		workcopy.BranchRef = input.Ref

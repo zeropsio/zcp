@@ -301,8 +301,9 @@ func reconcileHQPairs(
 				return report
 			}
 			report = append(report, releaseCompletedLeases(ctx, stateDir, address, state.AppID, state.Changes, func(context.Context) (hq.MateState, error) { return hqc.ReadMateState() }, cfg.release)...)
-			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow, classicCopyRead(ctx, sshDeployer, rt, stateDir))...)
-			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state)...)
+			read := classicCopyRead(ctx, ops.LeaseDeps{SSH: sshDeployer, StateDir: stateDir}, rt)
+			report = append(report, hqChangesPass(ctx, stateDir, hqc, state, pace == hqPassNow, read)...)
+			report = append(report, hqMirrorPass(ctx, stateDir, hqc, state, read)...)
 			report = append(report, recipeChangeTurn(ctx, client, httpClient, rt, stateDir, hqc, state, cfg.recipeFollows, cfg.schemas)...)
 		}
 	}

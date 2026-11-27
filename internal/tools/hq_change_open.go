@@ -98,7 +98,7 @@ func handleOpenChange(
 		}
 	}
 	branch := target.Branch
-	place := repoDevHost(stateDir, target.AppID, target.Repo).readingCopy(classicCopyRead(ctx, ssh, rt, stateDir), target.Repo)
+	place := repoDevHost(stateDir, target.AppID, target.Repo).readingCopy(classicCopyRead(ctx, ops.LeaseDeps{SSH: ssh, StateDir: stateDir}, rt), target.Repo)
 	route := changeRoute(stateDir, target, place)
 	var result changeOpenResult
 	result.Service, result.Parts = changeService(stateDir, hqc.Address(), target, input.Service, branch)
@@ -402,7 +402,8 @@ func titleIfCreated(opened hq.OpenedChange) string {
 // rather than opened: the one on the branch asked for, which stays and takes
 // the work by a push — or, from an HQ that keeps one open change per
 // repository, its open one on another branch (held, "" when that HQ names
-// none), which this work goes onto; git run where route says.
+// none), which this work goes onto, carrying branch's work as its own; git
+// run where route says.
 func answeredOpenChange(route repoRoute, hqc hq.Client, repo, branch, held string, number int) string {
 	switch held {
 	case branch:
@@ -415,7 +416,7 @@ func answeredOpenChange(route repoRoute, hqc hq.Client, repo, branch, held strin
 	// Work cut from main is no fast-forward of the open change's branch: it
 	// goes onto that branch, or HQ refuses its push.
 	return fmt.Sprintf("Change #%d is already open in %q on the branch %q, and a Mate has one open change per repository: it stays, and this work goes on its branch — %s, bring this work onto it (%s) and push it (%s), never force-pushing; or open this work's change once #%d is merged or closed.",
-		number, repo, held, takeChangeBranch(route, hqc, held), route.git("merge "+branch), route.git("push origin "+held), number)
+		number, repo, held, takeChangeBranch(route.carrying(workflow.OwnBranch{Name: branch}), hqc, held), route.git("merge "+branch), route.git("push origin "+held), number)
 }
 
 // handedElsewhere names the changes handed to the Mate in repo, each on a

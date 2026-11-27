@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -145,7 +147,7 @@ func TestHQChange_DGHanded_TakesOrCutsAHandedChangeOnlyWhereTheCheckoutMayMove(t
 	}
 }
 
-// witness: internal/tools/hq_change.go | if _, free := route.mayMove(branch); !free { → if _, free := route.mayMove(branch); free {
+// witness: internal/tools/hq_change.go | if _, free := route.mayMove(branch); !free || !renames { → if _, free := route.mayMove(branch); free || !renames {
 func TestHQChange_DGSingle_TakesTheOpenChangeOnlyWhereTheCheckoutMayMove(t *testing.T) {
 	t.Parallel()
 	hqc, err := hq.Open(http.DefaultClient, hq.Identity{Origin: "https://hq.example", Key: "key", ProjectID: "proj-1", OrgID: "org-1"})
@@ -177,6 +179,93 @@ func TestHQChange_DGSingle_TakesTheOpenChangeOnlyWhereTheCheckoutMayMove(t *test
 				}
 			}
 		})
+	}
+}
+
+// witness: internal/tools/hq_repo_host.go | step := workflow.MissingEditCopyStep(branch, classic, r.own...) → step := workflow.MissingEditCopyStep(branch, classic)
+func TestHQChange_DGOwn_EveryLineMovesACheckoutHoldingOnlyTheMatesOwnWork(t *testing.T) {
+	t.Parallel()
+	hqc, err := hq.Open(http.DefaultClient, hq.Identity{Origin: "https://hq.example", Key: "key", ProjectID: "proj-1", OrgID: "org-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero, one := 0, 1
+	landed := "dddddddddddddddddddddddddddddddddddddddd"
+	// on is a clean appdev checkout on branch: at a head main holds (inMain),
+	// or with a commit main lacks and no handed-over change.
+	on := func(branch string, inMain bool, ref *topology.BranchRef) *workflow.WhereCopy {
+		base := &one
+		if inMain {
+			base = &zero
+		}
+		return &workflow.WhereCopy{Name: "appdev", Branch: branch, HasHQ: true, BranchRef: ref, BaseUnpushed: base, Step: &workflow.EditStep{Action: "push", Copy: "appdev"}}
+	}
+	occupied := on("other", false, nil)
+	merged := func(t *testing.T, route repoRoute) string {
+		t.Helper()
+		stateDir, app := t.TempDir(), "app-1"
+		c := workflow.HQChange{AppID: app, Repo: "app", Number: 7, Branch: "feature"}
+		if err := workflow.RecordHQChange(stateDir, c); err != nil {
+			t.Fatal(err)
+		}
+		state := hq.MateState{AppID: &app, Changes: []hq.MateChange{{Repo: "app", Number: 7, Branch: "feature", State: hq.ChangeMerged, Head: &landed}}}
+		return learnChangeLanding(stateDir, "https://hq.example", c, state, route)
+	}
+	handed := func(t *testing.T, route repoRoute) string {
+		t.Helper()
+		app, head := "app-1", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		state := hq.MateState{AppID: &app, OpenPerBranch: true, Changes: []hq.MateChange{
+			{Repo: "app", Number: 2, State: hq.ChangeOpen, Handed: true, Branch: "fix-login", Head: &head},
+			{Repo: "app", Number: 3, State: hq.ChangeOpen, Handed: true, Branch: "add-signup"},
+		}}
+		return strings.Join(hqTakeHanded(t.TempDir(), state, app, "app", nil, route), "\n")
+	}
+	openChanges := func(_ *testing.T, route repoRoute) string {
+		return openChangesWords([]workflow.HQChange{{Number: 7, Branch: "feature"}}, route, time.Time{})
+	}
+	single := func(_ *testing.T, route repoRoute) string {
+		return hqOpenChangeWork(route, hqc, workflow.HQChange{Number: 1, Repo: "app", Branch: "mate/proj-1/1"})
+	}
+	for _, line := range []struct {
+		name    string
+		words   func(*testing.T, repoRoute) string
+		command string
+		own     *workflow.WhereCopy
+	}{
+		{"the open changes' take", openChanges, "`zcp git appdev fetch origin <branch> && zcp git appdev checkout <branch>`", on("fresh", true, nil)},
+		{"new work from main", openChanges, "`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main && zcp git appdev checkout -b <branch>`", on("fresh", true, nil)},
+		{"a merged change's note", merged, "`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main`", on("feature", false, &topology.BranchRef{Head: landed, Published: true})},
+		{"a handed change's take", handed, "`zcp git appdev fetch origin fix-login && zcp git appdev checkout fix-login`", on("fix-login", false, nil)},
+		{"a handed change's cut", handed, "`zcp git appdev fetch origin main && zcp git appdev checkout -b add-signup origin/main`", on("add-signup", false, nil)},
+		{"the single change's take", single, "`zcp git appdev fetch origin mate/proj-1/1 && zcp git appdev checkout mate/proj-1/1`", on("mate/proj-1", false, nil)},
+		{"an older zcp's rename", single, "`zcp git appdev branch -m mate/proj-1 mate/proj-1/1 && zcp git appdev checkout mate/proj-1/1`", on("mate/proj-1", false, nil)},
+		{"open-change's take of the change it holds", func(_ *testing.T, route repoRoute) string {
+			return answeredOpenChange(route, hqc, "app", "add-signup", "mate/proj-1/1", 1)
+		}, "`zcp git appdev fetch origin mate/proj-1/1 && zcp git appdev checkout mate/proj-1/1`", on("add-signup", false, nil)},
+		{"the realignment's cut", func(_ *testing.T, route repoRoute) string {
+			return divergedWords(hqc, "app-1", "app", route, "https://github.com/acme/app", "2026-10-28T10:00:00.000Z", false)
+		}, "`zcp git appdev checkout -b realign-github refs/remotes/github/default && zcp git appdev merge refs/remotes/hq/main`", on("fresh", true, nil)},
+	} {
+		for _, state := range []struct {
+			name    string
+			copy    *workflow.WhereCopy
+			printed bool
+		}{
+			{"free", handedOverCopy(), true},
+			{"occupied by another", occupied, false},
+			{"holds only own work", line.own, true},
+		} {
+			t.Run(line.name+"/"+state.name, func(t *testing.T) {
+				t.Parallel()
+				text := line.words(t, plannedRoute(state.copy))
+				if strings.Contains(text, line.command) != state.printed {
+					t.Errorf("words = %q; want %s printed: %v", text, line.command, state.printed)
+				}
+				if !state.printed && !strings.Contains(text, "occupied by other: ask the person") {
+					t.Errorf("words = %q; want the planner's occupied words", text)
+				}
+			})
+		}
 	}
 }
 
@@ -218,10 +307,19 @@ func TestHQChange_DGRead_ReadsTheCheckoutAsWhereDoes(t *testing.T) {
 		{"main with an unpushed commit", checkoutSSH{head: head, branch: "main", work: "checkout-clean", unpushed: "1"}, "occupied by main: ask the person"},
 		{"uncommitted work on main", checkoutSSH{head: head, branch: "main", work: "checkout-dirty", unpushed: "0"}, "occupied by main: ask the person"},
 		{"a checkout that does not answer", checkoutSSH{err: errors.New("connection refused")}, "unknown: checkout appdev branch was not read"},
+		{"a fresh branch whose head main holds", checkoutSSH{head: head, branch: "fresh", work: "checkout-clean", unpushed: "0"}, "`zcp git appdev fetch origin feature && zcp git appdev checkout feature`"},
+		{"a branch with a commit main lacks", checkoutSSH{head: head, branch: "fresh", work: "checkout-clean", unpushed: "1"}, "unknown: HQ was not read"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			read := classicCopyRead(context.Background(), tc.ssh, runtime.Info{MateEnabled: true}, t.TempDir())
+			// origin holds no branch "fresh" yet; any other git is refused.
+			relay := func(_ context.Context, alias string, args ...string) ([]byte, error) {
+				if alias != "appdev" || strings.Join(args, " ") != "ls-remote origin refs/heads/fresh" {
+					return nil, errors.New("not answered")
+				}
+				return nil, nil
+			}
+			read := classicCopyRead(context.Background(), ops.LeaseDeps{SSH: tc.ssh, GitRelay: relay, StateDir: t.TempDir()}, runtime.Info{MateEnabled: true})
 			if got := (repoRoute{host: "appdev"}).readingCopy(read, "app").take("feature"); got != tc.take {
 				t.Errorf("take = %q; want %q", got, tc.take)
 			}

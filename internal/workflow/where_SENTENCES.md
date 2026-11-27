@@ -7,8 +7,8 @@
 - WH-STAGE — A stage's line says the name of the version it runs exactly as the platform holds it, and says when it runs none. Breaks: the agent rebuilds a stage that already runs its commit, or tests one that runs another branch.
 - WH-SIZE — The text never passes 1024 bytes: line 1 and the caller's copy stay, later whole lines give way to one line counting them. Breaks: every message of a Mate with many leases carries kilobytes, or the cut drops the caller's own copy.
 - WH-ACQUIRE — With no pool copy on a branch, the next edit step is to acquire one.
-- WH-CHECKOUT — With no copy of a change's branch on a classic pair, a clean dev half can check it out when handed over or on main with nothing unpushed.
-- WH-OCCUPIED — A classic dev half is occupied when dirty, when main has unpushed commits, or when another branch is not handed over; an unread checkout, unpushed work or handover cannot authorize a checkout.
+- WH-CHECKOUT — With no copy of a change's branch on a classic pair, a clean dev half can check it out when handed over, on main with nothing unpushed, or on a branch whose head origin's main holds.
+- WH-OCCUPIED — A classic dev half is occupied when dirty, when main has unpushed commits, or when another branch with work main lacks is not handed over; an unread checkout, unpushed work or handover cannot authorize a checkout.
 - WH-COPYREAD — An unread copy or branch ref makes its next edit step unknown and names the missing read.
 - WH-FRESH — A last-heard or failed HQ read cannot establish a change or its absence for an edit.
 - WH-COMMIT — Uncommitted work is committed before pulling, pushing or describing the change.

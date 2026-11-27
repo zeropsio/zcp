@@ -55,7 +55,7 @@ func TestAgentGitTexts_RenderedCommandsRunInTheService(t *testing.T) {
 		"originAsItsOwnBranch":                originAsItsOwnBranch("appdev", "fetch https://github.com/acme/app HEAD:<branch>"),
 		"originFromHolder, a service here":    originFromHolder("appdev", "appdev", hq.MateState{}, "https://hq.example", labOrg, stateDir),
 		"originFromHolder, a sibling's in HQ": originFromHolder("appdev", "web", hq.MateState{AppID: &app}, "https://hq.example", labOrg, stateDir),
-		"divergedWords":                       divergedWords(stateDir, hqc, labApp, "appdev", "https://github.com/acme/app", "2026-10-28T10:00:00.000Z", false),
+		"divergedWords":                       divergedWords(hqc, labApp, "appdev", plain, "https://github.com/acme/app", "2026-10-28T10:00:00.000Z", false),
 		"hqGitPushRefusal":                    hqGitPushRefusal("appdev", true).Suggestion,
 		"AGENTS.md":                           agentsMDForAMate(t),
 	}

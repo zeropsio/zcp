@@ -118,6 +118,9 @@ type LeaseDeps struct {
 	// acquire takes one lease per pool — and answers whether the pool's
 	// subdomain serves now, and a note on what it could not do. nil runs none.
 	PublicAccess func(ctx context.Context, alias string) (on bool, note string)
+	// GitRelay reads a branch's ref on a checkout's origin (ReadBranchRef);
+	// nil reads it through this zcp's own `zcp git`.
+	GitRelay GitRelay
 }
 
 // gitSSH runs zcp's git against a lease's origin: relayed (HQGit) for a

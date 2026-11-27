@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -28,6 +29,9 @@ type repoRoute struct {
 	// copy is the dev service's checkout of a plain pair as this call reads
 	// it (readingCopy); nil when the call reads none.
 	copy *copyPlan
+	// own is the branches whose work the words carry as the Mate's own
+	// (carrying).
+	own []workflow.OwnBranch
 }
 
 // copyReader reads the checkout of repo in host, a plain pair's dev service,
@@ -62,14 +66,21 @@ func (r repoRoute) readingCopy(read copyReader, repo string) repoRoute {
 	return r
 }
 
+// carrying is r for words that carry own's work as the Mate's own when they
+// move its checkout (workflow.OwnBranch), over the same read of it.
+func (r repoRoute) carrying(own ...workflow.OwnBranch) repoRoute {
+	r.own = append(slices.Clip(r.own), own...)
+	return r
+}
+
 // mayMove is whether words may give the git that switches r's checkout to
 // branch, and the planner's words when they may not. A plain pair's dev
 // service checkout is shared by every conversation of the Mate: its branch
 // moves only when workflow.MissingEditCopyStep answers checkout over this
-// call's read of it (readingCopy), a checkout this call did not read being
-// unknown. A lease is the caller's own, and a repository no pair here is
-// wired to goes into a checkout the agent fetches it into: their git moves
-// no one else's work.
+// call's read of it (readingCopy) and the work the words carry (carrying), a
+// checkout this call did not read being unknown. A lease is the caller's
+// own, and a repository no pair here is wired to goes into a checkout the
+// agent fetches it into: their git moves no one else's work.
 func (r repoRoute) mayMove(branch string) (string, bool) {
 	if r.host == "" || r.leased() {
 		return "", true
@@ -78,7 +89,7 @@ func (r repoRoute) mayMove(branch string) (string, bool) {
 	if r.copy != nil {
 		classic = r.copy.plan()
 	}
-	step := workflow.MissingEditCopyStep(branch, classic)
+	step := workflow.MissingEditCopyStep(branch, classic, r.own...)
 	if step.Action == "checkout "+branch {
 		return "", true
 	}

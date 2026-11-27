@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // leaseSSH is the leased container as zcp reaches it: a handler answers each
@@ -1082,5 +1083,43 @@ func TestLeaseCheckoutCommand_SetsACommitIdentityOnlyWhenAbsent(t *testing.T) {
 	}
 	if checkout := strings.Index(cmd, "git checkout -q -f -B"); checkout < 0 || checkout > at {
 		t.Errorf("the identity is set before the checkout, in a repository not yet on its branch:\n%s", cmd)
+	}
+}
+
+// witness: internal/ops/lease_checkout.go | ref.Published = true → ref.Published = false
+func TestLease_LPBranchRef_ComparesTheCheckoutWithOriginThroughTheRelay(t *testing.T) {
+	t.Parallel()
+	head, remote := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	for _, tc := range []struct {
+		name, origin, history string
+		relayErr              error
+		want                  topology.BranchRef
+		wantErr               bool
+	}{
+		{name: "no ref on origin", want: topology.BranchRef{Head: head}},
+		{name: "origin at the head", origin: head + "\trefs/heads/feature\n", want: topology.BranchRef{Head: head, Published: true}},
+		{name: "origin behind the head", origin: remote + "\trefs/heads/feature\n", history: "ahead 2\n", want: topology.BranchRef{Head: head, Published: true, Ahead: 2}},
+		{name: "diverged from origin", origin: remote + "\trefs/heads/feature\n", history: "1\t3\n", want: topology.BranchRef{Head: head, Published: true, Ahead: 1, Behind: 3}},
+		{name: "origin's commit missing here", origin: remote + "\trefs/heads/feature\n", history: "missing\n", want: topology.BranchRef{Head: head, Published: true, HistoryUnknown: true}},
+		{name: "the relay does not answer", relayErr: errors.New("exit status 128"), wantErr: true},
+		{name: "another branch answered", origin: head + "\trefs/heads/other\n", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			relay := func(_ context.Context, alias string, args ...string) ([]byte, error) {
+				if alias != "appdev" || strings.Join(args, " ") != "ls-remote origin refs/heads/feature" {
+					return nil, errors.New("not answered")
+				}
+				return []byte(tc.origin), tc.relayErr
+			}
+			ssh := &leaseSSH{fn: func(string, string) ([]byte, error) { return []byte(tc.history), nil }}
+			got, err := ReadBranchRef(context.Background(), ssh, relay, "appdev", "/var/www", "feature", head)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, want an error: %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && got != tc.want {
+				t.Errorf("ref = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }

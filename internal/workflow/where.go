@@ -15,6 +15,10 @@ import (
 // WhereBudgetBytes bounds the text placed in front of a turn's message.
 const WhereBudgetBytes = 1024
 
+// mainBranch is the repository's main, the base every change is cut from
+// and lands on.
+const mainBranch = "main"
+
 // EditUnknown is a step whose inputs were not read.
 const EditUnknown = "unknown"
 
@@ -168,8 +172,20 @@ func PlanEdit(copies []EditCopy, change *EditChange, fresh, beforeEdit bool) Edi
 	return EditStep{Action: EditHandedOver, Head: change.Head, Number: change.Number}
 }
 
-// MissingEditCopyStep names how to get a copy without moving someone else's work.
-func MissingEditCopyStep(branch string, classic *WhereCopy) EditStep {
+// OwnBranch is a branch whose work words that move a checkout off it carry
+// as the Mate's own rather than another conversation's: the work they bring
+// onto the branch they move to, an older zcp's branch they rename onto it,
+// or — at Head — a change's branch HQ landed on main at that head. Head ""
+// is the branch at any head.
+type OwnBranch struct{ Name, Head string }
+
+// MissingEditCopyStep names how to get a copy without moving someone else's
+// work: another conversation's uncommitted or unhanded work. A clean
+// checkout on another branch than main holds none, and may move, when it is
+// on branch itself, on one of own (OwnBranch), or at a head origin's main
+// already holds (BaseUnpushed 0); otherwise its handover decides
+// (handoverStep).
+func MissingEditCopyStep(branch string, classic *WhereCopy, own ...OwnBranch) EditStep {
 	if classic == nil {
 		return EditStep{Action: "acquire"}
 	}
@@ -184,26 +200,56 @@ func MissingEditCopyStep(branch string, classic *WhereCopy) EditStep {
 	if classic.Dirty {
 		return occupied
 	}
+	if !holdsOnlyOwnWork(classic, branch, own) {
+		if step, moves := handoverStep(classic, occupied); !moves {
+			return step
+		}
+	}
+	return EditStep{Action: "checkout " + branch, Copy: classic.Name}
+}
+
+// holdsOnlyOwnWork is whether classic, clean, is on another branch than main
+// that is branch or one of own (at its head when that names one), or at a
+// head origin's main holds.
+func holdsOnlyOwnWork(classic *WhereCopy, branch string, own []OwnBranch) bool {
+	if classic.Branch == "" || classic.Branch == mainBranch {
+		return false
+	}
+	if classic.Branch == branch || (classic.BaseUnpushed != nil && *classic.BaseUnpushed == 0) {
+		return true
+	}
+	for _, o := range own {
+		if o.Name == classic.Branch && (o.Head == "" || (classic.BranchRef != nil && classic.BranchRef.Head == o.Head)) {
+			return true
+		}
+	}
+	return false
+}
+
+// handoverStep is whether classic, a clean checkout whose work may be
+// another conversation's, may move: its work handed over, or main with
+// nothing beyond origin's main — else the step that keeps it.
+func handoverStep(classic *WhereCopy, occupied EditStep) (EditStep, bool) {
 	if classic.Step != nil && classic.Step.Action == EditUnknown {
-		return *classic.Step
+		return *classic.Step, false
 	}
 	if classic.Branch == "" {
-		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " is not on a branch"}
+		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " is not on a branch"}, false
 	}
 	switch {
 	case classic.NothingToHandOver:
 		if classic.BaseUnpushed == nil {
-			return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " unpushed commits were not read"}
+			return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " unpushed commits were not read"}, false
 		}
 		if *classic.BaseUnpushed > 0 {
-			return occupied
+			return occupied, false
 		}
 	case classic.Step == nil:
-		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " handover has not been checked"}
+		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " handover has not been checked"}, false
 	case classic.Step.Action != EditHandedOver && (classic.Step.Action != EditRefreshBase || !classic.Step.ReadyToSwitch):
-		return occupied
+		return occupied, false
 	}
-	return EditStep{Action: "checkout " + branch, Copy: classic.Name}
+	return EditStep{}, true
 }
 
 // Words names the action and, when relevant, the copy or change it concerns.
@@ -387,7 +433,7 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 		base += "step: " + worktree.Step.Words() + "; "
 	}
 	change := ""
-	if worktree.Branch != "main" && worktree.HasHQ {
+	if worktree.Branch != mainBranch && worktree.HasHQ {
 		switch {
 		case worktree.Change == nil:
 			change = "no change yet"
