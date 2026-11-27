@@ -362,8 +362,11 @@ type Dependency struct {
 
 // ServicePlan is the structured plan submitted during the bootstrap "plan" step.
 type ServicePlan struct {
-	Targets   []BootstrapTarget `json:"targets"`
-	CreatedAt string            `json:"createdAt"`
+	Targets []BootstrapTarget `json:"targets"`
+	// Repository is the HQ repository a Mate's pooled plan's parts share;
+	// empty for every other plan.
+	Repository string `json:"repository,omitempty"`
+	CreatedAt  string `json:"createdAt"`
 }
 
 // RuntimeBase returns the base runtime name (before @) of the first target.

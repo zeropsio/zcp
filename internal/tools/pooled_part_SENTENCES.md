@@ -1,0 +1,6 @@
+# A Mate's pooled plan on its bootstrap (`pooled_part.go`)
+
+- PP-REPLAY — The same pooled plan, its targets and repository, sent to this engine's bootstrap that completed discover with it is answered with the bootstrap's current step as status gives it, and makes no HQ call and no import. Breaks: a discover whose answer was lost cannot be continued, or continuing it creates the parts again.
+- PP-OTHER — Another plan sent to a bootstrap past discover is refused with the recorded plan and its repository, with status to go on and reset to plan again, and makes no HQ call and no import. Breaks: the agent is told to send a plan that can never be taken.
+- PP-HELD — In a Mate, a plan whose hostnames an interrupted bootstrap holds is refused before the parts' birth with that session's id, its resume call and reset, never with "send the same plan again"; after the resume the same plan is answered as PP-REPLAY says. Breaks: the parts are stood up for a plan the engine then refuses, and the agent is told to repeat a call that cannot succeed.
+- PP-RETRY — A first plan refused during its parts' birth leaves the bootstrap at discover, so the same plan again runs the birth again. Breaks: an answer that says to send the same plan again is false.

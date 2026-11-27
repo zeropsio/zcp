@@ -184,7 +184,7 @@ func (e *Engine) BootstrapCompleteAdoptPlan(existing []platform.ServiceStack, sc
 		return nil, fmt.Errorf("bootstrap adopt plan: no adoptable runtime services found — nothing to adopt")
 	}
 
-	resp, err := e.completePlanWithTargets(state, targets, schemas, existing)
+	resp, err := e.completePlanWithTargets(state, targets, "", schemas, existing)
 	if err != nil {
 		return nil, err
 	}

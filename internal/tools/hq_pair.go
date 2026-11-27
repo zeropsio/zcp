@@ -92,7 +92,7 @@ const matePooledPlanNote = "**This Mate keeps its code in HQ and creates each pa
 	"Plan each runtime as `devHostname=\"<part>pool\"`, `stageHostname=\"<part>stage\"`, its type and `bootstrapMode=\"standard\"` (apppool → appstage), " +
 	"and name the HQ repository all parts share with `repository` (one part defaults to its name). " +
 	"Completing discover with that plan creates the repository, its first commit, the pools and the stages and builds them — it takes minutes and reports progress; " +
-	"the same plan again continues where it stopped. A plan with a dev service or another pairing is refused. " + matePooledPlanKeeps
+	"the same plan again continues where it stopped, and once discover is complete it answers where the bootstrap is; after zcp restarted, its answer names the interrupted bootstrap to resume. A plan with a dev service or another pairing is refused. " + matePooledPlanKeeps
 
 // appendMatePooledPlanNote adds matePooledPlanNote to the discover step's
 // guide of a Mate's classic route — a session records no route for classic —

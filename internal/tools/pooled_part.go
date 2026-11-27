@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -119,15 +121,15 @@ func pooledPlanRows(stood standupResponse) []pooledPlanRow {
 }
 
 // handleMatePooledPlan is a Mate's classic discover with a plan: the pooled
-// rule, the preflight and the plan's validation before any side effect, the
-// parts' birth, and the discover step completed with the parts as existing
-// targets once the verdict is done or ready. A verdict that failed completes
-// nothing and answers the failed rows.
+// rule and the plan's validation; the plan this session's discover already
+// recorded answered with the session's step as status gives it, running
+// nothing, and another plan refused; past discover; the plan's own refusals
+// and the preflight before any side effect; the parts' birth; and the
+// discover step completed with the parts as existing targets once the
+// verdict is done or ready. A verdict that failed completes nothing and
+// answers the failed rows.
 func handleMatePooledPlan(ctx context.Context, engine *workflow.Engine, client platform.Client, schemas *schema.Schemas, schemaCache *schema.Cache, input WorkflowInput, projectID string, sshDeployer ops.SSHDeployer, rt runtime.Info, birth *pooledBirth) *mcp.CallToolResult {
 	if pe := matePooledPlanError(input.Plan, rt.MateEnabled); pe != nil {
-		return convertError(pe, WithRecoveryStatus())
-	}
-	if pe := explicitPlanPreflight(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
 		return convertError(pe, WithRecoveryStatus())
 	}
 	if _, err := workflow.ValidateBootstrapTargets(input.Plan, schemas, nil); err != nil {
@@ -137,12 +139,6 @@ func handleMatePooledPlan(ctx context.Context, engine *workflow.Engine, client p
 			"Provide valid plan: [{runtime: {devHostname: \"<part>pool\", stageHostname: \"<part>stage\", type, bootstrapMode: \"standard\"}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars.")
 		pe.Subcode = bootstrapPlanSubcode(err)
 		return convertError(pe, WithRecoveryStatus())
-	}
-	if state, err := engine.GetState(); err != nil || state.Bootstrap == nil || !state.Bootstrap.Active || state.Bootstrap.CurrentStepName() != workflow.StepDiscover {
-		return convertError(platform.NewPlatformError(
-			platform.ErrBootstrapNotActive,
-			"The plan is completed at the bootstrap's discover step, and this session is not at it.",
-			"Start bootstrap with action=\"start\" workflow=\"bootstrap\" route=\"classic\", then send the plan at step=\"discover\"."), WithRecoveryStatus())
 	}
 	parts := make([]pooledPlanPart, 0, len(input.Plan))
 	for _, target := range input.Plan {
@@ -158,6 +154,32 @@ func handleMatePooledPlan(ctx context.Context, engine *workflow.Engine, client p
 			platform.ErrInvalidParameter,
 			"Plan validation failed: the plan has several parts and names no repository: every part of a plan shares one HQ repository.",
 			"Re-submit the same plan with repository=\"<name>\", the HQ repository its parts share; parts of different repositories are planned in separate bootstraps."), WithRecoveryStatus())
+	}
+	targets := pooledPlanTargets(input.Plan)
+	state, err := engine.GetState()
+	if err != nil || state.Bootstrap == nil || !state.Bootstrap.Active {
+		return convertError(platform.NewPlatformError(
+			platform.ErrBootstrapNotActive,
+			"The plan is completed at the bootstrap's discover step, and this session has no bootstrap in progress.",
+			"Start bootstrap with action=\"start\" workflow=\"bootstrap\" route=\"classic\", then send the plan at step=\"discover\"."), WithRecoveryStatus())
+	}
+	if state.Bootstrap.CurrentStepName() != workflow.StepDiscover {
+		// A completed discover whose answer was lost: the same plan again is
+		// answered where the bootstrap is, and nothing runs twice.
+		if samePooledPlan(state.Bootstrap.Plan, targets, repository) {
+			result, _, _ := handleBootstrapStatus(ctx, engine, client, projectID, rt, schemaCache)
+			return result
+		}
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Discover of this bootstrap is complete with its recorded plan, %s; a plan is taken only at discover.", recordedPlanWords(state.Bootstrap.Plan)),
+			"To go on with the recorded plan, call zerops_workflow action=\"status\". To plan again, reset this bootstrap with zerops_workflow action=\"reset\" and start a new one."), WithRecoveryStatus())
+	}
+	if err := engine.BootstrapCheckPlan(targets, schemas); err != nil {
+		return convertError(pooledPlanRefusal(err, "Nothing was touched."), WithRecoveryStatus())
+	}
+	if pe := explicitPlanPreflight(ctx, client, projectID, input.Plan, sshDeployer, rt); pe != nil {
+		return convertError(pe, WithRecoveryStatus())
 	}
 	if birth == nil {
 		return convertError(platform.NewPlatformError(
@@ -175,18 +197,10 @@ func handleMatePooledPlan(ctx context.Context, engine *workflow.Engine, client p
 		return convertError(pooledPlanFailed(stood), WithRecoveryStatus())
 	}
 
-	targets := slices.Clone(input.Plan)
-	for i := range targets {
-		targets[i].Runtime.IsExisting = true
-	}
-	resp, err := engine.BootstrapCompletePlan(targets, schemas, nil)
+	resp, err := engine.BootstrapCompletePooledPlan(targets, repository, schemas)
 	if err != nil {
-		pe := platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("Plan validation failed after the parts were created: %v", err),
-			"The parts stand; send the same plan again: it continues from the running versions.")
-		pe.Subcode = bootstrapPlanSubcode(err)
-		return convertError(pe, WithRecoveryStatus())
+		// What changed while the parts were born: the check above passed.
+		return convertError(pooledPlanRefusal(err, "The parts stand, and nothing of the bootstrap was completed."), WithRecoveryStatus())
 	}
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, schemaCache)
@@ -197,6 +211,75 @@ func handleMatePooledPlan(ctx context.Context, engine *workflow.Engine, client p
 		bootstrapResponse: bootstrapResponse{BootstrapResponse: resp, Envelope: freshEnvelope(ctx, engine.StateDir(), client, projectID, rt)},
 		Parts:             rows,
 	})
+}
+
+// pooledPlanTargets is the plan as its discover records it: its parts as
+// existing targets, the shape the adopt route hands the engine.
+func pooledPlanTargets(plan []workflow.BootstrapTarget) []workflow.BootstrapTarget {
+	targets := slices.Clone(plan)
+	for i := range targets {
+		targets[i].Runtime.IsExisting = true
+	}
+	return targets
+}
+
+// samePooledPlan is whether recorded is the plan of targets in repository,
+// both validated as discover validates them.
+func samePooledPlan(recorded *workflow.ServicePlan, targets []workflow.BootstrapTarget, repository string) bool {
+	if recorded == nil || recorded.Repository != repository {
+		return false
+	}
+	was, errWas := json.Marshal(recorded.Targets)
+	is, errIs := json.Marshal(targets)
+	return errWas == nil && errIs == nil && bytes.Equal(was, is)
+}
+
+// recordedPlanWords names a recorded plan's runtimes, their stages and
+// dependencies, and the repository a pooled plan's parts share.
+func recordedPlanWords(plan *workflow.ServicePlan) string {
+	if plan == nil || len(plan.Targets) == 0 {
+		return "which plans no runtime"
+	}
+	said := make([]string, 0, len(plan.Targets))
+	for _, t := range plan.Targets {
+		var row strings.Builder
+		row.WriteString(t.Runtime.DevHostname)
+		if stages := t.Runtime.StageHostnames(); len(stages) > 0 {
+			row.WriteString(" → " + strings.Join(stages, " + "))
+		}
+		row.WriteString(" (" + t.Runtime.Type + ")")
+		for _, d := range t.Dependencies {
+			fmt.Fprintf(&row, " with %s (%s)", d.Hostname, d.Type)
+		}
+		said = append(said, row.String())
+	}
+	words := strings.Join(said, ", ")
+	if plan.Repository != "" {
+		words += fmt.Sprintf(" in repository %q", plan.Repository)
+	}
+	return words
+}
+
+// pooledPlanRefusal is the plan's refusal by the engine's record, after what
+// touched says of the project: a hostname an interrupted bootstrap holds
+// names that session's resume, one a running bootstrap holds names it, and
+// any other refusal is the plan's to fix.
+func pooledPlanRefusal(err error, touched string) *platform.PlatformError {
+	if held := (*workflow.HostnameHeldError)(nil); errors.As(err, &held) && held.Interrupted {
+		return platform.NewPlatformError(platform.ErrWorkflowActive,
+			fmt.Sprintf("The plan's %q is held by bootstrap session %s, interrupted when its process ended.", held.Hostname, held.SessionID),
+			fmt.Sprintf("%s To continue that bootstrap, resume it with zerops_workflow action=\"resume\" sessionId=%q; then zerops_workflow action=\"status\", or the plan it recorded sent again, answers where it stopped. To abandon it, resume it and reset it with zerops_workflow action=\"reset\".", touched, held.SessionID))
+	}
+	if held := (*workflow.HostnameHeldError)(nil); errors.As(err, &held) {
+		return platform.NewPlatformError(platform.ErrWorkflowActive,
+			fmt.Sprintf("The plan's %q is held by bootstrap session %s, which another conversation runs now (PID %d).", held.Hostname, held.SessionID, held.PID),
+			touched+" Plan other hostnames, or plan these once that bootstrap has ended.")
+	}
+	pe := platform.NewPlatformError(platform.ErrInvalidParameter,
+		fmt.Sprintf("Plan validation failed: %v", err),
+		touched+" Fix what the refusal names, then send the plan again.")
+	pe.Subcode = bootstrapPlanSubcode(err)
+	return pe
 }
 
 // pooledPlanStoodLine is what the plan's answer says of its parts once they

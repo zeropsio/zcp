@@ -562,6 +562,38 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 
 // BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores it.
 func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
+	state, err := e.explicitPlanState(targets)
+	if err != nil {
+		return nil, err
+	}
+	return e.completePlanWithTargets(state, targets, "", schemas, liveServices)
+}
+
+// BootstrapCompletePooledPlan is BootstrapCompletePlan of a Mate's pooled
+// plan: the plan is recorded with repository, the HQ repository its parts
+// share, so the plan sent again is told from another one.
+func (e *Engine) BootstrapCompletePooledPlan(targets []BootstrapTarget, repository string, schemas *schema.Schemas) (*BootstrapResponse, error) {
+	state, err := e.explicitPlanState(targets)
+	if err != nil {
+		return nil, err
+	}
+	return e.completePlanWithTargets(state, targets, repository, schemas, nil)
+}
+
+// BootstrapCheckPlan refuses targets as BootstrapCompletePlan would now,
+// recording nothing: a caller whose side effects come before the record asks
+// it first.
+func (e *Engine) BootstrapCheckPlan(targets []BootstrapTarget, schemas *schema.Schemas) error {
+	if _, err := e.explicitPlanState(targets); err != nil {
+		return err
+	}
+	_, err := e.planRefusal(targets, schemas, nil)
+	return err
+}
+
+// explicitPlanState is the session an explicit plan completes: a classic or
+// adopt bootstrap at discover, and a plan of a shape the record takes.
+func (e *Engine) explicitPlanState(targets []BootstrapTarget) (*WorkflowState, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
@@ -582,7 +614,7 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, schemas *schem
 	if err := plannedCodeVolumeError(targets); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w: %w", ErrPlanShapeInvalid, err)
 	}
-	return e.completePlanWithTargets(state, targets, schemas, liveServices)
+	return state, nil
 }
 
 // BootstrapCompleteRecipePlan completes the discover step for the recipe route
@@ -652,7 +684,7 @@ func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, devOnl
 		state.Bootstrap.RecipeOverrides = &overrides
 	}
 
-	resp, err := e.completePlanWithTargets(state, targets, schemas, liveServices)
+	resp, err := e.completePlanWithTargets(state, targets, "", schemas, liveServices)
 	if err != nil {
 		return nil, err
 	}
@@ -676,21 +708,10 @@ func (e *Engine) BootstrapCompleteRecipePlan(submitted []BootstrapTarget, devOnl
 // step. It is the shared core of BootstrapCompletePlan (explicit agent plan) and
 // BootstrapCompleteAdoptPlan (auto-derived adopt plan); both load state and run the
 // active/route/step guards before delegating here.
-func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
-	defaulted, err := ValidateBootstrapTargets(targets, schemas, liveServices)
+func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []BootstrapTarget, repository string, schemas *schema.Schemas, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
+	defaulted, err := e.planRefusal(targets, schemas, liveServices)
 	if err != nil {
-		return nil, fmt.Errorf("bootstrap complete plan: %w: %w", ErrPlanShapeInvalid, err)
-	}
-
-	// (Recipe-route plan validation is gone: the recipe plan is DERIVED from
-	// the recipe shape by BootstrapCompleteRecipePlan, so it is mode-correct and
-	// rewritable by construction — there is no agent-authored plan to slot-match
-	// or mode-check here. The old recipe pre-flight + ValidateBootstrapRecipeMode
-	// were the slot-matcher that rejected simple/cross-type recipes; deleted.)
-
-	// Per-hostname lock: a different unfinished session can own a target.
-	if err := e.checkHostnameLocks(targets); err != nil {
-		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+		return nil, err
 	}
 
 	defaultedSet := make(map[string]bool, len(defaulted))
@@ -720,8 +741,9 @@ func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []Bootstr
 	}
 
 	state.Bootstrap.Plan = &ServicePlan{
-		Targets:   targets,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Targets:    targets,
+		Repository: repository,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -730,6 +752,28 @@ func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []Bootstr
 	}
 
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.mate), nil
+}
+
+// planRefusal validates targets and checks their hostname locks, the
+// refusals of every plan the session records; it returns the dependency
+// hostnames whose mode was defaulted.
+func (e *Engine) planRefusal(targets []BootstrapTarget, schemas *schema.Schemas, liveServices []platform.ServiceStack) ([]string, error) {
+	defaulted, err := ValidateBootstrapTargets(targets, schemas, liveServices)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan: %w: %w", ErrPlanShapeInvalid, err)
+	}
+
+	// (Recipe-route plan validation is gone: the recipe plan is DERIVED from
+	// the recipe shape by BootstrapCompleteRecipePlan, so it is mode-correct and
+	// rewritable by construction — there is no agent-authored plan to slot-match
+	// or mode-check here. The old recipe pre-flight + ValidateBootstrapRecipeMode
+	// were the slot-matcher that rejected simple/cross-type recipes; deleted.)
+
+	// Per-hostname lock: a different unfinished session can own a target.
+	if err := e.checkHostnameLocks(targets); err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+	}
+	return defaulted, nil
 }
 
 // BootstrapSkip skips the current step and returns the next.
@@ -942,11 +986,24 @@ func targetHostnames(target BootstrapTarget) []string {
 	return append(hostnames, stages...)
 }
 
-// hostnameHeldError refuses a hostname another unfinished bootstrap holds,
-// whether its plan or its incomplete meta says so.
+// HostnameHeldError refuses a hostname another unfinished bootstrap holds,
+// whether its plan or its incomplete meta says so. Interrupted is true when
+// the holder's process has ended, so the holding session can be resumed.
+type HostnameHeldError struct {
+	Hostname    string
+	SessionID   string
+	PID         int
+	Interrupted bool
+}
+
+func (h *HostnameHeldError) Error() string {
+	return fmt.Sprintf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
+		h.Hostname, h.SessionID, h.PID)
+}
+
 func hostnameHeldError(hostname string, holder SessionEntry) error {
-	return fmt.Errorf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
-		hostname, holder.SessionID, holder.PID)
+	return &HostnameHeldError{Hostname: hostname, SessionID: holder.SessionID, PID: holder.PID,
+		Interrupted: !isProcessAlive(holder.PID, holder.StartTime)}
 }
 
 // loadState loads state for the current session.
