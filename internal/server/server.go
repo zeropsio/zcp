@@ -385,8 +385,9 @@ func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtIn
 // repository to GitHub (§5.11), and proposes changes to its
 // application's stage and production, checked against HQ's observation,
 // and MCP servers for its agents (§2.11); it lists and asks its person's
-// other Mates (§6.10), its person's Chief among them. Org mode is the Chief
-// and registers none of these but the messages.
+// other Mates (§6.10), its person's Chief among them; and it proposes tasks
+// for its application's board after reading its open ones (§6.11). Org mode
+// is the Chief and registers none of these but the messages.
 func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir string) {
 	if !s.rtInfo.InContainer || !s.rtInfo.MateEnabled {
 		return
@@ -396,6 +397,10 @@ func (s *Server) registerMateCards(httpClient *http.Client, projectID, stateDir 
 	tools.RegisterAppPropose(s.server, httpClient, projectID, s.rtInfo)
 	tools.RegisterMcpPropose(s.server, projectID, s.rtInfo)
 	tools.RegisterMateMessages(s.server, httpClient, s.rtInfo)
+	tools.RegisterBoard(s.server, httpClient, s.rtInfo, func() bool {
+		installed, _ := mate.InstalledVersion()
+		return mate.CarriesBoard(installed)
+	})
 }
 
 func (s *Server) newWorkflowEngine(stateDir string) *workflow.Engine {

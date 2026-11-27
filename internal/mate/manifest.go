@@ -63,6 +63,13 @@ const (
 	// nothing, so the agent restarts them. Set at mate's release.
 	CardRestartMateVersion = "0.16.226"
 
+	// BoardMateVersion is the first mate release whose engine opens a board
+	// ask from `zerops_board_propose`'s answer and draws its card, whose Put
+	// on board writes the task (docs/spec-mate.md §6.11): an older Mate shows
+	// the call as a plain row and nobody can put the task on the board, so
+	// zcp refuses the proposal there (CarriesBoard). Set at mate's release.
+	BoardMateVersion = "0.16.340"
+
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
 	// on stable v<major>.<minor>.<patch> tags, so this is the stable
@@ -289,6 +296,13 @@ func CarriesSecretAsk(installed string) bool {
 func CarriesCardRestart(installed string) bool {
 	core, _, _ := strings.Cut(installed, "-")
 	return carriesParts(core, CardRestartMateVersion)
+}
+
+// CarriesBoard reports whether the installed mate version draws the board
+// card for a proposed task. An unreadable version carries nothing.
+func CarriesBoard(installed string) bool {
+	core, _, _ := strings.Cut(installed, "-")
+	return carriesParts(core, BoardMateVersion)
 }
 
 func carriesParts(minimum, accepting string) bool {
