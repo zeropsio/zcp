@@ -4265,9 +4265,10 @@ A person puts work on it from a conversation, and the application's Mates take i
 pool by itself, a person's own Mate only when that person takes it. An agent never puts a task on
 the board: it proposes one, Mate draws a card in that conversation, and the person's own client
 writes the task when they press Put on board. Work the person asked for, and anything it needs, is
-done now in its own change (*What one change holds*, §10.10) and never proposed instead; work the
-agent finds unasked outside every open change — another part, another repository, an unrelated bug
-— is proposed, after a read of the board, and never started.
+done now in its own change (*What one change holds*, §10.10) and never proposed instead, unless they
+ask to put it on the board (their words, or Mate's Put on board and `/board`): then that work is
+proposed, never started. Work the agent finds unasked outside every open change — another part,
+another repository, an unrelated bug — is proposed, after a read of the board, and never started.
 
 **The tools.** Both register in a Mate's container (§2.0) and nowhere else, the Chief's org mode
 included (`internal/tools/board.go`). Both answer, without asking HQ, that a Mate whose state (§2.8)
@@ -4306,6 +4307,10 @@ application HQ holds the Mate in. zcp reads of each task `id`, `title`, `state`,
 **mate.** The engine opens a board ask from a `proposed.board` answer and draws its card in that
 conversation: the brief, editable, and **Put on board**, which posts the task from the person's own
 client (`POST /api/apps/:appId/tasks`, HQ's person door) and settles the card "On the board".
+When the person took a task into this Mate, the conversation working it links its change to the
+task from zcp's answer to `zerops_workflow action="open-change"` alone: the answer's `pullRequest`
+(the change's number) and `pullRequestUrl` (`…/changes/<appId>/<repo>/<number>`) are part of this
+seam, and the Mate posts them to HQ under the project key (`POST /api/mate/tasks/:taskId/change`).
 
 **Where the agent reads it.** AGENTS.md's *What one change holds* names `zerops_board_propose` for
 unasked work found outside every open change and points at

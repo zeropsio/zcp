@@ -63,7 +63,7 @@ func RegisterBoard(srv *mcp.Server, httpClient hq.Doer, rt runtime.Info, carries
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_board_propose",
-		Description: "Propose a task for your application's board: work nobody asked for that you found outside every open change — another part, another repository, an unrelated bug. List the board first (zerops_board_list). Mate shows the person a card; their Put on board writes it. Writes nothing. Never propose work the person asked for: do it now.",
+		Description: "Propose a task for your application's board: unasked work you found outside every open change — another part, another repository, an unrelated bug — or work the person asks to put on the board. List the board first (zerops_board_list). Mate shows the person a card; their Put on board writes it. Writes nothing. Other asked work: do it now.",
 		Annotations: &mcp.ToolAnnotations{Title: "Propose a task for the board", ReadOnlyHint: true, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in BoardProposeInput) (*mcp.CallToolResult, any, error) {
 		proposal, err := ops.NewBoardProposal(in.Title, in.Brief)

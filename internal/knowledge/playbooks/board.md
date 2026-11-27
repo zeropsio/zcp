@@ -10,6 +10,8 @@ Your application has one board: the tasks people put on it, which its Mates take
 
 Work the person asked for, and anything it needs to work, is done now: in its own change when **What one change holds** in AGENTS.md says so, never proposed instead, never left for later. A task on the board is not a way to make a change smaller.
 
+When the person asks you to put work on the board — in their words, or through Mate's Put on board or `/board` — propose exactly that work, with a brief whoever takes it can act on, and never start it.
+
 Work nobody asked for that you find outside every open change — a bug in another part, something another repository needs, an unrelated fix you noticed — is proposed, never started: not on this branch, not on a new one.
 
 ## 2. Propose it
