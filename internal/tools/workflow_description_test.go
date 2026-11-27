@@ -55,7 +55,7 @@ func TestWorkflowDescription_WD1_CICDOfferedExactlyWhereAccepted(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/deploy_local.go | rt.MateEnabled && state.Status == "none" → !rt.MateEnabled && state.Status == "none"
+// witness: internal/tools/deploy_local.go | rt.MateEnabled && state.Status == sessionStatusNone → !rt.MateEnabled && state.Status == sessionStatusNone
 func TestSessionAnnotation_WDNoSession_StageRuleOnlyInMate(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

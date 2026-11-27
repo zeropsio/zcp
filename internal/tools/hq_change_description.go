@@ -53,8 +53,6 @@ const changeDescriptionMaxRunes = 20000
 // changePictureMaxBytes is the largest picture HQ keeps for a description.
 const changePictureMaxBytes = 20 << 20
 
-const editHandedOver = "handed over"
-
 // changeDescriptionResult is describe-change's answer.
 type changeDescriptionResult struct {
 	Service string `json:"service"`
@@ -185,19 +183,6 @@ func readHandoverStep(ctx context.Context, ssh ops.SSHDeployer, hqc hq.Client, s
 	return workflow.PlanEdit(copies, change, err == nil), current
 }
 
-func handoverStepWords(step workflow.EditStep) string {
-	if step.Action == workflow.EditUnknown {
-		return "unknown: " + step.Reason
-	}
-	if step.Action == editHandedOver {
-		return fmt.Sprintf("handed over at %s (change #%d)", handoverHead(step.Head), step.Number)
-	}
-	if step.Copy != "" {
-		return step.Action + " in " + step.Copy
-	}
-	return step.Action
-}
-
 func handoverHead(head string) string {
 	if len(head) > 7 {
 		return head[:7]
@@ -206,7 +191,7 @@ func handoverHead(head string) string {
 }
 
 func describedAtHandedOverHead(number int, head string, step workflow.EditStep) bool {
-	return step.Action == editHandedOver && step.Head == head && step.Number == number
+	return step.Action == workflow.EditHandedOver && step.Head == head && step.Number == number
 }
 
 // describedHandover never says a build is running without HQ's observation.
@@ -230,10 +215,10 @@ func describedHandover(number int, head string, step workflow.EditStep, current 
 	if step.Action == "commit" && step.Copy != "" {
 		return fmt.Sprintf("%s, but %s holds uncommitted work: not handed over.", prefix, step.Copy)
 	}
-	if step.Action == editHandedOver {
+	if step.Action == workflow.EditHandedOver {
 		return prefix + ", but the branch's change or commit has moved: not handed over."
 	}
-	return prefix + ", but not handed over: " + handoverStepWords(step) + "."
+	return prefix + ", but not handed over: " + step.Words() + "."
 }
 
 // errCannotAttach is a picture HQ will never keep for a change — larger than
@@ -376,8 +361,9 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 	ref := changeRef{AppID: target.AppID, Repo: target.Repo, Number: number}
 	for _, change := range kept {
 		if change.Number == number && keptDescriptionAtAnotherHead(change.Description, text, workcopy.head) {
+			step, _ := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
 			return jsonResult(changeDescriptionResult{Service: service, Parts: parts, PullRequest: number, Kept: true,
-				Message: fmt.Sprintf("The kept description of change #%d was written for commit %s, but %s is at %s. It was not written; review the work and write a description for the current commit.", number, change.Description.Head, workcopy.name, workcopy.head)}), nil, nil
+				Message: keptDescriptionReply(number, change.Description.Head, workcopy, step)}), nil, nil
 		}
 	}
 	metas, err := workflow.ListServiceMetas(stateDir)
@@ -391,7 +377,11 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 	answered, tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title, workcopy.head, stageBacked, time.Now())
 	if err != nil {
 		result := changeDescriptionResult{Service: service, Parts: parts, PullRequest: number, PullRequestURL: url, Kept: true}
-		return descriptionWriteFailure(stateDir, ref, result, text, workcopy.head, hqc.Address(), tries, away, err, keepErr), nil, nil
+		readStep := func() workflow.EditStep {
+			step, _ := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
+			return step
+		}
+		return descriptionWriteFailure(stateDir, ref, result, text, workcopy.head, hqc.Address(), tries, away, err, keepErr, readStep), nil, nil
 	}
 	step, current := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
 	message := describedHandover(number, workcopy.head, step, current, time.Now())
@@ -413,12 +403,22 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 	}), nil, nil
 }
 
+// keptDescriptionReply does not ask for new words while the branch still needs
+// to reach HQ, or either source could not be read.
+func keptDescriptionReply(number int, keptHead string, workcopy descriptionCopy, step workflow.EditStep) string {
+	message := fmt.Sprintf("The kept description of change #%d was written for commit %s, but %s is at %s. It was not written.", number, keptHead, workcopy.name, workcopy.head)
+	if step.Number == number && step.Head == workcopy.head {
+		return message + " Review the work and write a description for the current commit."
+	}
+	return message + " Next: " + step.Words() + "."
+}
+
 // descriptionWriteFailure preserves only words that can still be put on this change.
-func descriptionWriteFailure(stateDir string, ref changeRef, result changeDescriptionResult, text, head, address string, tries int, away describeAway, err, keepErr error) *mcp.CallToolResult {
+func descriptionWriteFailure(stateDir string, ref changeRef, result changeDescriptionResult, text, head, address string, tries int, away describeAway, err, keepErr error, readStep func() workflow.EditStep) *mcp.CallToolResult {
 	number := ref.Number
 	var refused *hq.RefusedError
 	if errors.As(err, &refused) && refused.Reason == "head_moved" && keepErr == nil {
-		result.Message = fmt.Sprintf("HQ refused the description of change #%d because its head moved. The words remain kept for commit %s; review the current work and write its description.", number, head)
+		result.Message = fmt.Sprintf("HQ refused the description of change #%d because its head moved. The words remain kept for commit %s. Next: %s.", number, head, readStep().Words())
 		return jsonResult(result)
 	}
 	var gone *picturesGoneError

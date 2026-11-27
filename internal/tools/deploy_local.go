@@ -331,6 +331,8 @@ type WorkSessionState struct {
 	Progress    *workflow.AutoCloseProgress `json:"progress,omitempty"`
 }
 
+const sessionStatusNone = "none"
+
 // sessionAnnotations loads the current-PID work session once and derives
 // the structured lifecycle state for the deploy response. A single disk
 // read serves all response annotations.
@@ -351,7 +353,7 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
 		return &WorkSessionState{
-			Status: "none",
+			Status: sessionStatusNone,
 			Note:   noActiveSessionNote,
 		}
 	}
@@ -390,7 +392,7 @@ const noActiveSessionNote = "No active develop session — deploy not tracked. S
 
 func sessionAnnotationsForRuntime(stateDir string, rt runtime.Info) *WorkSessionState {
 	state := sessionAnnotations(stateDir)
-	if rt.MateEnabled && state.Status == "none" {
+	if rt.MateEnabled && state.Status == sessionStatusNone {
 		state.Note += " " + mateStageRule
 	}
 	return state

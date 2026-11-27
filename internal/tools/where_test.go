@@ -300,6 +300,73 @@ func TestDescription_WGKeptHead_KeptWordsStayAtTheirCommit(t *testing.T) {
 	}
 }
 
+// witness: internal/tools/hq_change_description.go | step.Head == workcopy.head → step.Head != workcopy.head
+func TestDescription_WGKeptStep_OnlyRewriteAtPublishedHead(t *testing.T) {
+	t.Parallel()
+	head, older := "newcommit", "oldcommit"
+	workcopy := descriptionCopy{name: "pool-1", head: head}
+	for _, tc := range []struct {
+		name    string
+		step    workflow.EditStep
+		want    []string
+		rewrite bool
+	}{
+		{"ahead", workflow.EditStep{Action: "push", Copy: "pool-1"}, []string{"push", "pool-1"}, false},
+		{"behind", workflow.EditStep{Action: "pull", Copy: "pool-1"}, []string{"pull", "pool-1"}, false},
+		{"unread", workflow.EditStep{Action: workflow.EditUnknown, Reason: "HQ was not read"}, []string{"unknown", "HQ was not read"}, false},
+		{"other change", workflow.EditStep{Action: workflow.EditHandedOver, Number: 8, Head: head}, []string{"handed over", "#8"}, false},
+		{"head changed since read", workflow.EditStep{Action: workflow.EditHandedOver, Number: 7, Head: older}, []string{"handed over", "#7"}, false},
+		{"same change and head", workflow.EditStep{Action: "describe change", Number: 7, Head: head}, []string{"write", "current commit"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := keptDescriptionReply(7, older, workcopy, tc.step)
+			for _, want := range append(tc.want, older) {
+				if !strings.Contains(got, want) {
+					t.Fatalf("kept description reply = %q, want %q", got, want)
+				}
+			}
+			if rewrite := strings.Contains(got, "write ") && strings.Contains(got, "current commit"); rewrite != tc.rewrite {
+				t.Fatalf("kept description reply = %q, want rewrite=%v", got, tc.rewrite)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | readStep().Words() → readStep().Action
+func TestDescription_WGMovedStep_RefusalKeepsWordsAndNamesStep(t *testing.T) {
+	t.Parallel()
+	const head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, tc := range []struct {
+		name string
+		step workflow.EditStep
+		want []string
+	}{
+		{"ahead", workflow.EditStep{Action: "push", Copy: "pool-1"}, []string{"push", "pool-1"}},
+		{"behind", workflow.EditStep{Action: "pull", Copy: "pool-1"}, []string{"pull", "pool-1"}},
+		{"other copy", workflow.EditStep{Action: "commit", Copy: "pool-2"}, []string{"commit", "pool-2"}},
+		{"unread", workflow.EditStep{Action: workflow.EditUnknown, Reason: "HQ was not read"}, []string{"unknown", "HQ was not read"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := descriptionWriteFailure("", changeRef{Number: 7}, changeDescriptionResult{Kept: true}, "words", head, "", 1, describeServed,
+				&hq.RefusedError{Status: 409, Code: "conflict", Reason: "head_moved"}, nil, func() workflow.EditStep { return tc.step })
+			var got changeDescriptionResult
+			if err := json.Unmarshal([]byte(resultText(t, result)), &got); err != nil {
+				t.Fatal(err)
+			}
+			if !got.Kept || !strings.Contains(got.Message, head) {
+				t.Fatalf("refusal reply = %+v, want words kept at %s", got, head)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got.Message, want) {
+					t.Fatalf("refusal reply = %+v, want %q", got, want)
+				}
+			}
+		})
+	}
+}
+
 // witness: internal/tools/hq_change_description.go | || c.Description.Head != head →
 func TestDescription_WGAckHead_OldAcknowledgementKeepsNewWords(t *testing.T) {
 	t.Parallel()

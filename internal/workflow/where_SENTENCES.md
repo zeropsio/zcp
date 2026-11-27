@@ -16,5 +16,6 @@
 - WH-HEAD — A change at another or unread head cannot establish handover of this copy.
 - WH-DESCRIBE — A draft at the published head is described before handover.
 - WH-HANDED — A ready change at the clean, published head is handed over.
+- WH-STEPWORDS — A step names the copy or missing read, and a handed-over change names its first seven commit characters.
 - WH-EDITLINE — A copy's where line carries its edit step and the Review build label for its change.
 - WH-GROUP — A branch is not handed over while another copy is unread or holds work, but a readable copy's work remains actionable.

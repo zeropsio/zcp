@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -125,7 +124,7 @@ type leaseRolloutToolResult struct {
 // release guard and no sync). Every successful result carries the lifecycle envelope,
 // computed after the operation so it lists the new lease set (spec-mate §1.3);
 // rt is the runtime that envelope is computed for.
-func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info, opts ...LeaseOption) {
+func RegisterLease(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID, stateDir string, swarm ops.SwarmFactory, mounter ops.Mounter, ssh ops.SSHDeployer, rt runtime.Info, opts ...LeaseOption) {
 	setup := leaseSetup{deps: leaseDeps(client, projectID, stateDir, swarm, mounter, ssh)}
 	// A warm clone of a repository on the Mate's HQ is held by a zcp process
 	// of its own, as LeaseDepsFor's (DP-32).
@@ -133,7 +132,7 @@ func RegisterLease(srv *mcp.Server, client platform.Client, projectID, stateDir 
 	for _, opt := range opts {
 		opt(&setup)
 	}
-	registerLease(srv, setup.deps, rt)
+	registerLease(srv, setup.deps, httpClient, rt)
 }
 
 // leaseSetup is what LeaseOptions configure: the lease operations' deps.
@@ -156,7 +155,7 @@ func WithLeaseBackground(spawn func(func())) LeaseOption {
 	}
 }
 
-func leaseHandoverStep(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, stateDir string, leases []ops.LeaseView) string {
+func leaseHandoverStep(ctx context.Context, ssh ops.SSHDeployer, httpClient ops.HTTPDoer, rt runtime.Info, stateDir string, leases []ops.LeaseView) string {
 	if !rt.MateEnabled || len(leases) == 0 {
 		return ""
 	}
@@ -165,16 +164,16 @@ func leaseHandoverStep(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info
 	if err != nil || target.Branch == "" || target.Branch == hqBase {
 		return "Step: unknown: the lease's change was not read."
 	}
-	hqc, linked := openHQ(http.DefaultClient, rt)
+	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return "Step: unknown: HQ was not read."
 	}
 	workcopy := descriptionCopy{name: lease.Alias, root: ops.LeaseWorkDir, branch: target.Branch, lease: true}
 	step, _ := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
-	return "Step: " + handoverStepWords(step) + "."
+	return "Step: " + step.Words() + "."
 }
 
-func acquireLease(ctx context.Context, deps ops.LeaseDeps, rt runtime.Info, input LeaseInput, envelope func(context.Context, ...ops.LeaseView) *workflow.StateEnvelope) (*mcp.CallToolResult, any, error) {
+func acquireLease(ctx context.Context, deps ops.LeaseDeps, httpClient ops.HTTPDoer, rt runtime.Info, input LeaseInput, envelope func(context.Context, ...ops.LeaseView) *workflow.StateEnvelope) (*mcp.CallToolResult, any, error) {
 	pools := input.Pools
 	switch {
 	case input.Pool != "" && pools != nil:
@@ -195,7 +194,7 @@ func acquireLease(ctx context.Context, deps ops.LeaseDeps, rt runtime.Info, inpu
 		// A live session sharing a lease can refuse its release (DP-35).
 		recordLeaseSessions(deps.StateDir, change.Leases)
 	}
-	next := joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired), leaseHandoverStep(ctx, deps.SSH, rt, deps.StateDir, change.Leases))
+	next := joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired), leaseHandoverStep(ctx, deps.SSH, httpClient, rt, deps.StateDir, change.Leases))
 	return jsonResult(leaseToolResult{
 		Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
 		// Stamp the dev servers this acquire read into the envelope (DP-30).
@@ -206,7 +205,7 @@ func acquireLease(ctx context.Context, deps ops.LeaseDeps, rt runtime.Info, inpu
 // registerLease is RegisterLease over deps leaseDeps wired. The warm policy's
 // creates and clones run in the background and outlive the call that started
 // them (DP-27, DP-32); tests set deps.Warm.Go to wait for them.
-func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
+func registerLease(srv *mcp.Server, deps ops.LeaseDeps, httpClient ops.HTTPDoer, rt runtime.Info) {
 	deps = leaseDepsIn(deps, rt)
 	client, projectID, stateDir, swarm := deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm
 	// An acquire that starts a lease's dev servers runs the public-access
@@ -250,7 +249,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
 		}
 		switch input.Action {
 		case leaseActionAcquire:
-			return acquireLease(ctx, deps, rt, input, envelope)
+			return acquireLease(ctx, deps, httpClient, rt, input, envelope)
 		case leaseActionStatus:
 			status, err := ops.LeaseStatus(ctx, deps, input.Pool)
 			if err != nil {

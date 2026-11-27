@@ -167,7 +167,7 @@ func editNext(copies []workflow.WhereCopy, missing []string) workflow.Plan {
 	for _, copy := range copies {
 		step := "work on a branch"
 		if copy.Step != nil {
-			step = workflow.EditStepWords(*copy.Step)
+			step = copy.Step.Words()
 		}
 		steps = append(steps, copy.Name+": "+step)
 	}

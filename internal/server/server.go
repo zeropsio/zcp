@@ -581,7 +581,7 @@ func (s *Server) registerTools() {
 	// Inside a Mate status reads the link's last state for each lease group's change (docs/spec-mate.md §10.10).
 	if s.rtInfo.InContainer {
 		leaseOpts := []tools.LeaseOption{tools.WithLeaseBackground(s.background.Go)}
-		tools.RegisterLease(s.server, s.client, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), s.mounter, s.sshDeployer, s.rtInfo,
+		tools.RegisterLease(s.server, s.client, httpClient, projectID, stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), s.mounter, s.sshDeployer, s.rtInfo,
 			leaseOpts...)
 	}
 

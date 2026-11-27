@@ -248,14 +248,44 @@ func TestPlanEdit_WHDescribe_DraftAtHead(t *testing.T) {
 	runEditCases(t, []editPlanCase{{name: "draft", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "describe change", Number: 7, Head: "head"}}})
 }
 
-// witness: internal/workflow/where.go | return EditStep{Action: "handed over", Head: change.Head, Number: change.Number} → return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
+// witness: internal/workflow/where.go | return EditStep{Action: EditHandedOver, Head: change.Head, Number: change.Number} → return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
 func TestPlanEdit_WHHanded_ReadyAtHead(t *testing.T) {
 	t.Parallel()
 	ready := true
 	runEditCases(t, []editPlanCase{{name: "ready", copies: []EditCopy{{Name: "pool-1", Ref: &topology.BranchRef{Head: "head", Published: true}}}, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, want: EditStep{Action: "handed over", Number: 7, Head: "head"}}})
 }
 
-// witness: internal/workflow/where.go | base += "step: " + worktree.Step.words() + "; " → base += ""
+// witness: internal/workflow/where.go | head = head[:7] → head = head[:8]
+func TestEditStep_WHStepWords_NamesStepAndShortCommit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		step   EditStep
+		want   []string
+		absent string
+	}{
+		{"copy", EditStep{Action: "push", Copy: "pool-2"}, []string{"push", "pool-2"}, ""},
+		{"unread", EditStep{Action: EditUnknown, Reason: "HQ was not read"}, []string{"unknown", "HQ was not read"}, ""},
+		{"short head", EditStep{Action: EditHandedOver, Head: "abcd", Number: 7}, []string{"handed over", "abcd", "#7"}, ""},
+		{"full head", EditStep{Action: EditHandedOver, Head: "abcdef0123456789", Number: 7}, []string{"handed over", "abcdef0", "#7"}, "abcdef01"},
+		{"acquire", EditStep{Action: "acquire"}, []string{"acquire"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.step.Words()
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("step = %q, want %q", got, want)
+				}
+			}
+			if tc.absent != "" && strings.Contains(got, tc.absent) {
+				t.Fatalf("step = %q, must not include %q", got, tc.absent)
+			}
+		})
+	}
+}
+
+// witness: internal/workflow/where.go | base += "step: " + worktree.Step.Words() + "; " → base += ""
 func TestWhere_WHEditLine_ShowsStepAndReview(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)

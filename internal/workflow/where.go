@@ -17,6 +17,9 @@ const WhereBudgetBytes = 1024
 // EditUnknown is a step whose inputs were not read.
 const EditUnknown = "unknown"
 
+// EditHandedOver is a step whose change is ready at the published head.
+const EditHandedOver = "handed over"
+
 // WhereFacts holds the facts read for a turn, including reasons for missed reads.
 type WhereFacts struct {
 	ReadAt    time.Time
@@ -123,24 +126,26 @@ func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
 	if !*change.Ready {
 		return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
 	}
-	return EditStep{Action: "handed over", Head: change.Head, Number: change.Number}
+	return EditStep{Action: EditHandedOver, Head: change.Head, Number: change.Number}
 }
 
-func (step EditStep) words() string {
+// Words names the action and, when relevant, the copy or change it concerns.
+func (step EditStep) Words() string {
 	if step.Action == EditUnknown {
 		return "unknown: " + step.Reason
 	}
-	if step.Action == "handed over" {
-		return fmt.Sprintf("handed over at %s (change #%d)", step.Head, step.Number)
+	if step.Action == EditHandedOver {
+		head := step.Head
+		if len(head) > 7 {
+			head = head[:7]
+		}
+		return fmt.Sprintf("handed over at %s (change #%d)", head, step.Number)
 	}
 	if step.Copy != "" {
 		return step.Action + " in " + step.Copy
 	}
 	return step.Action
 }
-
-// EditStepWords is the same step wording used by the turn's where line.
-func EditStepWords(step EditStep) string { return step.words() }
 
 // WhereStage is a stage's active version, or the reason it was not read.
 type WhereStage struct {
@@ -193,7 +198,7 @@ func RenderWhere(facts WhereFacts) string {
 	for _, change := range changes {
 		line := fmt.Sprintf("change #%d %s%s: no working copy", change.Number, change.Branch, whereLabels(change.Labels))
 		if facts.EditSteps {
-			line += "; step: " + PlanEdit(nil, nil, false).words()
+			line += "; step: " + PlanEdit(nil, nil, false).Words()
 		}
 		lines = append(lines, line)
 	}
@@ -272,7 +277,7 @@ func whereCopyLine(worktree WhereCopy, named bool, limit int) string {
 	}
 	base := fmt.Sprintf("%s: ", name)
 	if worktree.Step != nil {
-		base += "step: " + worktree.Step.words() + "; "
+		base += "step: " + worktree.Step.Words() + "; "
 	}
 	change := ""
 	if worktree.Branch != "main" && worktree.HasHQ {
