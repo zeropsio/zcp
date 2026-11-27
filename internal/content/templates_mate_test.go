@@ -46,14 +46,24 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 		texts = append(texts, struct{ name, body string }{atom.Name, atom.Content})
 	}
 
-	// Scan knowledge sources including playbooks and recipe companions. The
-	// store exposes only selected documents, while the source is the corpus.
+	// Scan knowledge authored here. Synced recipes, guides and decisions are
+	// owned upstream; mailpit is the one recipe authored in this checkout.
 	err = filepath.WalkDir("../knowledge", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() || (filepath.Ext(path) != ".md" && filepath.Ext(path) != ".yml" && filepath.Ext(path) != ".yaml") {
 			return nil
+		}
+		switch filepath.Dir(path) {
+		case filepath.Join("..", "knowledge", "guides"), filepath.Join("..", "knowledge", "decisions"):
+			if filepath.Ext(path) == ".md" {
+				return nil
+			}
+		case filepath.Join("..", "knowledge", "recipes"):
+			if filepath.Base(path) != "mailpit.md" && filepath.Base(path) != "mailpit.import.yml" {
+				return nil
+			}
 		}
 		body, readErr := os.ReadFile(path)
 		if readErr != nil {

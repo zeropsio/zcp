@@ -43,10 +43,12 @@ A formal deploy promotes the dev work to the stage service — a production-shap
 
 Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. After a stage deploy, `zerops_verify` the stage URL. If a deploy fails, redeploy through the same tool and follow its recovery guidance — don't reach around it.
 
-## Step 4 — narrate, then advance
+## Step 4 — narrate
 
 Hand the user **working software**, not a status dump. In a Mate, use the dev copy's **Preview** and its address; elsewhere, use the preview address chosen above:
 
-> "I built **[what it does, in their words]** — you can now **[concrete thing]** on **[your Preview in a Mate; your preview outside a Mate]** at **[its URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow. Next I'll add **[the next slice, in their words]** unless that is off."
+> "I built **[what it does, in their words]** — you can now **[concrete thing]** on **[your Preview in a Mate; your preview outside a Mate]** at **[its URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow."
+
+Outside a Mate, add: "Next I'll add **[the next slice, in their words]** unless that is off."
 
 A reaction ("others should log in", "make it public") maps to a seam you built cheap to change (`phases/slices.md` codebase-design) → flip it, reload, re-narrate; update the PRD's inferred-assumptions if a veto changed a one-way call. In a Mate, end the turn after handing over the described change. Elsewhere, advance to the next slice (phase 4); read `zerops_workflow action="status"` to confirm where things stand.
