@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -18,14 +19,16 @@ import (
 func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		scope      string
-		activeHere bool
-		wantError  bool
+		name        string
+		scope       string
+		activeHere  bool
+		foreignLive bool
+		wantError   bool
 	}{
-		{"other conversation's interrupted bootstrap", "dev", false, false},
-		{"own active bootstrap and edit", "dev", true, false},
-		{"own active bootstrap and deploy", "stage", true, true},
+		{"other conversation's interrupted bootstrap", "dev", false, false, false},
+		{"other conversation's live bootstrap", "dev", false, true, false},
+		{"own active bootstrap and edit", "dev", true, false, false},
+		{"own active bootstrap and deploy", "stage", true, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,14 +41,19 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 				t.Fatalf("write pair: %v", err)
 			}
 			engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			var original *workflow.Engine
 			id := "interrupted"
-			if tt.activeHere {
+			switch {
+			case tt.activeHere:
 				started, err := engine.BootstrapStartWithRoute("project", "bootstrap", workflow.BootstrapRouteClassic, "")
 				if err != nil {
 					t.Fatalf("start bootstrap: %v", err)
 				}
 				id = started.SessionID
-			} else {
+			case tt.foreignLive:
+				original, id = liveBootstrapForEdit(t, dir)
+				engine = workflow.NewEngine(dir, workflow.EnvContainer, nil)
+			default:
 				state := &workflow.WorkflowState{SessionID: id, ProjectID: "project", Workflow: workflow.WorkflowBootstrap, Bootstrap: &workflow.BootstrapState{Active: true, Steps: []workflow.BootstrapStep{{Name: "discover", Status: "in_progress"}}}}
 				if err := workflow.SaveSessionState(dir, id, state); err != nil {
 					t.Fatalf("save interrupted bootstrap: %v", err)
@@ -80,11 +88,27 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 			if !tt.wantError && !strings.Contains(extractText(result), "develop-edit") {
 				t.Fatalf("edit briefing = %q", extractText(result))
 			}
+			if tt.foreignLive {
+				status, _, err := handleWorkflowAction(context.Background(), "project", engine, client, nil, nil, nil, WorkflowInput{Action: "status"}, dir, "", nil, nil, rt, "", nil)
+				if err != nil || status == nil || status.IsError {
+					t.Fatalf("edit status = %#v, %v", status, err)
+				}
+				text := extractText(status)
+				envelope, ok := workflow.ExtractEnvelope(text)
+				if !ok || envelope.Phase != workflow.PhaseIdle || !slices.ContainsFunc(envelope.Services, func(s workflow.ServiceSnapshot) bool { return s.Hostname == "dev" }) || strings.Contains(text, id) {
+					t.Fatalf("edit status belongs to other bootstrap: %q", text)
+				}
+			}
 			after, err := workflow.LoadSessionByID(dir, id)
 			if err != nil || !reflect.DeepEqual(before, after) {
 				t.Fatalf("bootstrap changed: before %#v, after %#v, error %v", before, after, err)
 			}
-			if !tt.activeHere {
+			if tt.foreignLive {
+				progress, err := original.BootstrapCompletePlan([]workflow.BootstrapTarget{{Runtime: workflow.RuntimeTarget{DevHostname: "newdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "newstage"}}}, nil, nil)
+				if err != nil || progress == nil || progress.Current == nil || progress.Current.Name != workflow.StepProvision {
+					t.Fatalf("continue original bootstrap = %#v, %v", progress, err)
+				}
+			} else if !tt.activeHere {
 				original := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 				if resumed, err := original.Resume(id); err != nil || resumed.Bootstrap == nil || !resumed.Bootstrap.Active {
 					t.Fatalf("resume original bootstrap = %#v, %v", resumed, err)
@@ -96,6 +120,37 @@ func TestDevelopStart_WD15_EditBeforeBootstrapGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func liveBootstrapForEdit(t *testing.T, dir string) (*workflow.Engine, string) {
+	t.Helper()
+	original := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	started, err := original.BootstrapStartWithRoute("project", "bootstrap", workflow.BootstrapRouteClassic, "")
+	if err != nil {
+		t.Fatalf("start other bootstrap: %v", err)
+	}
+	id := started.SessionID
+	// The parent is a live, different PID; both engines run in this test
+	// process while the registry models the two server processes.
+	otherPID := os.Getppid()
+	if !workflow.ProcessAlive(otherPID, "") {
+		t.Fatalf("other PID %d is not live", otherPID)
+	}
+	state, err := workflow.LoadSessionByID(dir, id)
+	if err != nil {
+		t.Fatalf("load other bootstrap: %v", err)
+	}
+	state.PID, state.StartTime = otherPID, ""
+	if err := workflow.SaveSessionState(dir, id, state); err != nil {
+		t.Fatalf("save other bootstrap: %v", err)
+	}
+	if err := workflow.UnregisterSession(dir, id); err != nil {
+		t.Fatalf("unregister bootstrap: %v", err)
+	}
+	if err := workflow.RegisterSession(dir, workflow.SessionEntry{SessionID: id, PID: otherPID, Workflow: workflow.WorkflowBootstrap, ProjectID: "project"}); err != nil {
+		t.Fatalf("register live bootstrap: %v", err)
+	}
+	return original, id
 }
 
 // witness: internal/tools/workflow_develop.go | if service.DevIsPool { → if false && service.DevIsPool {
