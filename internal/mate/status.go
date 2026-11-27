@@ -10,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // The status file is how zcp tells the mate server what a new Mate's stand-up
@@ -61,6 +62,35 @@ type Status struct {
 	Version   int           `json:"version"`
 	UpdatedAt string        `json:"updatedAt"`
 	Standup   StandupStatus `json:"standup"`
+	Copies    *CopyStatus   `json:"copies,omitempty"`
+}
+
+// CopyStatus is the Mate-wide last observation of its working copies. A nil
+// list has not been read; a non-nil empty list was read and has no entries.
+type CopyStatus struct {
+	Leases      []LeaseCopyStatus `json:"leases"`
+	DevServices []DevCopyStatus   `json:"devServices"`
+}
+
+// LeaseCopyStatus identifies a lease without its credential.
+type LeaseCopyStatus struct {
+	Alias             string                     `json:"alias"`
+	Pool              string                     `json:"pool"`
+	ContainerHostname string                     `json:"containerHostname"`
+	Branch            string                     `json:"branch"`
+	Repo              string                     `json:"repo,omitempty"`
+	AcquiredAt        string                     `json:"acquiredAt"`
+	DevServers        *[]topology.DevServerState `json:"devServers,omitempty"`
+	DevServersReadAt  string                     `json:"devServersReadAt,omitempty"`
+}
+
+// DevCopyStatus is a classic dev half and its last observed checkout.
+type DevCopyStatus struct {
+	Hostname         string                     `json:"hostname"`
+	Branch           *string                    `json:"branch,omitempty"`
+	BranchReadAt     string                     `json:"branchReadAt,omitempty"`
+	DevServers       *[]topology.DevServerState `json:"devServers,omitempty"`
+	DevServersReadAt string                     `json:"devServersReadAt,omitempty"`
 }
 
 // StandupStatus is the stand-up's section.
@@ -241,18 +271,28 @@ func ReadStatus(path string) (Status, error) {
 // version, the time and the empty-section defaults are set here, so a writer
 // touches only what it owns.
 func UpdateStatus(path string, change func(*Status)) error {
+	return UpdateStatusChecked(path, func(s *Status) error {
+		change(s)
+		return nil
+	})
+}
+
+// UpdateStatusChecked leaves the file unchanged when reading an owned source fails.
+func UpdateStatusChecked(path string, change func(*Status) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("status file: mkdir %s: %w", dir, err)
 	}
 	unlock, err := lockStatus(path + ".lock")
 	if err != nil {
-		return err
+		return fmt.Errorf("status file: lock: %w", err)
 	}
 	defer unlock()
 
 	current, _ := ReadStatus(path)
-	change(&current)
+	if err := change(&current); err != nil {
+		return fmt.Errorf("status file: update: %w", err)
+	}
 	normalizeStatus(&current)
 
 	body, err := json.MarshalIndent(current, "", "  ")

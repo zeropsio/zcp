@@ -1093,6 +1093,7 @@ func writeLeaseRecordLocked(stateDir string, rec leaseRecord) error {
 	if err := os.Rename(tmp.Name(), filepath.Join(dir, rec.alias()+".json")); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}
+	publishMateLeases(stateDir, "record")
 	return nil
 }
 
@@ -1520,6 +1521,7 @@ func dropLeaseRecord(stateDir string, rec leaseRecord, state, note string) (Leas
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return LeaseView{}, fmt.Errorf("remove lease record %s: %w", rec.alias(), err)
 	}
+	publishMateLeases(stateDir, "release")
 	v.Note = note
 	return v, nil
 }

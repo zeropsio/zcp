@@ -136,6 +136,23 @@ stream. It never reads `.zcp/state` and never calls the Zerops API for lifecycle
 work the envelope has to survive the trip from the MCP handler, through the provider CLI, to
 the mate server's reducer.
 
+### 1.0a Mate copy observations
+
+The file named by `ZCP_STATUS_FILE` carries a `copies` section independent of tool results. It is
+replaced whole under the file lock; other sections survive. The section is absent until read, and
+contains `leases` and `devServices`: null means that list is unread, an empty array means read and
+none. A lease entry carries
+`alias`, `pool`, `containerHostname`, `branch`, `repo` and `acquiredAt` from zcp's lease record.
+A classic dev-half entry carries `hostname`, its checked-out `branch` and `branchReadAt` when
+read. Each entry may carry `devServers` and `devServersReadAt`: the same server entries as the
+envelope, with the time of that observation; an absent array means unread, an empty one means
+read and none. Lease credentials never enter the file.
+
+The section records the last observation, not current liveness or authority to reach a copy.
+The Mate reads current liveness with `zcp where` when it draws. A reader replaces each set when
+its array is present, keeps its prior set for null, and ignores an absent section. The additive
+section does not change the envelope or require a version gate.
+
 ### 1.0 Two carriers, one reducer
 
 The envelope always travels **inside the result text**, as verbatim JSON. Which of two
@@ -757,7 +774,7 @@ Every launch adds six more on top (`mate.LaunchEnvLines`), whatever init wrote:
 | `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
 | `ZCP_MATE_UPDATE_STATE_FILE` | the automatic-update coordinator state (`mate.UpdateStatePath`) |
 | `ZCP_MATE_BOOT_FILE` | the file a booting server reports its progress in until it accepts commands (`mate.BootFilePath`, §2.1d) |
-| `ZCP_STATUS_FILE` | the status file a new Mate's setup is read from (`mate.DefaultStatusFilePath`) |
+| `ZCP_STATUS_FILE` | zcp's status file, carrying setup and copy observations (§1.0a) |
 | `ZCP_MATE_STATE_FILE` | the file the server keeps the Mate's state in (`hq.MateStatePath`) |
 
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
@@ -1987,7 +2004,7 @@ record (§6.3), never a field here:
 | `alias` | `<pool>-<number>`, the name the lease is addressed by (`zerops_lease`, `zerops_verify`, `zerops_dev_server`, the SSH alias, the mount `/var/www/<pool>-<number>`) |
 | `pool`, `branch` | the pool service's hostname; the branch checked out in the leased container |
 | `containerHostname` | the container's own hostname (`node-id-<n>.runtime.<pool>.zerops`) |
-| `devServers`, `devServersReadAt` | the lease's dev servers — the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain — **only on a call that read the lease's supervisor, with `devServersReadAt`** (RFC 3339, UTC, the time of that read): an acquire (it starts each lease's supervisor and reads it, `spec-workflows.md` §8 DP-30) and `zerops_dev_server` on the alias. zcp keeps no last-known read — its lease record holds nothing that changes after the acquire — so every other envelope leaves both out, and absent means "not read in this call", never "none": the client keeps the last read it was told while the lease is held (Mate keeps a lease's last read when the field is absent, and replaces it when present). `devServers: []` is a read that found none, stamped with the envelope's time since it carries no read time of its own, so it replaces a stamped last read (`TestWithParts_LeaseDevServers`) |
+| `devServers`, `devServersReadAt` | the lease's dev servers — the same `DevServerState` entries a dev service's `devServers[]` carries, the preview server's `url` being the pool's per-port subdomain — **only on a call that read the lease's supervisor, with `devServersReadAt`** (RFC 3339, UTC, the time of that read): an acquire (it starts each lease's supervisor and reads it, `spec-workflows.md` §8 DP-30) and `zerops_dev_server` on the alias. the lease record holds nothing that changes after the acquire; the separate status section holds the last observation (§1.0a), while every other envelope leaves both out, and absent means "not read in this call", never "none": the client keeps the last read it was told while the lease is held (Mate keeps a lease's last read when the field is absent, and replaces it when present). `devServers: []` is a read that found none, stamped with the envelope's time since it carries no read time of its own, so it replaces a stamped last read (`TestWithParts_LeaseDevServers`) |
 | `part`, `stage` | the part the lease's pool serves — its dev server's name (the one named after the pair's stage setup when it runs several), else the pool-keyed pair's stage setup — and the stage hostname that pool's pair pairs with (`spec-workflows.md` §13 PM-10); each absent where zcp knows neither, e.g. a pool no pair keys and none of whose dev servers it has read. A client names a workspace by its part ("Web → preview / stage") rather than its pool, alias or branch (`TestWithParts_LeasesAndStagesNameTheirPart`, fixture `envelope.pool-pair.json`) |
 | `state` | the reconciled state, verbatim (`held`, `lost`, `unknown-holder`, `unmounted`, `parked`, …) — the one `zerops_lease action=status` reports (`spec-workflows.md` §8 DP-2), never enumerated by a reader. `parked` is a lease that is still held whose container is stopped and kept (`spec-workflows.md` §8 DP-28): a client keeps it bound, as it keeps a `held` one (`TestLeaseTool_ParkThenUnpark_StateRidesResultAndEnvelope`). Whose a container is comes from the orchestrator's renew of the record's own lease (`spec-workflows.md` §8 DP-2): a lease whose container is no longer its reservation — gone, being deleted, free, or reserved by another holder since the lease ended outside zcp — is `lost`; one another holder took read `held` before zcp asked the orchestrator and reads `lost` now, and a lease stopped or started outside zcp stays `parked`/`held`. No state was added (`TestLeaseTool_Ownership_LeaseAnotherHolderTook_LostThenDropped`, `TestLeaseTool_Ownership_StoppedOutsideZcp_StaysParked`) |
 | `unverified` | `true` when the state is zcp's own last-known record because the pool's orchestrator did not answer — per pool: a stopped pool marks only its own leases, the others stay confirmed (`TestLeaseTool_Status_OneStoppedPool_OthersStillListed`) — or when the pool's listing answered but the renew of that lease did not (`spec-workflows.md` §8 DP-2): the state is then the listing's (`held`, `parked`, `unmounted`), never `lost`, so a client keeps the lease bound as that state says, and nothing is read from it (`TestLeaseTool_Ownership_RenewFails_UnverifiedNeverRead`) |

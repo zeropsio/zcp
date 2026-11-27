@@ -8,6 +8,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -152,10 +153,11 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 		// lease's — maybe another holder's — or that the orchestrator does not
 		// answer about is never reached over ssh, nor a supervisor started in
 		// it. Nothing answers on a parked one (DP-28).
-		switch lease, isLease, err := checkedLeaseOf(ctx, stateDir, vouch, input.Hostname, "reached by zerops_dev_server"); {
-		case err != nil:
+		lease, isLease, err := checkedLeaseOf(ctx, stateDir, vouch, input.Hostname, "reached by zerops_dev_server")
+		if err != nil {
 			return convertError(err), nil, nil
-		case isLease && lease.Parked:
+		}
+		if isLease && lease.Parked {
 			return convertError(ops.LeaseParkedError(lease, "zerops_dev_server")), nil, nil
 		}
 		params.Root = supervisorRoot(stateDir, input.Hostname)
@@ -219,8 +221,17 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			}
 		}
 		var states []topology.DevServerState
-		if d.CarriesParts || result.Pool != "" {
+		if d.CarriesParts || result.Pool != "" || d.RtInfo.MateEnabled {
 			states = ops.DevServerStates(ctx, client, projectID, result)
+		}
+		if d.RtInfo.MateEnabled && result.Read != nil {
+			if isLease {
+				if err := ops.StoreMateLeaseServers(stateDir, mate.StatusFilePath(), lease, states, result.Read.ReadAt); err != nil {
+					logMateCopyError("publish lease servers", err)
+				}
+			} else if err := storeClassicServers(stateDir, mate.StatusFilePath(), input.Hostname, states, result.Read.ReadAt); err != nil {
+				logMateCopyError("publish dev servers", err)
+			}
 		}
 		if d.CarriesParts {
 			// A status of a lease read its checkout: leases[] carries what

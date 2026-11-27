@@ -259,6 +259,7 @@ func mateLaunchSetup() {
 	}
 	env := func() func(string) string { return mate.LiveLookup(store) }
 	go keepMateDevGit(env)
+	go keepMateCopies(env, path)
 	standupDone := make(chan struct{}, 1)
 	go keepMateReviewBuild(env, standupDone)
 	if run := standupFirstLook(env, path); run != nil {
@@ -267,6 +268,16 @@ func mateLaunchSetup() {
 			standupDone <- struct{}{}
 		}()
 	}
+}
+
+// keepMateCopies isolates the copy observer from the supervised Mate server.
+func keepMateCopies(env func() func(string) string, statusPath string) {
+	defer func() {
+		if recover() != nil {
+			logMate("copy observer stopped unexpectedly")
+		}
+	}()
+	tools.KeepMateCopies(context.Background(), env, statusPath, logMate)
 }
 
 // keepMateReviewBuild runs the independent state observer again if it stops

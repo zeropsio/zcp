@@ -1,5 +1,8 @@
 # Lease and pool decisions (`lease_ownership.go`, `lease_group.go`, `lease_park.go`, `pool_preview_ports.go`, `lease_warm_clone.go`)
 
+- LP-MATE-ACQUIRE — A lease record adds its alias and branch to the Mate status file without exposing its credential, while retaining the other held leases.
+- LP-MATE-RELEASE — Dropping a lease record replaces the Mate's lease set without the released lease and retains the other held leases.
+
 - LP-RETAKEN — A lease the orchestrator answers unknown-lease for while it lists the container reserved is another holder's, lost, never ours.
 - LP-STOPPED — A lease whose container the orchestrator renews while stopping or starting it (a park, an unpark) stays ours.
 - LP-UNVERIFIED — A renew the orchestrator did not answer (any error that is not unknown-lease or container-not-found) is unverified: neither ours nor lost, so nothing reaches the container and its record stays.

@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/devsup"
+	"github.com/zeropsio/zcp/internal/mate"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -158,7 +161,13 @@ func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord, subdo
 		return nil
 	}
 	ds.Service = rec.PoolHostname
-	return DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds, subdomainOn: subdomainOn})
+	servers := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds, subdomainOn: subdomainOn})
+	if runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		if err := StoreMateLeaseServers(d.StateDir, mate.StatusFilePath(), rec.targetInfo(), servers, ds.ReadAt); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcp] publish lease servers: %v\n", err)
+		}
+	}
+	return servers
 }
 
 // leaseCheckoutRead is what an acquire reads in the container after its

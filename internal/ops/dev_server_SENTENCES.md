@@ -1,5 +1,7 @@
 # Dev-server answers (`dev_server.go`, `dev_server_supervisor.go`)
 
+- DS-MATE-WAIT — When the supervisor's bounded wait answers that a starting dev server is running, the Mate status file records that answer at its observation time.
+
 - DS-WAIT-BOUND — How long a call waits is decided once: a start or restart 15 s unless asked, a status not at all unless asked, at most 300 s where the supervisor lists `wait` and does the waiting, and without it a start at most 45 s by zcp's own probe and a status never. Breaks: a status blocks a turn nobody asked it to, or an older supervisor is sent a verb its ctl fails on.
 - DS-WAIT-ANSWER — A call whose supervisor did the waiting answers what the supervisor reports when its wait ends: running with its address, crashed with its exit and log, or still starting with the call that waits again. Breaks: a server that crashed during the wait is answered as still starting, or a compiling one as a failed start.
 - DS-ACTION-NO-SUP — After the initial supervisor read succeeds, a waited status that loses the supervisor on both its wait and fallback read answers no_supervisor; a missing-supervisor error from start, restart, stop or logs stays an error for that action's caller. Breaks: a start gets a result asking it to start again instead of the error its recovery uses.

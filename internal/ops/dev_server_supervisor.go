@@ -170,6 +170,10 @@ func readDevServersCmd(root string) string {
 // supervisor does not answer in time *SupervisorUnresponsiveError; its
 // declaration is read all the same.
 func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string) (*DevServers, error) {
+	return readDevServers(ctx, ssh, hostname, root, time.Now)
+}
+
+func readDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string, now func() time.Time) (*DevServers, error) {
 	readCtx, cancel := context.WithTimeout(ctx, devsupCtlTimeout)
 	defer cancel()
 	out, err := ssh.ExecSSH(readCtx, hostname, readDevServersCmd(root))
@@ -188,7 +192,7 @@ func ReadDevServers(ctx context.Context, ssh SSHDeployer, hostname, root string)
 	if err != nil {
 		return nil, fmt.Errorf("read dev servers on %s: %w", hostname, err)
 	}
-	ds := &DevServers{Hostname: hostname, ReadAt: time.Now().UTC()}
+	ds := &DevServers{Hostname: hostname, ReadAt: now().UTC()}
 	if decl, ok := sections["declaration"]; ok && decl.code == 0 {
 		ds.DeclarationExists = true
 		ds.DeclaredVersion = declarationVersion(decl.body)
