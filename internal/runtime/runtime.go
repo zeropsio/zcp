@@ -15,6 +15,13 @@ type Info struct {
 	ServiceID   string // Zerops service ID (only in container)
 	ProjectID   string // Zerops project ID (only in container)
 
+	// StateDir is where zcp keeps the project's records in a container:
+	// ContainerStateDir, whatever directory the agent started zcp in, so
+	// every zcp of the container reads one set of records
+	// (docs/spec-mate.md §6.3). "" outside a container, where the records
+	// belong to the directory the session opens in.
+	StateDir string
+
 	// SubdomainOrigin is the origin of this container's own zerops.app
 	// subdomain — scheme and host of the Zerops-injected zeropsSubdomain
 	// (https://zcp-1df2-8080.prg1.zerops.app) — where Mate's container
@@ -84,6 +91,10 @@ type HQLink struct {
 	StatePath              string
 }
 
+// ContainerStateDir is the one state directory of a zcp container: .zcp/state
+// of the /var/www workspace every agent of the container works from.
+const ContainerStateDir = "/var/www/.zcp/state"
+
 // Detect reads Zerops container env vars and returns runtime info.
 // The serviceId env var is injected by Zerops into every container — its
 // presence is the definitive signal for container detection. The
@@ -106,6 +117,7 @@ func DetectFrom(getenv func(string) string) Info {
 		ServiceName:     getenv("hostname"),
 		ServiceID:       serviceID,
 		ProjectID:       getenv("projectId"),
+		StateDir:        ContainerStateDir,
 		SubdomainOrigin: urlOrigin(getenv("zeropsSubdomain")),
 		Authoring:       authoring,
 		MateEnabled:     mateEnabled,

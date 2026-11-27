@@ -175,7 +175,7 @@ func TestDetectFrom_ReadsOnlyTheGivenEnvironment(t *testing.T) {
 		{
 			name: "the container's environment",
 			env:  map[string]string{"serviceId": "svc1", "hostname": "zcp", "projectId": "proj1"},
-			want: Info{InContainer: true, ServiceName: "zcp", ServiceID: "svc1", ProjectID: "proj1"},
+			want: Info{InContainer: true, ServiceName: "zcp", ServiceID: "svc1", ProjectID: "proj1", StateDir: ContainerStateDir},
 		},
 		{
 			name: "no serviceId in it",

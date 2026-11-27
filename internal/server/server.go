@@ -134,14 +134,11 @@ func (s *Server) Stop() {
 func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 
-	// stateDir resolution mirrors registerTools(); kept local here so the
-	// MCP init payload can include a state hint without depending on tool
-	// registration. Empty stateDir (no cwd) yields empty hints — same
-	// degradation path as a project that has no .zcp state yet.
-	stateDir := ""
-	if cwd, err := os.Getwd(); err == nil {
-		stateDir = filepath.Join(cwd, ".zcp", "state")
-	}
+	// Resolved here as registerTools() resolves it, so the MCP init payload
+	// can include a state hint without depending on tool registration. Empty
+	// stateDir (no cwd) yields empty hints — same degradation path as a
+	// project that has no .zcp state yet.
+	stateDir := stateDirOf(rtInfo)
 
 	adoptionNote := ""
 	if !rtInfo.InContainer && stateDir != "" {
@@ -224,6 +221,17 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		})
 	}
 	return s
+}
+
+// stateDirOf is where this zcp keeps the project's records: the container's
+// one state directory in a container, whatever directory the agent started
+// zcp in — a crewmate works in its copy of the code — else .zcp/state under
+// the working directory.
+func stateDirOf(rt runtime.Info) string {
+	if rt.StateDir != "" {
+		return rt.StateDir
+	}
+	return stateDirFromCwd()
 }
 
 // stateDirFromCwd is the .zcp/state directory under the working directory,
@@ -339,7 +347,7 @@ func (s *Server) followRepos() mcp.Middleware {
 // registered; no write-capable client exists in org mode.
 func NewOrg(_ context.Context, org ops.OrgSource, store knowledge.Provider, rtInfo runtime.Info, tel telemetry.Emitter) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
-	stateDir := stateDirFromCwd()
+	stateDir := stateDirOf(rtInfo)
 	refreshAgentContext(stateDir, rtInfo, logger)
 
 	srv := mcp.NewServer(
@@ -407,13 +415,11 @@ func (s *Server) registerTools() {
 	// user actually deploys to. Empty host → CanonicalAPIHost via URLs.
 	schemaCache := s.schemaCache
 
-	// Workflow engine: state at .zcp/state/ relative to working directory.
-	var (
-		wfEngine *workflow.Engine
-		stateDir string
-	)
-	if cwd, err := os.Getwd(); err == nil {
-		stateDir = filepath.Join(cwd, ".zcp", "state")
+	// Workflow engine: state at stateDirOf — the container's, else .zcp/state/
+	// under the working directory.
+	var wfEngine *workflow.Engine
+	stateDir := stateDirOf(s.rtInfo)
+	if stateDir != "" {
 		wfEngine = s.newWorkflowEngine(stateDir)
 	}
 
