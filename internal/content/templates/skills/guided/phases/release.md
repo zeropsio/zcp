@@ -8,7 +8,9 @@ For experiment and real-but-lean tiers, there is no separate launch step.
 
 In a Mate, hand over the described change and point the person to the dev copy's Preview to try it. For a dev pool, give the lease Preview and the part's stage address as **Live while I work** and **Your app**, as "Words for the person" says. The Review build checks the described head on the stage; offer its address as a Review build only when it passed at the change's head, naming the head and time.
 
-Outside a Mate, each verified slice (phase 5) already runs on the dev runtime; that URL is the deliverable. Make it reachable: read the URL from `zerops_discover`, and if the runtime has no public subdomain yet, enable it with `zerops_subdomain` — never hand-author subdomain access into import YAML. Hand the user the URL as **their preview** — a copy for trying it, whose data is a test copy, not something to install or share for real use — let them react, and re-narrate per slice as the app grows. For a dev pool, use the two addresses as "Words for the person" says. When a milestone is worth a clean built-verification, promote to stage (phase 5) and hand over its URL as their preview instead.
+Outside a Mate with a dev pool, give the two addresses as "Words for the person" says.
+
+Outside a Mate without a dev pool, each verified slice (phase 5) already runs on the dev runtime; that URL is the deliverable. Make it reachable: read the URL from `zerops_discover`, and if the runtime has no public subdomain yet, enable it with `zerops_subdomain` — never hand-author subdomain access into import YAML. Hand the user the URL as **their preview** — a copy for trying it, whose data is a test copy, never "online" or "live" and nothing to install or share — let them react, and re-narrate per slice as the app grows. When a milestone is worth a clean built-verification, promote to stage (phase 5) and hand over its URL as their preview instead.
 
 Tripwire exception: if Align flagged a tripwire, do **NOT** auto-enable the public subdomain — surface the scoped harm-gate question first (`phases/align.md`) and proceed only within what the user confirms.
 

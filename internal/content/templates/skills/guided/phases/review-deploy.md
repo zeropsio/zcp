@@ -39,7 +39,7 @@ Work in the selected dev copy and try the work on its Preview. Commit and push, 
 
 ### Outside a Mate
 
-A formal deploy promotes the dev work to the stage service — a production-shaped build (build commands + health-check start, the way production will). Do it at a checkpoint, not per slice: a milestone worth a clean built-verification, before showing the user something durable (call its address their preview), before launch, or to prove the app builds from scratch (not just in the living dev runtime).
+A formal deploy promotes the dev work to the stage service — a production-shaped build (build commands + health-check start, the way production will). Do it at a checkpoint, not per slice: a milestone worth a clean built-verification, before showing the user something durable (outside a dev pool, call its address their preview), before launch, or to prove the app builds from scratch (not just in the living dev runtime).
 
 Deploy through `zerops_deploy` on the develop pipeline; the work session scopes it. After a stage deploy, `zerops_verify` the stage URL. If a deploy fails, redeploy through the same tool and follow its recovery guidance — don't reach around it.
 
