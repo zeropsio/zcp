@@ -108,7 +108,7 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 				}
 				parts[i].Part, parts[i].Setup, parts[i].Stage = binding.stage.Part, binding.stage.Setup, binding.stage.Stage
 			}()
-			parts[i] = reviewBuildStageWithLock(ctx, d, source, app+"/"+change.Repo, version, binding.ref, log, true)
+			parts[i] = reviewBuildStageWithLock(ctx, d, source, app+"/"+change.Repo, version, binding.ref)
 		})
 	}
 	wg.Wait()
@@ -125,7 +125,7 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 }
 
 // A caller holding all stage locks keeps them past this function, through HQ's decision.
-func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef, log func(string), locked bool) hq.ReviewBuildPart {
+func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef) hq.ReviewBuildPart {
 	part := hq.ReviewBuildPart{Part: stage.Hostname, Setup: stage.SetupName, Stage: stage.Hostname}
 	unavailable := func(step string, err error) hq.ReviewBuildPart {
 		return reviewUnavailablePart(part, step, err)
@@ -160,17 +160,6 @@ func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.Depl
 	}
 	if parsed, parseErr := url.Parse(publicURL); parseErr == nil && parsed.Hostname() != "" {
 		part.Stage = parsed.Hostname()
-	}
-	if !locked {
-		release, lockErr := ops.LockStageUntil(ctx, d.stateDir, svc.ID, func() {
-			if log != nil {
-				log(fmt.Sprintf("Review build %s: waiting for the stage %s", repository, part.Stage))
-			}
-		})
-		if lockErr != nil {
-			return unavailable("lock stage", lockErr)
-		}
-		defer release()
 	}
 	svc, found, err := reviewReadStageVersion(ctx, d, svc.ID, head)
 	if err != nil {

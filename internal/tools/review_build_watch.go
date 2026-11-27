@@ -207,7 +207,7 @@ func (o *reviewObserver) considerMain(ctx context.Context, key reviewKey, repo h
 			attempt.next, attempt.tries = time.Time{}, 0
 		}
 	}
-	if !reviewMainNext(repo, false) {
+	if !reviewMainNext(repo) {
 		return
 	}
 	main := *repo.MainHead

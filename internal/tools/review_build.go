@@ -42,8 +42,8 @@ func reviewNext(c hq.MateChange, running bool) reviewAction {
 }
 
 // reviewMainNext follows main only while no change in the repository is adding.
-func reviewMainNext(repo hq.MateRepo, running bool) bool {
-	return !running && !repo.Adding && repo.MainHead != nil && *repo.MainHead != ""
+func reviewMainNext(repo hq.MateRepo) bool {
+	return !repo.Adding && repo.MainHead != nil && *repo.MainHead != ""
 }
 
 // reviewStages reads the same per-pair setup records the stand-up writes.

@@ -23,8 +23,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, stage topology.StageRef, log func(string)) hq.ReviewBuildPart {
-	return reviewBuildStageWithLock(ctx, d, source, "app/code", "abcdef", stage, log, false)
+func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, stage topology.StageRef) hq.ReviewBuildPart {
+	return reviewBuildStageWithLock(ctx, d, source, "app/code", "abcdef", stage)
 }
 
 // witness: internal/tools/review_build.go | c.State == hq.ChangeAdding → c.State != hq.ChangeAdding
@@ -115,7 +115,7 @@ func TestReviewVersion_RBNeeded_InactiveVersion_BuildsAgain(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}}).
 		WithProcess(&platform.Process{ID: "build-av-stage-zcp abcdef", Status: "FINISHED"})
 	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-	part := reviewBuildStage(context.Background(), d, reviewTestSource{}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{}, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 	if part.AppVersionID != "av-stage-zcp abcdef" || part.Outcome != "unavailable" || !strings.Contains(part.Reason, "was not returned") {
 		t.Fatalf("absent version: %+v", part)
 	}
@@ -143,7 +143,7 @@ func TestReviewStage_RBCut_InterruptedUpload_CleansBeforeBuild(t *testing.T) {
 				client.WithError("DeleteAppVersion", tc.deleteErr)
 			}
 			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, reviewTestSource{}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(context.Background(), d, reviewTestSource{}, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 			if part.Outcome != "unavailable" || part.AppVersionID != tc.version || !strings.Contains(part.Reason, tc.reason) {
 				t.Fatalf("cut upload: %+v", part)
 			}
@@ -281,7 +281,7 @@ func TestReviewStage_RBCurrent_ActiveVersion_ProbesWithoutRebuilding(t *testing.
 				httpClient: checkLogDoer(func(*http.Request) (*http.Response, error) {
 					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 				})}
-			part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: "zerops:\n  - setup: api\n    run:\n      base: static\n"}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: "zerops:\n  - setup: api\n    run:\n      base: static\n"}, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 			if part.Outcome != "ok" || part.AppVersionID != "version" || part.Stage != tc.stage || (part.Probe != nil) != tc.probe {
 				t.Fatalf("%s: result %+v", tc.name, part)
 			}
@@ -296,55 +296,81 @@ func TestReviewStage_RBName_SearchLag_DoesNotBuildAgain(t *testing.T) {
 	client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
 		WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "BACKUP"}})
 	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: errors.New("a duplicate build was started")}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: errors.New("a duplicate build was started")}, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 	if part.Outcome != "unavailable" || !strings.Contains(part.Reason, "version is not yet in the name search") {
 		t.Fatalf("missing name: %+v", part)
 	}
 }
 
-// witness: internal/ops/stage_lock.go | release, err := lockKey(ctx, path, "stage", onWait) → release, err := lockKey(ctx, path, "stage", nil)
+// witness: internal/tools/review_build_take.go | ops.LockStageUntil(ctx, d.stateDir, stage.id, func() { → ops.LockStageUntil(ctx, d.stateDir, stage.id+"-other", func() {
 func TestReviewStage_RBWait_HeldStage_WaitsForItsDeadline(t *testing.T) {
 	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		dir := t.TempDir()
-		release, err := ops.LockStage(context.Background(), dir, "stage")
-		if err != nil {
-			t.Fatal(err)
-		}
-		svc := platform.ServiceStack{ID: "stage", Name: "apistage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "version"}}
-		client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
-			WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "ACTIVE"}}).
-			WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "FINISHED")})
-		d := devGitDeps{client: client, stateDir: dir, rt: runtime.Info{ProjectID: "project"}}
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-		defer cancel()
-		waiting := make(chan string, 1)
-		result := make(chan hq.ReviewBuildPart, 1)
-		go func() {
-			result <- reviewBuildStage(ctx, d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, func(line string) { waiting <- line })
-		}()
-		synctest.Wait()
-		select {
-		case line := <-waiting:
-			if line != "Review build app/code: waiting for the stage apistage" {
-				t.Fatalf("waiting message = %q", line)
-			}
-		default:
-			t.Fatal("no waiting message")
-		}
-		time.Sleep(6 * time.Minute)
-		synctest.Wait()
-		select {
-		case part := <-result:
-			t.Fatalf("returned while stage held: %+v", part)
-		default:
-		}
-		release()
-		part := <-result
-		if part.Outcome != "ok" || part.AppVersionID != "version" {
-			t.Fatalf("released stage: %+v", part)
-		}
-	})
+	for _, tc := range []struct {
+		name     string
+		released bool
+	}{
+		{"stage released", true},
+		{"deadline reached", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				dir := t.TempDir()
+				release, err := ops.LockStage(context.Background(), dir, "stage")
+				if err != nil {
+					t.Fatal(err)
+				}
+				held := true
+				defer func() {
+					if held {
+						release()
+					}
+				}()
+				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+				defer cancel()
+				waiting := make(chan string, 1)
+				type lockResult struct {
+					release func()
+					err     error
+				}
+				result := make(chan lockResult, 1)
+				go func() {
+					unlock, err := reviewLockStages(ctx, devGitDeps{stateDir: dir}, []reviewBinding{{id: "stage", stage: hq.ReviewStage{Part: "apistage", Stage: "app.example.test"}}}, func(line string) { waiting <- line })
+					result <- lockResult{release: unlock, err: err}
+				}()
+				synctest.Wait()
+				select {
+				case line := <-waiting:
+					if !strings.Contains(line, "app.example.test") {
+						t.Fatalf("waiting message names the wrong stage: %q", line)
+					}
+				default:
+					t.Fatal("no waiting message")
+				}
+				select {
+				case got := <-result:
+					if got.release != nil {
+						got.release()
+					}
+					t.Fatalf("returned while stage held: %v", got.err)
+				default:
+				}
+				if tc.released {
+					release()
+					held = false
+				}
+				got := <-result
+				if tc.released {
+					if got.err != nil {
+						t.Fatalf("released stage: %v", got.err)
+					}
+					got.release()
+				} else if !errors.Is(got.err, context.DeadlineExceeded) {
+					t.Fatalf("held stage: got %v, want deadline exceeded", got.err)
+				}
+			})
+		})
+	}
 }
 
 // witness: internal/tools/review_build_run.go | if found.action == reviewJoin { → if found.action == reviewProbe {
@@ -367,7 +393,7 @@ func TestReviewStage_RBResume_HeadInFlight_WaitsForVersion(t *testing.T) {
 				WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "RUNNING")}).
 				WithProcess(&platform.Process{ID: "process", Status: "FINISHED"})
 			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(context.Background(), d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 			if part.Outcome != tc.outcome || part.Phase != tc.phase || part.AppVersionID != "version" {
 				t.Fatalf("joined private stage: %+v", part)
 			}
@@ -398,7 +424,7 @@ func TestReviewStage_RBFaillog_PublicFailure_ReportsLastBuildLine(t *testing.T) 
 				{Timestamp: "2026-11-27T12:00:01Z", Facility: "local0", Tag: "zbuilder@version", Message: "missing module"},
 			})
 			d := devGitDeps{client: client, logFetcher: fetcher, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(context.Background(), d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 			if part.Outcome != "failed" || part.Phase != "build" || part.AppVersionID != "version" || part.Stage != "apistage-1df2.prg1.zerops.app" || part.Reason != "build: missing module" {
 				t.Fatalf("public stage failure: %+v", part)
 			}
@@ -487,7 +513,7 @@ func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.
 				d := devGitDeps{client: client, stateDir: dir, rt: runtime.Info{ProjectID: "project"}}
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 				defer cancel()
-				part := reviewBuildStage(ctx, d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+				part := reviewBuildStage(ctx, d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 				if part.Outcome != "unavailable" || part.Phase != "" || part.Stage != "apistage-example.test" || !strings.HasPrefix(part.Reason, tc.step+": ") || tc.busyLock && !strings.Contains(part.Reason, "wait for stage lock") {
 					t.Fatalf("%s: got %+v", tc.step, part)
 				}
@@ -699,7 +725,7 @@ func TestReviewStage_RBSource_PublicVersion_ProbesBuiltHead(t *testing.T) {
 						}
 						return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 					})}
-				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, err: tc.err}, topology.StageRef{Hostname: "apistage", SetupName: "prod"}, nil)
+				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, err: tc.err}, topology.StageRef{Hostname: "apistage", SetupName: "prod"})
 				if part.Outcome != tc.outcome || part.AppVersionID != "version" {
 					t.Fatalf("got %+v, want outcome %s for version", part, tc.outcome)
 				}
@@ -736,23 +762,22 @@ func TestDescriptionEdit_RBDescribeHead_BindsWordsToCommit(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build.go | !repo.Adding && repo.MainHead != nil → repo.Adding && repo.MainHead != nil
-// witness: internal/tools/review_build_watch.go | attempt.completed = false → attempt.completed = true
+// witness: internal/tools/review_build_watch.go | if a.running || a.stopped || a.completed && a.next.IsZero() { → if a.stopped || a.completed && a.next.IsZero() {
 func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
 	t.Parallel()
 	main := "main-sha"
 	for _, tc := range []struct {
-		name            string
-		adding, running bool
-		head            *string
-		want            bool
+		name   string
+		adding bool
+		head   *string
+		want   bool
 	}{
-		{"idle", false, false, &main, true}, {"adding", true, false, &main, false},
-		{"already running", false, true, &main, false}, {"unborn", false, false, nil, false},
+		{"idle", false, &main, true}, {"adding", true, &main, false},
+		{"unborn", false, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := reviewMainNext(hq.MateRepo{Adding: tc.adding, MainHead: tc.head}, tc.running); got != tc.want {
+			if got := reviewMainNext(hq.MateRepo{Adding: tc.adding, MainHead: tc.head}); got != tc.want {
 				t.Fatalf("follow main = %t, want %t", got, tc.want)
 			}
 		})
@@ -761,26 +786,30 @@ func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
 	if found.action != reviewBuild {
 		t.Fatalf("lagging stage: %+v", found)
 	}
-	key := reviewKey{repo: "code"}
-	attempt := &reviewAttempt{head: main, main: main, completed: true}
-	calls := 0
-	observer := reviewObserver{
-		attempts: map[reviewKey]*reviewAttempt{key: attempt},
-		deps: func(context.Context) (devGitDeps, bool) {
-			calls++
-			return devGitDeps{}, false
-		},
-	}
-	repo := hq.MateRepo{Name: "code", MainHead: &main, Adding: true}
-	observer.considerMain(t.Context(), key, repo, "app")
-	if attempt.completed || calls != 0 {
-		t.Fatalf("adding: completed=%t, builds=%d", attempt.completed, calls)
-	}
-	repo.Adding = false
-	observer.considerMain(t.Context(), key, repo, "app")
-	if calls != 1 {
-		t.Fatalf("after declined candidate: main checked %d times, want 1", calls)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		key := reviewKey{repo: "code"}
+		attempt := &reviewAttempt{head: main, main: main, running: true}
+		observer := reviewObserver{
+			attempts: map[reviewKey]*reviewAttempt{key: attempt},
+			deps:     func(context.Context) (devGitDeps, bool) { return devGitDeps{}, false },
+		}
+		repo := hq.MateRepo{Name: "code", MainHead: &main}
+		observer.considerMain(t.Context(), key, repo, "app")
+		if !attempt.running || !attempt.next.IsZero() {
+			t.Fatalf("running main-follow started again: %+v", attempt)
+		}
+		attempt.running, attempt.completed = false, true
+		repo.Adding = true
+		observer.considerMain(t.Context(), key, repo, "app")
+		if attempt.completed || !attempt.next.IsZero() {
+			t.Fatalf("adding did not reset the completed attempt: %+v", attempt)
+		}
+		repo.Adding = false
+		observer.considerMain(t.Context(), key, repo, "app")
+		if attempt.next.IsZero() {
+			t.Fatalf("main was not reconsidered after adding: %+v", attempt)
+		}
+	})
 }
 
 // witness: internal/tools/review_build_take.go | recordReviewMain(statusPath, repo, main, part) → recordReviewMain(statusPath, repo, "", part)
@@ -932,7 +961,7 @@ func TestReviewStage_RBSetupFail_InvalidSetup_ReportsFailure(t *testing.T) {
 			t.Parallel()
 			client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}})
 			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(t.Context(), d, reviewTestSource{yaml: tc.body, err: tc.sourceErr}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			part := reviewBuildStage(t.Context(), d, reviewTestSource{yaml: tc.body, err: tc.sourceErr}, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 			if part.Outcome != "failed" || part.Phase != "build" || !strings.Contains(part.Reason, tc.reason) {
 				t.Fatalf("invalid setup result: %+v", part)
 			}
@@ -945,7 +974,7 @@ func TestReviewStage_RBConflict_MergeConflictError_ReportsFiles(t *testing.T) {
 	t.Parallel()
 	client := platform.NewMock().WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}})
 	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: &ops.MergeConflictError{Paths: []string{"src/order.go", "src/app.go"}}}, topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: &ops.MergeConflictError{Paths: []string{"src/order.go", "src/app.go"}}}, topology.StageRef{Hostname: "apistage", SetupName: "api"})
 	if part.Outcome != "failed" || part.Phase != "build" || !strings.Contains(part.Reason, "src/order.go") || !strings.Contains(part.Reason, "src/app.go") {
 		t.Fatalf("conflict result: %+v", part)
 	}

@@ -217,13 +217,13 @@ func executeReviewMain(ctx context.Context, d devGitDeps, hqc hq.Client, app, re
 		return true, fmt.Errorf("read current Mate state: HQ is not linked")
 	}
 	_, current := reviewCurrent(doc.Mate, repo, 0)
-	if current == nil || !reviewMainNext(*current, false) || *current.MainHead != main {
+	if current == nil || !reviewMainNext(*current) || *current.MainHead != main {
 		return false, nil
 	}
 	source := ops.NewHQDeploySource(d.httpClient, hqIdentity(d.rt))
 	startedStages = true
 	for _, binding := range bindings {
-		part := reviewBuildStageWithLock(ctx, d, source, app+"/"+repo, main, binding.ref, log, true)
+		part := reviewBuildStageWithLock(ctx, d, source, app+"/"+repo, main, binding.ref)
 		if err := recordReviewMain(statusPath, repo, main, part); err != nil {
 			unavailable = true
 			runErr = errors.Join(runErr, err)
