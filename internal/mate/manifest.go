@@ -68,7 +68,7 @@ const (
 	// on board writes the task (docs/spec-mate.md §6.11): an older Mate shows
 	// the call as a plain row and nobody can put the task on the board, so
 	// zcp refuses the proposal there (CarriesBoard). Set at mate's release.
-	BoardMateVersion = "0.16.340"
+	BoardMateVersion = "0.16.346"
 
 	// defaultManifestURL is GitHub's own "latest release" redirect for the
 	// fork's stable release asset. The fork's release workflow triggers only
