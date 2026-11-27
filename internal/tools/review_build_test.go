@@ -825,35 +825,56 @@ func TestReviewWatch_RBWatch_Ended_ContinuesReading(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build_run.go | path, _ := get["path"].(string) → path, _ := get["other"].(string)
+// witness: internal/tools/review_build_run.go | *s.path = path → *s.path = "/"
 func TestReviewHealth_RBHealth_Setup_UsesDeclaredPath(t *testing.T) {
 	t.Parallel()
-	body := `zerops:
-  - setup: base
-    deploy:
-      readinessCheck:
-        httpGet:
-          path: /ready
-  - setup: api
-    extends: base
-  - setup: web
-    run:
-      start: npm start
-`
-	for _, tc := range []struct{ setup, want string }{{"api", "/ready"}, {"web", ""}} {
-		got, err := reviewHealthPath(body, tc.setup)
-		if err != nil || got != tc.want {
-			t.Fatalf("%s: path %q, error %v; want %q", tc.setup, got, err, tc.want)
-		}
+	for _, tc := range []struct{ name, yaml, path string }{
+		{"declared", "zerops:\n  - setup: api\n    deploy:\n      readinessCheck:\n        httpGet:\n          path: /ready\n", "/ready"},
+		{"inherited", "zerops:\n  - setup: base\n    run:\n      healthCheck:\n        httpGet:\n          path: /health\n  - setup: api\n    extends: base\n", "/health"},
+		{"default", "zerops:\n  - setup: api\n    run:\n      base: static\n", "/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				const versionID = "av-stage-zcp abcdef"
+				svc := platform.ServiceStack{ID: "stage", Name: "apistage", ProjectID: "project", SubdomainAccess: true,
+					Ports: []platform.Port{{Port: 80, Scheme: "http"}}, ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: versionID}}
+				client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+					WithProject(&platform.Project{ID: "project", SubdomainHost: "example.test"}).
+					WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: versionID, Status: "ACTIVE"}}).
+					WithAppVersionEvents([]platform.AppVersionEvent{{ID: versionID, ServiceStackID: "stage", Name: "zcp previous"}}).
+					WithProcess(&platform.Process{ID: "build-" + versionID, Status: "FINISHED"})
+				wantURL := "https://apistage-example.test" + tc.path
+				d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"},
+					httpClient: checkLogDoer(func(req *http.Request) (*http.Response, error) {
+						if req.Method != http.MethodGet || req.URL.String() != wantURL {
+							t.Errorf("probe request: %s %s, want GET %s", req.Method, req.URL, wantURL)
+						}
+						return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+					})}
+				opens := 0
+				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, opens: &opens}, topology.StageRef{Hostname: "apistage", SetupName: "api"})
+				if part.Outcome != "ok" || part.AppVersionID != versionID || part.Probe == nil || part.Probe.URL != wantURL {
+					t.Fatalf("build and probe: %+v", part)
+				}
+				if opens != 1 {
+					t.Fatalf("source opened %d times, want once", opens)
+				}
+			})
+		})
 	}
 }
 
 type reviewTestSource struct {
-	yaml string
-	err  error
+	yaml  string
+	err   error
+	opens *int
 }
 
 func (s reviewTestSource) Open(_ context.Context, repository, commit string) (ops.CommitSource, error) {
+	if s.opens != nil {
+		*s.opens++
+	}
 	if s.err != nil {
 		return ops.CommitSource{}, s.err
 	}

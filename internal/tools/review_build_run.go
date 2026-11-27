@@ -186,7 +186,8 @@ func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.Depl
 	if public && !hasPort {
 		return unavailable("prepare readiness", fmt.Errorf("stage has no HTTP port"))
 	}
-	source = reviewReadySource{source: source, setup: stage.SetupName, port: port.Port, public: public}
+	path := ""
+	source = reviewReadySource{source: source, setup: stage.SetupName, port: port.Port, public: public, path: &path}
 	if found.action == reviewBuild {
 		res, deployErr := ops.CommitDeploy(ctx, d.client, source, ops.CommitDeployRequest{
 			ServiceID: svc.ID, Hostname: stage.Hostname, Setup: stage.SetupName, Repository: repository, Commit: head,
@@ -233,17 +234,14 @@ func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.Depl
 			return unavailable("read finished build", fmt.Errorf("version %s is %s", version.ID, version.Status))
 		}
 	}
-	path := ""
-	if public {
+	if public && path == "" {
+		// Only a build this call did not start (a current or joined version)
+		// still needs its setup's health path: the build's open recorded it.
 		opened, readErr := source.Open(ctx, repository, head)
 		if readErr != nil {
-			return unavailable("read health path", readErr)
+			return unavailable("read stage setup", readErr)
 		}
 		_ = opened.Archive.Close()
-		path, readErr = reviewHealthPath(opened.ZeropsYaml, stage.SetupName)
-		if readErr != nil {
-			return unavailable("read health path", readErr)
-		}
 	}
 	probe := ops.ProbeStage(ctx, d.client, d.httpClient, svc.ID, found.id, publicURL, path, public)
 	part.Outcome = probe.Outcome
@@ -401,30 +399,14 @@ func reviewWait(ctx context.Context, client platform.Client, process string) (st
 	}
 }
 
-func reviewHealthPath(body, setup string) (string, error) {
-	doc, err := ops.ParseZeropsYmlContent([]byte(body), "zerops.yaml")
-	if err != nil {
-		return "", fmt.Errorf("parse setup: %w", err)
-	}
-	entry := doc.FindEntry(setup)
-	if entry == nil {
-		return "", fmt.Errorf("setup %s is not in the version's zerops.yaml", setup)
-	}
-	check, _ := entry.Deploy.ReadinessCheck.(map[string]any)
-	if check == nil {
-		check, _ = entry.Run.HealthCheck.(map[string]any)
-	}
-	get, _ := check["httpGet"].(map[string]any)
-	path, _ := get["path"].(string)
-	return strings.TrimSpace(path), nil
-}
-
-// reviewReadySource changes only the build's setup, leaving its source tree intact.
+// reviewReadySource changes only the build's setup, leaving its source tree
+// intact, and records the health path that setup gives the stage's probe.
 type reviewReadySource struct {
 	source ops.DeploySource
 	setup  string
 	port   int
 	public bool
+	path   *string
 }
 
 type reviewSetupError struct{ err error }
@@ -441,11 +423,12 @@ func (s reviewReadySource) Open(ctx context.Context, repository, commit string) 
 		}
 		return ops.CommitSource{}, fmt.Errorf("open stage source: %w", err)
 	}
-	yaml, _, err := ops.ReviewStageSetup(opened.ZeropsYaml, s.setup, s.port, s.public)
+	yaml, path, err := ops.ReviewStageSetup(opened.ZeropsYaml, s.setup, s.port, s.public)
 	if err != nil {
 		_ = opened.Archive.Close()
 		return ops.CommitSource{}, &reviewSetupError{err: fmt.Errorf("prepare stage readiness: %w", err)}
 	}
+	*s.path = path
 	opened.ZeropsYaml = yaml
 	return opened, nil
 }
