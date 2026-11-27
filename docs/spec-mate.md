@@ -76,6 +76,18 @@ Every fact has one owner and one path to the client:
 | thread state                                           | mate server, `~/.t3`                                                                       | mate server                                                                                                         |
 | the agent's browser                                    | zcp, in the container                                                                      | the agent via `zerops_browser`; the user via the viewport stream relayed by the mate server (§5.6)                  |
 
+The seam names each fact by its scope:
+
+| Scope | Facts | Key and owner |
+|---|---|---|
+| Container (the Mate) | project, services, pairs, stages, pools, lease set, HQ link and zcp state | the Mate's container; zcp and the platform |
+| Copy (a lease or a classic dev half) | branch, working tree, head, dev servers and Preview address | lease alias and acquisition time, or dev hostname; Git and the supervisor |
+| Change | branch's change, head, description, readiness and Review build | application, repository and branch or change number; HQ |
+| Conversation | copy binding, turns, notices and open session | conversation id in the Mate, session id in zcp |
+| Process | no fact | none; a zcp process is a transport |
+
+No fact is keyed by a process or by the thread that carried it.
+
 Touchpoints between mate and zcp, closed list:
 
 - the envelope carried in tool results (§1);
