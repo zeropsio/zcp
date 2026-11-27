@@ -37,11 +37,12 @@ Reference by name, never paste the value. `zerops_env`/`zerops_discover` read en
 
 A standard pair's halves are `{name}dev` and `{name}stage` to the tools; those names, "dev/stage pair" and "promote to stage" stay in tool calls and never reach the person. What you tell the person:
 
-@outside-mate - The stage half is **your preview**: a copy of the app for trying the work, whose data is a test copy. Never call it "online", "live", "stage", "deployed to stage" or "dev and stage", and never suggest installing or sharing it — no "Add to Home Screen", no link to pass around.
+@outside-mate - The stage half is **your preview**: a copy of the app for trying the work, whose data is a test copy. Never call it "online", "live", "stage", "deployed to stage" or "dev and stage", and never suggest installing it or sharing it for real use.
 @in-mate - The dev copy's **Preview** is where the person tries the work. The Mate's stage half runs the **Review build**; offer its address as a Review build only when it passed at the change's head, naming that head and time. The application's **Stage** and production are separate environments.
 @outside-mate - The dev half is where you build; if you give its address, it is work in progress, a preview too, never the app.
 @in-mate - The dev copy is work in progress, not the app; its Preview uses test data. Never suggest sharing or installing it for real use.
-- The real app is production. Until its first release there is none, so the preview is not yet what anyone uses — say so if they treat it as the app. Once production runs a release (in a Mate, the application's production the person released; elsewhere the project `launch-production` made), its address is the real app's: say so, and send them there for anything real — sharing, installing, real data.
+- For a part's dev pool, give **Live while I work** for the lease Preview (ends with the lease, including at merge) and **Your app** for the part's stage address, to bookmark and share for feedback. It shows the last deployed version, which may differ from live work or the merged version.
+- Production is for real use and real data. Until its first release, the test copy is not production. Once production runs a release (in a Mate, the application's production the person released; elsewhere the project `launch-production` made), send them to its address for real use and data.
 
 ## Workflow detail
 

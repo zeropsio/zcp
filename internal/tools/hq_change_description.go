@@ -244,7 +244,7 @@ func describedHandover(number int, head string, step workflow.EditStep, current 
 		}
 		message += build + "."
 		if poolLease {
-			message += ` For each user-facing part, tell the person both: "Live while I work: <lease Preview URL> (ends at merge or when the lease ends)" and "Your app: <the part's stage public address>" — the address to bookmark and share. The stage shows its last completed build; a successful Review build of a handover updates it, and another handover may replace it. After merge it keeps its last build until another build. Read the part's stage from zerops_workflow action="status" and its publicAccess.url or publicAccess.domains with zerops_discover service="<stage>". If a public address will become available at the first handover, say "Your app gets its address after the first handover"; if the stage is private or its address cannot be read, say so. If the lease has no Preview URL, say so.`
+			message += ` For each user-facing part, tell the person both: "Live while I work: <lease Preview URL> (ends at merge or when the lease ends)" and "Your app: <the part's stage public address>" — the address to bookmark and share. The stage shows the version last deployed there; a successful Review build of a handover can update it, and another handover may replace it. After merge it keeps that version until another deploy. Read the part's stage from zerops_workflow action="status" and its publicAccess.url or publicAccess.domains with zerops_discover service="<stage>". If a public address will become available at the first handover, say "Your app gets its address after the first handover"; if the stage is private or its address cannot be read, say so. If the lease has no Preview URL, say so.`
 		}
 		return message + " End your turn."
 	}

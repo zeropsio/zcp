@@ -61,10 +61,10 @@ its containers away from the app.
    user-facing part:
    - **Live while I work:** <lease Preview URL> (ends at merge or when the
      lease ends).
-   - **Your app:** <the part's stage public address> (shows the last completed
-     stage build; a successful Review build of a handover updates it).
+   - **Your app:** <the part's stage public address> (shows the version last
+     deployed there; a successful Review build of a handover can update it).
      This is the address to bookmark and share: it survives merge. After a
-     merge the stage keeps its last build until another build replaces it;
+     merge the stage keeps that version until another deploy replaces it;
      another handover can have put a different version there.
    Read the part's stage from `zerops_workflow action="status"` and its `publicAccess.url` or
    `publicAccess.domains` with `zerops_discover service="<stage>"`. If a public

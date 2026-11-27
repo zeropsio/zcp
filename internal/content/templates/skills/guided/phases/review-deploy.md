@@ -45,9 +45,9 @@ Deploy through `zerops_deploy` on the develop pipeline; the work session scopes 
 
 ## Step 4 — narrate
 
-Hand the user **working software**, not a status dump. In a Mate, use the dev copy's **Preview** and its address; elsewhere, use the preview address chosen above:
+Hand the user **working software**, not a status dump. In a Mate, use the dev copy's **Preview** and its address; for a dev pool, also give the part's stage address as **Your app**, and name the lease Preview **Live while I work**, as "Words for the person" says. Elsewhere, use the preview address chosen above and, for a dev pool, the same two labels:
 
-> "I built **[what it does, in their words]** — you can now **[concrete thing]** on **[your Preview in a Mate; your preview outside a Mate]** at **[its URL]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow."
+> "I built **[what it does, in their words]** — you can now **[concrete thing]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow."
 
 Outside a Mate, add: "Next I'll add **[the next slice, in their words]** unless that is off."
 
