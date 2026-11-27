@@ -209,7 +209,7 @@ func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.Mat
 					unavailable, err = true, fmt.Errorf("worker stopped: %v", r)
 				}
 			}()
-			return executeReviewBuild(ctx, d, hqc, app, change, metas, stages, take)
+			return executeReviewBuild(ctx, d, hqc, app, change, metas, stages, take, o.log)
 		}()
 		select {
 		case o.done <- reviewDone{key: key, head: *change.Head, updatedAt: updatedAt, unavailable: unavailable, err: runErr}:

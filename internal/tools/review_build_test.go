@@ -100,22 +100,22 @@ func TestReviewVersion_RBFlight_Restart_JoinsHead(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build.go | if activeVersion.id != "" { → if activeVersion.id == "" {
+// witness: internal/tools/review_build.go | v.ID == active → v.ID != active
 func TestReviewVersion_RBActive_ActiveHead_Probes(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"FINISHED", "FAILED"} {
-		got := reviewVersionOf("abcdef", "stage", "version", nil, []platform.Process{reviewTestProcess("zcp abcdef", status)})
+		got := reviewVersionOf("abcdef", "stage", "version", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "ACTIVE"}}, []platform.Process{reviewTestProcess("zcp abcdef", status)})
 		if got.action != reviewProbe || got.id != "version" {
 			t.Fatalf("%s: got %+v", status, got)
 		}
 	}
 }
 
-// witness: internal/tools/review_build.go | if failed.id != "" { → if failed.id == "" {
+// witness: internal/tools/review_build.go | if failed { → if !failed {
 func TestReviewVersion_RBFailed_EndedHead_ReportsFailure(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"BUILD_FAILED", "DEPLOY_FAILED", "PREPARING_RUNTIME_FAILED", "BUILDING"} {
-		got := reviewVersionOf("abcdef", "stage", "", []platform.AppVersionEvent{{ID: "version", Status: status}}, []platform.Process{reviewTestProcess("zcp abcdef", "FAILED")})
+		got := reviewVersionOf("abcdef", "stage", "", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: status}}, []platform.Process{reviewTestProcess("zcp abcdef", "FAILED")})
 		if got.action != reviewFailed || got.id != "version" || got.status != status {
 			t.Fatalf("%s: got %+v", status, got)
 		}
@@ -123,17 +123,33 @@ func TestReviewVersion_RBFailed_EndedHead_ReportsFailure(t *testing.T) {
 }
 
 // witness: internal/tools/review_build.go | return reviewVersion{action: reviewBuild} → return reviewVersion{action: reviewProbe}
-func TestReviewVersion_RBAgain_UnknownIdentity_Builds(t *testing.T) {
+func TestReviewVersion_RBAgain_NamedVersions_BuildOnlyWhenAbsent(t *testing.T) {
 	t.Parallel()
-	for _, processes := range [][]platform.Process{
-		nil,
-		{reviewTestProcess("", "FINISHED")},
-		{reviewTestProcess("zcp another", "FINISHED")},
+	for _, tc := range []struct {
+		versions []platform.AppVersionEvent
+		want     reviewVersionAction
+	}{
+		{nil, reviewBuild},
+		{[]platform.AppVersionEvent{{ID: "other", Name: "zcp another", Status: "BACKUP"}}, reviewBuild},
+		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "UPLOADING"}}, reviewUnknown},
+		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "BACKUP"}}, reviewComplete},
 	} {
-		got := reviewVersionOf("abcdef", "stage", "version", []platform.AppVersionEvent{{ID: "version", Status: "ACTIVE"}}, processes)
-		if got.action != reviewBuild {
-			t.Fatalf("unknown identity: got %+v", got)
+		got := reviewVersionOf("abcdef", "stage", "", tc.versions, nil)
+		if got.action != tc.want {
+			t.Fatalf("versions %+v: got %+v, want %v", tc.versions, got, tc.want)
 		}
+	}
+	other := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp another", "FINISHED")})
+	if other.action != reviewBuild {
+		t.Fatalf("another head's build: got %+v", other)
+	}
+	client := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "stage", Name: "apistage", ProjectID: "project"}}).
+		WithProcess(&platform.Process{ID: "build-av-stage-zcp abcdef", Status: "FINISHED"})
+	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	if part.AppVersionID != "av-stage-zcp abcdef" || part.Outcome != "unavailable" || !strings.Contains(part.Reason, "was not returned") {
+		t.Fatalf("absent version: %+v", part)
 	}
 }
 
@@ -241,17 +257,96 @@ func TestReviewResult_RBResult_Parts_PreservedWithFailurePrecedence(t *testing.T
 }
 
 // witness: internal/tools/review_build_run.go | part.AppVersionID = found.id → part.AppVersionID = ""
-func TestReviewStage_RBObserve_ActivePrivate_ReturnsVersion(t *testing.T) {
+func TestReviewStage_RBObserve_FinishedVersion_ReturnsWithoutRebuilding(t *testing.T) {
 	t.Parallel()
-	svc := platform.ServiceStack{ID: "stage", Name: "apistage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "version"}}
-	client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
-		WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "ACTIVE"}}).
-		WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "FINISHED")})
-	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-	part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"})
-	if part.Outcome != "ok" || part.Setup != "api" || part.Stage != "apistage" || part.AppVersionID != "version" {
-		t.Fatalf("active private stage: %+v", part)
+	for _, tc := range []struct {
+		name, status, stage string
+		public, probe       bool
+	}{
+		{"private active", "ACTIVE", "apistage", false, false},
+		{"public active", "ACTIVE", "apistage-example.test", true, true},
+		{"public backup", "BACKUP", "apistage-example.test", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := platform.ServiceStack{ID: "stage", Name: "apistage", SubdomainAccess: tc.public, Ports: []platform.Port{{Port: 80, Scheme: "http"}}}
+			if tc.status == "ACTIVE" {
+				svc.ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: "version"}
+			}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+				WithProject(&platform.Project{ID: "project", SubdomainHost: "example.test"}).
+				WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "other", Status: "BUILDING"}, {ID: "version", Status: tc.status}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "version", ServiceStackID: "stage", Name: "zcp abcdef"}}).
+				WithError("CreateAppVersion", errors.New("must not build"))
+			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"},
+				httpClient: checkLogDoer(func(*http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+				})}
+			part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: "zerops:\n  - setup: api\n    run:\n      base: static\n"}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+			write, retry := reviewResult("abcdef", time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC), []hq.ReviewBuildPart{part})
+			if retry || write.Parts[0].Outcome != "ok" || part.AppVersionID != "version" || part.Stage != tc.stage || (part.Probe != nil) != tc.probe {
+				t.Fatalf("%s: result %+v, retry %t", tc.name, write, retry)
+			}
+		})
 	}
+}
+
+// witness: internal/tools/review_build_run.go | return nil, reviewVersion{}, fmt.Errorf("stage version %s is not yet in the name search", versions[i].ID) → continue
+func TestReviewStage_RBName_SearchLag_DoesNotBuildAgain(t *testing.T) {
+	t.Parallel()
+	svc := platform.ServiceStack{ID: "stage", Name: "apistage"}
+	client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+		WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "BACKUP"}})
+	d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
+	part := reviewBuildStage(context.Background(), d, reviewTestSource{err: errors.New("a duplicate build was started")}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+	if part.Outcome != "unavailable" || !strings.Contains(part.Reason, "version is not yet in the name search") {
+		t.Fatalf("missing name: %+v", part)
+	}
+}
+
+// witness: internal/ops/stage_lock.go | release, err := lockKey(ctx, path, "stage", onWait) → release, err := lockKey(ctx, path, "stage", nil)
+func TestReviewStage_RBWait_HeldStage_WaitsForItsDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		release, err := ops.LockStage(context.Background(), dir, "stage")
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := platform.ServiceStack{ID: "stage", Name: "apistage", ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "version"}}
+		client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+			WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "ACTIVE"}}).
+			WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "FINISHED")})
+		d := devGitDeps{client: client, stateDir: dir, rt: runtime.Info{ProjectID: "project"}}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+		defer cancel()
+		waiting := make(chan string, 1)
+		result := make(chan hq.ReviewBuildPart, 1)
+		go func() {
+			result <- reviewBuildStage(ctx, d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, func(line string) { waiting <- line })
+		}()
+		synctest.Wait()
+		select {
+		case line := <-waiting:
+			if line != "Review build app/code: waiting for the stage apistage" {
+				t.Fatalf("waiting message = %q", line)
+			}
+		default:
+			t.Fatal("no waiting message")
+		}
+		time.Sleep(6 * time.Minute)
+		synctest.Wait()
+		select {
+		case part := <-result:
+			t.Fatalf("returned while stage held: %+v", part)
+		default:
+		}
+		release()
+		part := <-result
+		if part.Outcome != "ok" || part.AppVersionID != "version" {
+			t.Fatalf("released stage: %+v", part)
+		}
+	})
 }
 
 // witness: internal/tools/review_build_run.go | if found.action == reviewJoin { → if found.action == reviewProbe {
@@ -274,7 +369,7 @@ func TestReviewStage_RBResume_HeadInFlight_WaitsForVersion(t *testing.T) {
 				WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "RUNNING")}).
 				WithProcess(&platform.Process{ID: "process", Status: "FINISHED"})
 			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"})
+			part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 			if part.Outcome != tc.outcome || part.Phase != tc.phase || part.AppVersionID != "version" {
 				t.Fatalf("joined private stage: %+v", part)
 			}
@@ -305,7 +400,7 @@ func TestReviewStage_RBFaillog_PublicFailure_ReportsLastBuildLine(t *testing.T) 
 				{Timestamp: "2026-11-27T12:00:01Z", Facility: "local0", Tag: "zbuilder@version", Message: "missing module"},
 			})
 			d := devGitDeps{client: client, logFetcher: fetcher, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
-			part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"})
+			part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
 			if part.Outcome != "failed" || part.Phase != "build" || part.AppVersionID != "version" || part.Stage != "apistage-1df2.prg1.zerops.app" || part.Reason != "build: missing module" {
 				t.Fatalf("public stage failure: %+v", part)
 			}
@@ -385,16 +480,17 @@ func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.
 					}
 					t.Cleanup(release)
 				}
-				svc := platform.ServiceStack{ID: "stage", Name: "apistage"}
+				svc := platform.ServiceStack{ID: "stage", Name: "apistage", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}}
 				client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+					WithProject(&platform.Project{ID: "project", SubdomainHost: "example.test"}).
 					WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "BUILDING"}}).
 					WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "RUNNING")}).
 					WithProcess(&platform.Process{ID: "process", Status: "RUNNING"})
 				d := devGitDeps{client: client, stateDir: dir, rt: runtime.Info{ProjectID: "project"}}
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 				defer cancel()
-				part := reviewBuildStage(ctx, d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"})
-				if part.Outcome != "unavailable" || part.Phase != "" || !strings.HasPrefix(part.Reason, tc.step+": ") {
+				part := reviewBuildStage(ctx, d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"}, nil)
+				if part.Outcome != "unavailable" || part.Phase != "" || part.Stage != "apistage-example.test" || !strings.HasPrefix(part.Reason, tc.step+": ") || tc.busyLock && !strings.Contains(part.Reason, "wait for stage lock") {
 					t.Fatalf("%s: got %+v", tc.step, part)
 				}
 			})
@@ -602,7 +698,7 @@ func TestReviewStage_RBSource_PublicVersion_ProbesBuiltHead(t *testing.T) {
 						}
 						return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 					})}
-				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, err: tc.err}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "prod"})
+				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, err: tc.err}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "prod"}, nil)
 				if part.Outcome != tc.outcome || part.AppVersionID != "version" {
 					t.Fatalf("got %+v, want outcome %s for version", part, tc.outcome)
 				}

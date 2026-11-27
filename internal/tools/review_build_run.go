@@ -17,7 +17,7 @@ import (
 
 // executeReviewBuild makes one observation of every recorded stage. HQ owns
 // the head check and ranks competing results inside the change's lock.
-func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app string, change hq.MateChange, metas []*workflow.ServiceMeta, stages []topology.StageRef, take bool) (bool, string, error) {
+func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app string, change hq.MateChange, metas []*workflow.ServiceMeta, stages []topology.StageRef, take bool, log func(string)) (bool, string, error) {
 	head := *change.Head
 	now := time.Now().UTC().Truncate(time.Second)
 	updatedAt := ""
@@ -45,7 +45,7 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 					parts[i] = reviewUnavailablePart(hq.ReviewBuildPart{Setup: stage.SetupName, Stage: stage.Hostname}, reviewPhaseBuild, fmt.Errorf("worker stopped: %v", r))
 				}
 			}()
-			parts[i] = reviewBuildStage(work, d, source, app+"/"+change.Repo, head, stage)
+			parts[i] = reviewBuildStage(work, d, source, app+"/"+change.Repo, head, stage, log)
 		})
 	}
 	wg.Wait()
@@ -76,7 +76,7 @@ func reviewResult(head string, at time.Time, parts []hq.ReviewBuildPart) (hq.Rev
 	return hq.ReviewBuildWrite{Head: head, Step: "result", At: at.UTC().Format(time.RFC3339), Parts: parts}, unavailable && !failed
 }
 
-func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef) hq.ReviewBuildPart {
+func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef, log func(string)) hq.ReviewBuildPart {
 	part := hq.ReviewBuildPart{Setup: stage.SetupName, Stage: stage.Hostname}
 	unavailable := func(step string, err error) hq.ReviewBuildPart {
 		return reviewUnavailablePart(part, step, err)
@@ -89,25 +89,12 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 	if err != nil {
 		return unavailable("resolve stage", err)
 	}
-	release, err := ops.LockStage(ctx, d.stateDir, svc.ID)
+	svc, err = d.client.GetService(ctx, svc.ID)
 	if err != nil {
-		return unavailable("lock stage", err)
+		return unavailable("read stage", err)
 	}
-	defer release()
-	svc, found, err := reviewReadStageVersion(ctx, d, svc.ID, head)
-	if err != nil {
-		return unavailable("read stage version", err)
-	}
-	if found.action == reviewBuild {
-		// A prior writer can still be in flight after its own wait ended. Only
-		// a new writer waits for those processes; a known head joins directly.
-		if err := ops.WaitStageVersions(ctx, d.client, d.rt.ProjectID, svc.ID); err != nil {
-			return unavailable("wait for stage", err)
-		}
-		svc, found, err = reviewReadStageVersion(ctx, d, svc.ID, head)
-		if err != nil {
-			return unavailable("read stage version", err)
-		}
+	if svc == nil {
+		return unavailable("read stage", fmt.Errorf("stage not returned"))
 	}
 	access, err := ops.ObservePublicAccess(ctx, d.client, d.rt.ProjectID, svc)
 	if err != nil {
@@ -125,8 +112,47 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 	if parsed, parseErr := url.Parse(publicURL); parseErr == nil && parsed.Hostname() != "" {
 		part.Stage = parsed.Hostname()
 	}
+	_, found, err := reviewReadStageVersion(ctx, d, svc.ID, head)
+	if err == nil && found.action == reviewComplete {
+		part.Outcome, part.AppVersionID = "ok", found.id
+		return part
+	}
+	if err == nil && found.action == reviewFailed {
+		return reviewFailedPart(ctx, d, stage.Hostname, part, found)
+	}
+	release, err := ops.LockStageUntil(ctx, d.stateDir, svc.ID, func() {
+		if log != nil {
+			log(fmt.Sprintf("Review build %s: waiting for the stage %s", repository, part.Stage))
+		}
+	})
+	if err != nil {
+		return unavailable("lock stage", err)
+	}
+	defer release()
+	svc, found, err = reviewReadStageVersion(ctx, d, svc.ID, head)
+	if err != nil {
+		return unavailable("read stage version", err)
+	}
+	if found.action == reviewBuild {
+		// A prior writer can still be in flight after its own wait ended.
+		if err := ops.WaitStageVersions(ctx, d.client, d.rt.ProjectID, svc.ID); err != nil {
+			return unavailable("wait for stage", err)
+		}
+		svc, found, err = reviewReadStageVersion(ctx, d, svc.ID, head)
+		if err != nil {
+			return unavailable("read stage version", err)
+		}
+	}
+	if found.action == reviewComplete {
+		part.Outcome, part.AppVersionID = "ok", found.id
+		return part
+	}
 	if found.action == reviewFailed {
 		return reviewFailedPart(ctx, d, stage.Hostname, part, found)
+	}
+	part.AppVersionID = found.id
+	if found.action == reviewUnknown {
+		return unavailable("read stage version", fmt.Errorf("version %s is %s and has no live build", found.id, found.status))
 	}
 	if found.action == reviewBuild {
 		res, deployErr := ops.CommitDeploy(ctx, d.client, source, ops.CommitDeployRequest{
@@ -136,8 +162,8 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 			return unavailable("start build", deployErr)
 		}
 		found = reviewVersion{action: reviewJoin, id: res.AppVersionID, process: res.ProcessID}
+		part.AppVersionID = res.AppVersionID
 	}
-	part.AppVersionID = found.id
 	if found.action == reviewJoin {
 		status, waitErr := reviewWait(ctx, d.client, found.process)
 		if waitErr != nil {
@@ -159,6 +185,10 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 		}
 		if reviewFailedStatus(version.Status) || status == platform.ProcessStatusFailed {
 			return reviewFailedPart(ctx, d, stage.Hostname, part, reviewVersion{id: version.ID, status: version.Status, reason: status})
+		}
+		if version.Status == platform.BuildStatusBackup || version.Status == platform.BuildStatusDeployed {
+			part.Outcome = "ok"
+			return part
 		}
 		if version.Status != platform.AppVersionStatusActive {
 			return unavailable("read finished build", fmt.Errorf("version %s is %s", version.ID, version.Status))
@@ -209,11 +239,50 @@ func reviewReadStageVersion(ctx context.Context, d devGitDeps, serviceID, head s
 	if err != nil {
 		return nil, reviewVersion{}, fmt.Errorf("read stage builds: %w", err)
 	}
+	names := make(map[string]string, len(versions))
+	for _, process := range processes {
+		if process.AppVersion != nil && process.AppVersion.Name != "" && reviewTouches(process, serviceID) {
+			names[process.AppVersion.ID] = process.AppVersion.Name
+		}
+	}
+	missing := false
+	for i := range versions {
+		name, ok := names[versions[i].ID]
+		if !ok {
+			missing = true
+		}
+		versions[i].Name = name
+	}
 	active := ""
 	if svc.ActiveAppVersion != nil {
 		active = svc.ActiveAppVersion.ID
 	}
-	return svc, reviewVersionOf(head, serviceID, active, versions, processes), nil
+	found := reviewVersionOf(head, serviceID, active, versions, processes)
+	if found.action != reviewBuild || !missing {
+		return svc, found, nil
+	}
+	indexed, err := d.client.ListServiceAppVersionNames(ctx, d.rt.ProjectID, serviceID)
+	if err != nil {
+		return nil, reviewVersion{}, fmt.Errorf("read stage version names: %w", err)
+	}
+	for id, name := range indexed {
+		if _, known := names[id]; !known {
+			names[id] = name
+		}
+	}
+	for i := range versions {
+		versions[i].Name = names[versions[i].ID]
+	}
+	found = reviewVersionOf(head, serviceID, active, versions, processes)
+	if found.action != reviewBuild {
+		return svc, found, nil
+	}
+	for i := range versions {
+		if _, ok := names[versions[i].ID]; !ok {
+			return nil, reviewVersion{}, fmt.Errorf("stage version %s is not yet in the name search", versions[i].ID)
+		}
+	}
+	return svc, found, nil
 }
 
 func reviewUnavailablePart(part hq.ReviewBuildPart, step string, err error) hq.ReviewBuildPart {

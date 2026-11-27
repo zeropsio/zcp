@@ -170,20 +170,91 @@ func (z *ZeropsClient) GetAppVersionZeropsYaml(ctx context.Context, appVersionID
 // platform emits `list` in — callers key off index 0 as "the newest".
 func (z *ZeropsClient) ListServiceAppVersions(ctx context.Context, serviceID string) ([]AppVersionEvent, error) {
 	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
-	resp, err := z.handler.GetServiceStackAppVersion(ctx, pathParam, query.ListServiceStackAppVersions{})
-	if err != nil {
-		return nil, mapSDKError(err, "appVersion")
-	}
-	out, err := resp.Output()
-	if err != nil {
-		return nil, mapSDKError(err, "appVersion")
-	}
-	events := make([]AppVersionEvent, 0, len(out.List))
-	for _, av := range out.List {
-		events = append(events, mapDirectAppVersion(av))
+	var events []AppVersionEvent
+	for offset := 0; ; {
+		resp, err := z.handler.GetServiceStackAppVersion(ctx, pathParam, query.ListServiceStackAppVersions{
+			Limit: types.NewIntNull(directListLimit), Offset: types.NewIntNull(offset),
+		})
+		if err != nil {
+			return nil, mapSDKError(err, "appVersion")
+		}
+		out, err := resp.Output()
+		if err != nil {
+			return nil, mapSDKError(err, "appVersion")
+		}
+		if out.TotalCount.Native() < offset+len(out.List) {
+			return nil, fmt.Errorf("list service app versions: inconsistent total")
+		}
+		for _, av := range out.List {
+			events = append(events, mapDirectAppVersion(av))
+		}
+		offset += len(out.List)
+		if offset >= out.TotalCount.Native() {
+			break
+		}
+		if len(out.List) == 0 {
+			return nil, fmt.Errorf("list service app versions: incomplete page at %d", offset)
+		}
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].Sequence > events[j].Sequence })
 	return events, nil
+}
+
+// ListServiceAppVersionNames reads the search-only names, without using its
+// potentially stale status or treating a missing search hit as absence.
+func (z *ZeropsClient) ListServiceAppVersionNames(ctx context.Context, projectID, serviceID string) (map[string]string, error) {
+	clientID, err := z.OrgID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read app version organization: %w", err)
+	}
+	filter := body.EsFilter{
+		Search: body.EsFilterSearch{
+			{Name: types.NewString("clientId"), Operator: types.NewString("eq"), Value: types.NewString(clientID)},
+			{Name: types.NewString("projectId"), Operator: types.NewString("eq"), Value: types.NewString(projectID)},
+			{Name: types.NewString("serviceStackId"), Operator: types.NewString("eq"), Value: types.NewString(serviceID)},
+		},
+		Sort:  body.EsFilterSort{{Name: types.NewString("created"), Ascending: types.NewBoolNull(false)}},
+		Limit: types.NewIntNull(directListLimit),
+	}
+	names := make(map[string]string)
+	for offset := 0; ; {
+		filter.Offset = types.NewIntNull(offset)
+		resp := sdkBase.Post(ctx, z.env, "/api/rest/public/app-version/search", filter)
+		if resp.Err != nil {
+			return nil, mapSDKError(resp.Err, "appVersion")
+		}
+		raw := resp.ResponseData.Bytes()
+		if status := resp.HttpResponse.StatusCode; status >= http.StatusMultipleChoices {
+			return nil, appVersionAnswerError(status, raw)
+		}
+		var result struct {
+			Total int `json:"totalHits"`
+			Items []struct {
+				ID   string          `json:"id"`
+				Name json.RawMessage `json:"name"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return nil, fmt.Errorf("decode app version names: %w", err)
+		}
+		for _, item := range result.Items {
+			if item.ID == "" || len(item.Name) == 0 {
+				return nil, fmt.Errorf("decode app version names: id or name missing")
+			}
+			var name string
+			if err := json.Unmarshal(item.Name, &name); err != nil {
+				return nil, fmt.Errorf("decode app version name: %w", err)
+			}
+			names[item.ID] = name
+		}
+		offset += len(result.Items)
+		if offset >= result.Total {
+			return names, nil
+		}
+		if len(result.Items) == 0 {
+			return nil, fmt.Errorf("list app version names: incomplete page at %d", offset)
+		}
+	}
 }
 
 // mapDirectAppVersion projects the SDK's GetAppVersion (as returned by the
@@ -314,7 +385,7 @@ func (z *ZeropsClient) UploadAppVersion(ctx context.Context, appVersionID string
 		return mapSDKError(err, "appVersion")
 	}
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		return answerError(resp.StatusCode, raw, "appVersion")
+		return appVersionAnswerError(resp.StatusCode, raw)
 	}
 	return nil
 }
@@ -348,19 +419,18 @@ func (r *stallReader) failure() error {
 	return r.err
 }
 
-// answerError is a non-2xx answer of a hand-rolled call as the platform's
-// error for entity, as directGet maps one.
-func answerError(status int, raw []byte, entity string) error {
+// appVersionAnswerError maps a non-2xx answer of a hand-rolled app-version call.
+func appVersionAnswerError(status int, raw []byte) error {
 	var apiErrResp directProcessErrorResponse
 	if err := json.Unmarshal(raw, &apiErrResp); err != nil {
 		pe := withCause(NewPlatformError(ErrAPIError,
-			fmt.Sprintf("%s: malformed %d response", entity, status),
+			fmt.Sprintf("appVersion: malformed %d response", status),
 			"Retry; if it persists the platform API changed — report it"), err)
 		pe.serverSide = status >= http.StatusInternalServerError
 		return pe
 	}
 	apiErrResp.Error.HttpStatusCode = status
-	return mapSDKError(apiErrResp.Error, entity)
+	return mapSDKError(apiErrResp.Error, "appVersion")
 }
 
 // BuildAndDeployAppVersion is PUT /app-version/{id}/build-and-deploy
@@ -436,7 +506,7 @@ func (z *ZeropsClient) ListUploadingAppVersions(ctx context.Context, projectID, 
 	}
 	raw := resp.ResponseData.Bytes()
 	if status := resp.HttpResponse.StatusCode; status >= http.StatusMultipleChoices {
-		return nil, answerError(status, raw, "appVersion")
+		return nil, appVersionAnswerError(status, raw)
 	}
 	var out output.EsAppVersionResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -485,7 +555,7 @@ func (z *ZeropsClient) ActiveAppVersionName(ctx context.Context, projectID, serv
 	}
 	raw := resp.ResponseData.Bytes()
 	if status := resp.HttpResponse.StatusCode; status >= http.StatusMultipleChoices {
-		return "", answerError(status, raw, "appVersion")
+		return "", appVersionAnswerError(status, raw)
 	}
 	var result struct {
 		Items []struct {

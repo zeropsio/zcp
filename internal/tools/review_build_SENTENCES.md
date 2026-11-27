@@ -6,17 +6,19 @@
 - RB-FLIGHT — A stage build already running for the ready head is joined after a restart.
 - RB-ACTIVE — An active stage version identified as the ready head is probed without another build.
 - RB-FAILED — An identified failed version of the ready head is reported instead of built again.
-- RB-AGAIN — A stage version whose identity cannot be read is built again, never treated as the ready head.
+- RB-AGAIN — A stage builds the ready head only when its named versions contain no version of that head; an unfinished version is not built again.
 - RB-STAGES — A Review build covers every recorded stage of the change's repository and writes nothing for a repository with none.
 - RB-SETUP — A stage whose setup is not recorded takes the setup from its repository's stand-up tier; a missing row is not guessed.
 - RB-RETRY — An unavailable Review build is retried after one, five and fifteen minutes and no fourth time.
 - RB-MOVED — A spent retry clock starts again when its change moves, not when its own result or an older state frame arrives.
 - RB-RESULT — One result includes all stage parts; a failed part prevents a mixed failed and unavailable result from being retried as unavailable.
-- RB-OBSERVE — An identified private stage already active at the ready head returns that version without starting another build.
+- RB-OBSERVE — A finished stage version at the ready head is reported without another build, and is probed only while active.
+- RB-WAIT — A Review build waits for a held stage until its own deadline, says it is waiting, and continues when the stage is free.
+- RB-NAME — A stage version missing from the name search is not proof that the head has no build.
 - RB-RESUME — A named in-flight head is waited to its result and returned without starting another build.
 - RB-FAILLOG — A failed public stage reports a build-log diagnostic while retaining its public host in the result, whether the failure was already known or was joined in flight.
 - RB-ERROR — A failed Review build reports the last recognizable error from its log instead of the builder's generic wrapper, keeping the reason within 300 characters.
-- RB-UNAVAILABLE — A stage lock or build wait that ends without a verdict is unavailable, with the step and its last error line.
+- RB-UNAVAILABLE — A stage lock or build wait that ends without a verdict is unavailable, with the public stage address, step and last error line when known.
 - RB-HEALTH — A public stage's probe uses its setup's declared health path, including an inherited path, or the default when none is declared.
 - RB-SOURCE — A public stage's probe reads its setup from the head built by its version, even when Zerops stores no yaml for that version.
 - RB-DEVWATCH — The dev git observer reads a replacement after its state watch ends and is opened again, or uses its retry wake when reopening fails.

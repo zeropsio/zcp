@@ -22,10 +22,15 @@ const leaseKeyLockPoll = 50 * time.Millisecond
 // container shares the state directory), and the kernel drops it when its
 // holder dies. The caller MUST call the returned release function.
 func lockLeaseKey(ctx context.Context, path string) (func(), error) {
+	return lockKey(ctx, path, "lease", nil)
+}
+
+func lockKey(ctx context.Context, path, kind string, onWait func()) (func(), error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open lease lock: %w", err)
+		return nil, fmt.Errorf("open %s lock: %w", kind, err)
 	}
+	waiting := false
 	for {
 		err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {
@@ -36,12 +41,16 @@ func lockLeaseKey(ctx context.Context, path string) (func(), error) {
 		}
 		if !errors.Is(err, unix.EWOULDBLOCK) {
 			_ = f.Close()
-			return nil, fmt.Errorf("take lease lock: %w", err)
+			return nil, fmt.Errorf("take %s lock: %w", kind, err)
+		}
+		if !waiting && onWait != nil {
+			onWait()
+			waiting = true
 		}
 		select {
 		case <-ctx.Done():
 			_ = f.Close()
-			return nil, fmt.Errorf("wait for lease lock: %w", ctx.Err())
+			return nil, fmt.Errorf("wait for %s lock: %w", kind, ctx.Err())
 		case <-time.After(leaseKeyLockPoll):
 		}
 	}

@@ -216,6 +216,21 @@ func (m *Mock) ListServiceAppVersions(_ context.Context, serviceID string) ([]Ap
 	return append([]AppVersionEvent(nil), m.serviceAppVersions[serviceID]...), nil
 }
 
+func (m *Mock) ListServiceAppVersionNames(_ context.Context, _, serviceID string) (map[string]string, error) {
+	if err := m.getError("ListServiceAppVersionNames"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	names := make(map[string]string)
+	for _, event := range m.appVersionEvents {
+		if event.ServiceStackID == serviceID {
+			names[event.ID] = event.Name
+		}
+	}
+	return names, nil
+}
+
 // RedeployAppVersion records the call and returns the seeded process (see
 // WithRedeployAppVersionProcess), defaulting to a synthesized PENDING
 // stack.deploy process when unseeded.

@@ -105,6 +105,8 @@ const (
 	reviewJoin
 	reviewProbe
 	reviewFailed
+	reviewComplete
+	reviewUnknown
 )
 
 type reviewVersion struct {
@@ -112,10 +114,8 @@ type reviewVersion struct {
 	id, process, status, reason string
 }
 
-// reviewVersionOf identifies versions only through the same named process
-// records used by CommitDeploy. An identity that is not read permits a build.
+// reviewVersionOf projects the named, direct stage versions and their builds.
 func reviewVersionOf(head, service, active string, versions []platform.AppVersionEvent, processes []platform.Process) reviewVersion {
-	var activeVersion, failed reviewVersion
 	for _, p := range processes {
 		if p.ActionName != "stack.build" || p.AppVersion == nil || p.AppVersion.ID == "" || p.AppVersion.Name != ops.AppVersionName(head) || !reviewTouches(p, service) {
 			continue
@@ -123,25 +123,33 @@ func reviewVersionOf(head, service, active string, versions []platform.AppVersio
 		if ops.IsProcessLive(p.Status) && p.ID != "" {
 			return reviewVersion{action: reviewJoin, id: p.AppVersion.ID, process: p.ID}
 		}
-		if p.AppVersion.ID == active {
-			activeVersion = reviewVersion{action: reviewProbe, id: active}
+	}
+	for _, v := range versions {
+		if v.Name == ops.AppVersionName(head) && v.ID == active {
+			return reviewVersion{action: reviewProbe, id: v.ID, status: v.Status}
 		}
-		for _, v := range versions {
-			if v.ID == p.AppVersion.ID && (reviewFailedStatus(v.Status) || p.Status == platform.ProcessStatusFailed) {
-				reason := v.Status
+	}
+	for _, v := range versions {
+		if v.Name != ops.AppVersionName(head) {
+			continue
+		}
+		reason := v.Status
+		failed := reviewFailedStatus(v.Status)
+		for _, p := range processes {
+			if p.AppVersion != nil && p.AppVersion.ID == v.ID && p.Status == platform.ProcessStatusFailed && reviewTouches(p, service) {
+				failed = true
 				if p.FailReason != nil && *p.FailReason != "" {
 					reason = *p.FailReason
 				}
-				failed = reviewVersion{action: reviewFailed, id: v.ID, status: v.Status, reason: reason}
-				break
 			}
 		}
-	}
-	if activeVersion.id != "" {
-		return activeVersion
-	}
-	if failed.id != "" {
-		return failed
+		if failed {
+			return reviewVersion{action: reviewFailed, id: v.ID, status: v.Status, reason: reason}
+		}
+		if v.Status == platform.BuildStatusBackup || v.Status == platform.BuildStatusDeployed {
+			return reviewVersion{action: reviewComplete, id: v.ID, status: v.Status}
+		}
+		return reviewVersion{action: reviewUnknown, id: v.ID, status: v.Status}
 	}
 	return reviewVersion{action: reviewBuild}
 }

@@ -13,6 +13,10 @@ func lockLeaseKey(context.Context, string) (func(), error) {
 	return func() {}, nil
 }
 
+func lockKey(context.Context, string, string, func()) (func(), error) {
+	return func() {}, nil
+}
+
 // lockLeaseFileWithin is a no-op on non-Unix platforms, like lockLeaseKey.
 func lockLeaseFileWithin(string, time.Duration) (func(), error) {
 	return func() {}, nil

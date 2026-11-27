@@ -163,6 +163,9 @@ type Client interface {
 	// first by Sequence. Used by ops.ComputeRecoveryState for the R2
 	// artifact/container facts (docs/spec-workflows.md §8 R2).
 	ListServiceAppVersions(ctx context.Context, serviceID string) ([]AppVersionEvent, error)
+	// ListServiceAppVersionNames reads names from the service's search index.
+	// The caller must compare its IDs with the direct list: search can lag.
+	ListServiceAppVersionNames(ctx context.Context, projectID, serviceID string) (map[string]string, error)
 
 	// RedeployAppVersion re-deploys an existing appVersion via PUT
 	// /app-version/{id}/deploy — the ONLY in-place recovery for a never-

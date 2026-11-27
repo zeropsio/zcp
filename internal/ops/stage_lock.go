@@ -11,10 +11,16 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// LockStage orders zcp writers of a service's stage version across processes.
-// The caller holds it through its bounded wait. A waiter gives up after five
-// minutes or when its context ends.
+// LockStage orders stage writers with a five-minute acquisition budget.
 func LockStage(ctx context.Context, stateDir, serviceID string) (func(), error) {
+	wait, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	return LockStageUntil(wait, stateDir, serviceID, nil)
+}
+
+// LockStageUntil orders zcp writers of a service's stage version across
+// processes until ctx ends. onWait is called once if another writer holds it.
+func LockStageUntil(ctx context.Context, stateDir, serviceID string, onWait func()) (func(), error) {
 	if stateDir == "" || serviceID == "" {
 		return nil, fmt.Errorf("lock stage: state directory and service id are required")
 	}
@@ -24,9 +30,7 @@ func LockStage(ctx context.Context, stateDir, serviceID string) (func(), error) 
 	}
 	key := sha256.Sum256([]byte(serviceID))
 	path := filepath.Join(dir, fmt.Sprintf("%x.lock", key))
-	wait, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	release, err := lockLeaseKey(wait, path)
+	release, err := lockKey(ctx, path, "stage", onWait)
 	if err != nil {
 		return nil, fmt.Errorf("lock stage %s: %w", serviceID, err)
 	}
