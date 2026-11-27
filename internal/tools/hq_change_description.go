@@ -211,7 +211,7 @@ func readHandoverStep(ctx context.Context, ssh ops.SSHDeployer, hqc hq.Client, s
 	if err == nil && current != nil {
 		change = editChange(current, target.Repo)
 	}
-	return workflow.PlanEdit(copies, change, err == nil), current
+	return workflow.PlanEdit(copies, change, err == nil, false), current
 }
 
 func editChange(current *hq.Change, repo string) *workflow.EditChange {
@@ -219,7 +219,7 @@ func editChange(current *hq.Change, repo string) *workflow.EditChange {
 	if current.Head != nil {
 		head = *current.Head
 	}
-	return &workflow.EditChange{Number: current.Number, Repo: repo, Head: head, Ready: current.Ready, ReviewBuild: current.ReviewBuild}
+	return &workflow.EditChange{Number: current.Number, Repo: repo, Head: head, Ready: current.Ready, ReviewBuild: current.ReviewBuild, Behind: current.Behind, ChecksGivenUp: current.ChecksGivenUp}
 }
 
 func describedAtHandedOverHead(number int, head string, step workflow.EditStep) bool {
@@ -227,7 +227,7 @@ func describedAtHandedOverHead(number int, head string, step workflow.EditStep) 
 }
 
 // describedHandover never says a build is running without HQ's observation.
-func describedHandover(number int, head string, step workflow.EditStep, current *hq.Change, now time.Time, poolLease bool) string {
+func describedHandover(number int, head string, step workflow.EditStep, current *hq.Change, now time.Time) string {
 	prefix := fmt.Sprintf("Change #%d described at %s", number, workflow.ShortEditHead(head))
 	if describedAtHandedOverHead(number, head, step) {
 		message := fmt.Sprintf("Change #%d is handed over at %s", number, workflow.ShortEditHead(head))
@@ -235,17 +235,13 @@ func describedHandover(number int, head string, step workflow.EditStep, current 
 		if current != nil && current.ReviewBuild != nil && current.ReviewBuild.Head == head {
 			for _, label := range describedLabels(*current, now) {
 				switch {
-				case label == "Awaiting Review build":
-					build = " and awaits its Review build"
-				case strings.HasPrefix(label, "Review build "):
+				case label == "Checking it builds", label == "Not added yet: did not build", label == "Build passed", strings.HasPrefix(label, "Could not check the build"):
 					build = "; " + label
 				}
 			}
 		}
 		message += build + "."
-		if poolLease {
-			message += ` For each user-facing part with a finished version and a public address, give the person only "Your app: <the part's stage public address>" and say it shows the last version I handed over; bookmark and share it. Work in progress is the draft, visible in Mate's side pane. Never put a lease or pool URL in a reply or change description. The first answer speaks only of the app and its draft; mention stage or production only when asked. Never say "Preview", "Review build", "main", "lease" or host names to the person. Read the part's stage from zerops_workflow action="status" and its publicAccess.url or publicAccess.domains with zerops_discover service="<stage>". If the first version is not finished and a public address is expected, say "Your app gets its address when the first version is finished." If the stage is private or its address cannot be read, explain that without naming the stage or a host. The address survives merge. A successful Review build can update the stage; another handover may replace its version.`
-		}
+		message += ` Tell the person what is ready as a draft and direct them to Open draft for this change in Mate, never a raw address. The draft is visible only to them there. The person can choose Add to your app; the app changes only when adding succeeds. Before the first add, say the app gets its address when the draft is added. For an app that already has an address, direct them to Open <app name> and Copy link in Mate; it shows only added work. Never put a hostname or address in chat or the description, and never promise the app already has the draft. If adding fails and you fix it, explain the cause in one plain sentence and say you fixed this same draft and are trying again.`
 		return message + " End your turn."
 	}
 	if step.Action == "commit" && step.Copy != "" {
@@ -413,7 +409,7 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 		return descriptionWriteFailure(stateDir, ref, result, text, workcopy.head, hqc.Address(), tries, away, err, keepErr, readStep), nil, nil
 	}
 	step, current := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
-	message := describedHandover(number, workcopy.head, step, current, time.Now(), workcopy.lease)
+	message := describedHandover(number, workcopy.head, step, current, time.Now())
 	if extra := applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited); extra != "" {
 		if prefix, found := strings.CutSuffix(message, " End your turn."); found {
 			message = prefix + extra + " End your turn."

@@ -11,9 +11,8 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// witness: internal/content/templates/skills/guided/phases/review-deploy.md | The Review build puts the described head on the stage → The stage half is their preview
-// witness: internal/knowledge/playbooks/standup.md | tell the person each part's stage is ready for its Review build → give the person this Mate's preview, with its address
-func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
+// witness: internal/content/templates/skills/guided/phases/review-deploy.md | Describing it does not build the stage. → Describing it builds the stage.
+func TestTemplates_TP1_MateDraftAndApp(t *testing.T) {
 	t.Parallel()
 
 	agents, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp", MateEnabled: true}, true)
@@ -83,7 +82,7 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 		uri   string
 		wants []string
 	}{
-		{"zerops://playbooks/standup", []string{"dev copy's Preview is up", "each part's stage is ready for its Review build"}},
+		{"zerops://playbooks/standup", []string{"draft the person opens in Mate", "adding it starts its build"}},
 		{"zerops://playbooks/preview-pane", []string{"stage setup for its part", "Keep an existing setup's name"}},
 	} {
 		doc, getErr := store.Get(docCase.uri)
@@ -130,7 +129,7 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 		}
 	}
 
-	for _, want := range []string{"development copy of each app with a Preview", "a stage for the Review build"} {
+	for _, want := range []string{"Mate shows preparation", "do not narrate it in chat before a draft is ready"} {
 		if !strings.Contains(agents, want) {
 			t.Errorf("Mate standup guidance lacks %q", want)
 		}
@@ -146,7 +145,7 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 	if !found {
 		t.Fatal("guided review lacks the standalone path")
 	}
-	for _, want := range []string{"Commit and push", "describe", "The Review build puts the described head on the stage"} {
+	for _, want := range []string{"Commit and push", "describe", "Describing it does not build the stage."} {
 		if !strings.Contains(mate, want) {
 			t.Errorf("guided Mate handover lacks %q", want)
 		}
@@ -154,8 +153,8 @@ func TestTemplates_TP1_MatePreviewAndReviewBuild(t *testing.T) {
 	if strings.Contains(mate, "zerops_deploy") {
 		t.Error("guided Mate handover names zerops_deploy")
 	}
-	if !strings.Contains(review, "In a Mate, use the dev copy's **Preview** and its address") {
-		t.Error("guided narration does not name the dev copy's Preview")
+	if !strings.Contains(review, "In a Mate, describe the draft and the app") {
+		t.Error("guided narration does not name the draft and app")
 	}
 	for _, want := range []string{"checkpoint", "zerops_deploy", "zerops_verify"} {
 		if !strings.Contains(outside, want) {

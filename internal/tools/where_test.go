@@ -260,7 +260,7 @@ func TestWhere_WGReviewStep_FreshFailureReachesPlanner(t *testing.T) {
 	reads := map[string]whereEvent{"appdev": {change: &hq.Change{Number: 7, Head: &head, Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: head, State: "failing", Parts: []hq.ReviewBuildPart{{Setup: "prod", Outcome: "failed"}}}}}}
 	planWhereEdits(&facts, map[string]string{"appdev": "app"}, branches, refs, reads, time.Time{})
 	step := facts.Copies[0].Step
-	if step == nil || step.Words() != `read failure (zerops_check_log repo="app" change=7 setup="prod"; omit setup to list and read other failed parts), fix, commit, push, describe-change in appdev` {
+	if step == nil || step.Words() != `read failure (zerops_check_log repo="app" change=7 setup="prod"; omit setup to list and read other failed parts), fix and verify in the same draft, commit and push; the build retries automatically in appdev` {
 		t.Fatalf("step = %+v; want the failed setup's repair step", step)
 	}
 }
@@ -389,7 +389,7 @@ func TestDescribed_WGDescribedHead_OnlySameCommitHandedOver(t *testing.T) {
 			if got := describedAtHandedOverHead(7, head, tc.step); got != tc.want {
 				t.Fatalf("handed over = %v, want %v", got, tc.want)
 			}
-			answer := describedHandover(7, head, tc.step, nil, now, false)
+			answer := describedHandover(7, head, tc.step, nil, now)
 			if tc.step.Copy != "" && !strings.Contains(answer, tc.step.Copy) {
 				t.Fatalf("answer omitted the copy holding work: %s", answer)
 			}
@@ -398,57 +398,16 @@ func TestDescribed_WGDescribedHead_OnlySameCommitHandedOver(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/hq_change_description.go | if poolLease { → if !poolLease {
-func TestDescribed_WGPoolAddress_DistinguishesLeaseAndStage(t *testing.T) {
+// witness: internal/tools/hq_change_description.go | direct them to Open draft for this change in Mate → give the person the stage's public address
+func TestDescribed_WGPoolAddress_DraftAndAppStayDistinct(t *testing.T) {
 	t.Parallel()
 	const head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name      string
-		poolLease bool
-		step      workflow.EditStep
-		want      []string
-		absent    []string
-	}{
-		{
-			name: "pool handover", poolLease: true,
-			step: workflow.EditStep{Action: workflow.EditHandedOver, Head: head, Number: 7},
-			want: []string{"give the person only \"Your app: <the part's stage public address>\"",
-				"shows the last version I handed over", "bookmark and share", "draft, visible in Mate's side pane",
-				"Never put a lease or pool URL in a reply or change description",
-				"The first answer speaks only of the app and its draft; mention stage or production only when asked",
-				`Never say "Preview", "Review build", "main", "lease" or host names to the person`,
-				`zerops_discover service="<stage>"`, "If the first version is not finished and a public address is expected",
-				"Your app gets its address when the first version is finished.",
-				"If the stage is private or its address cannot be read, explain that without naming the stage or a host",
-				"The address survives merge", "another handover may replace its version", "End your turn."},
-			absent: []string{"Live while I work:", "<lease Preview URL>"},
-		},
-		{
-			name:   "classic handover",
-			step:   workflow.EditStep{Action: workflow.EditHandedOver, Head: head, Number: 7},
-			absent: []string{"Live while I work:", "Your app:"},
-		},
-		{
-			name: "pool with work still to commit", poolLease: true,
-			step:   workflow.EditStep{Action: "commit", Copy: "pool-2"},
-			absent: []string{"Live while I work:", "Your app:"},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			answer := describedHandover(7, head, tc.step, nil, now, tc.poolLease)
-			for _, want := range tc.want {
-				if !strings.Contains(answer, want) {
-					t.Errorf("answer omits %q: %s", want, answer)
-				}
-			}
-			for _, absent := range tc.absent {
-				if strings.Contains(answer, absent) {
-					t.Errorf("answer includes %q: %s", absent, answer)
-				}
-			}
-		})
+	step := workflow.EditStep{Action: workflow.EditHandedOver, Head: head, Number: 7}
+	answer := describedHandover(7, head, step, nil, time.Time{})
+	for _, want := range []string{"direct them to Open draft for this change in Mate", "app changes only when adding succeeds", "Copy link in Mate", "Never put a hostname or address in chat"} {
+		if !strings.Contains(answer, want) {
+			t.Errorf("handover omitted %q: %s", want, answer)
+		}
 	}
 }
 
@@ -471,8 +430,8 @@ func TestDescribed_WGReviewPromise_OnlyObservedHeadAwaits(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			answer := describedHandover(7, head, step, tc.current, now, false)
-			if got := strings.Contains(answer, "awaits its Review build"); got != tc.wait {
+			answer := describedHandover(7, head, step, tc.current, now)
+			if got := strings.Contains(answer, "Checking it builds"); got != tc.wait {
 				t.Fatalf("awaiting promise = %v, want %v: %s", got, tc.wait, answer)
 			}
 		})

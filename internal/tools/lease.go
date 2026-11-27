@@ -231,7 +231,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, httpClient ops.HTTPDoer,
 			"sync pushes a lease's commits to the branch's other leases; park/unpark stops/starts it, keeping its files; rollout replaces free outdated containers. In-project only.",
 		InputSchema: leaseInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
-			Title:           "Lease a pool container",
+			Title:           "Prepare a draft",
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input LeaseInput) (*mcp.CallToolResult, any, error) {

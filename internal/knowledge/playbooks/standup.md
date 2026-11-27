@@ -12,13 +12,13 @@ You have already told the person what you are about to set up and roughly how lo
 
 ## 2. The first call
 
-It reads the project's recipe from HQ, adopts every dev/stage pair, checks the repository's `main` out onto your branch in each dev half, deploys the dev halves, and answers once they stand, with every service's next step and the stages queued. A part whose dev half is its dev pool (a Swarm pool named like its stage, `apipool` beside `apistage`) gets its pool's first image of `main` with the dev halves, and its stage is deployed from a lease of the pool: the pool's and the stage's next steps name the lease of the pool on `main`, the stage's deploy from it and the part's dev servers in it. Take the lease and start its dev servers; once running and verified, tell the person that dev copy's Preview is up with its address, then deploy the part's stage from that lease as its next step says.
+It reads the project's recipe from HQ, adopts every dev/stage pair, checks the repository's `main` out onto your branch in each dev half, deploys the dev halves, and answers with each service's state and next step. For a part whose dev half is its dev pool (a Swarm pool named like its stage, `apipool` beside `apistage`), take the lease and start and verify its dev servers. The paired stage serves added work; the workflow builds it when a draft is added and reconciles outside merges. Describe work as a draft the person opens in Mate, without an address in chat.
 
-Then do what it leaves you: start each remaining dev half's dev server with `zerops_dev_server` (no dev command is recorded anywhere zcp reads — take it from the repository), verify, and tell the person each dev copy's Preview is up, with its address.
+Then do what it leaves you: start each remaining dev half's dev server with `zerops_dev_server` (no dev command is recorded anywhere zcp reads — take it from the repository), and verify. Describe work as a draft the person opens in Mate, without an address in chat.
 
 ## 3. The second call
 
-Then call `zerops_standup` again in the same turn: it builds the stages, and once they stand, tell the person each part's stage is ready for its Review build. The dev copy's Preview is where they try the work. Nothing is committed, pushed or proposed by it.
+Then call `zerops_standup` again in the same turn: it builds the stages, and once they stand, tell the person the setup is ready. Work is a draft they can open in Mate; adding it starts its build. Nothing is committed, pushed or proposed by it.
 
 ## 4. A failure
 

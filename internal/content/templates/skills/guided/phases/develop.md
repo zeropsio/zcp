@@ -6,7 +6,7 @@ Goal: build one serial slice, or a reviewed safe sibling lane, to working softwa
 
 ### In a Mate
 
-Work in the selected dev copy and try the work on its Preview. Follow the develop guidance to commit, push and describe the change; its Review build checks the described head on the stage (phase 5).
+Work in the selected dev copy and verify the draft. Follow the develop guidance to commit, push and describe the change; adding the draft starts the build (phase 5).
 
 ### Outside a Mate
 

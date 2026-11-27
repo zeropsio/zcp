@@ -12,7 +12,7 @@ HQ holds this Mate in an application, whose stage and production are other Zerop
 
 The `zerops_*` tools that set or manage act on this Mate's own project only, and a domain or a port in stage or production is the person's to set in Mate. Look there before you provision anything of your own — what you are about to build may already run. Code reaches stage and production only through the repository: a person merges a change and releases it, never from here, and another Mate's work reaches you through `main`.
 
-Inside this project the ZCP workflow owns deploys. Its paired stage service is not the application's stage: Mate builds a described commit there as its Review build, and the dev copy's Preview is where the person tries edits. Build that stage yourself only for an app's first pass, build or infrastructure work, or at the person's request; say why. Once the application's production runs a release, its address is the real app's: Mate tells you that address in a note on your next turn.
+Inside this project the ZCP workflow owns deploys. Its paired stage service is not the application's stage: it serves the part's added work. The person sees a draft in Mate; describing it does not build the paired stage. When the person chooses Add to your app, zcp builds the draft together with current `main` before it is added. If that build fails, fix and verify the same draft and push; zcp retries automatically. Follow AGENTS.md's "Words for the person" when explaining the draft and the app.
 
 ## 2. A secret stage or production needs
 

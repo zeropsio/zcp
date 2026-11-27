@@ -205,11 +205,8 @@ func TestPoolBriefing_IG7_UsesThePlacementGuidance(t *testing.T) {
 					t.Fatal("Mate pool guidance has no unbuilt section after stage")
 				}
 				stage = strings.Join(strings.Fields(stage), " ")
-				const review = "the latest described head the Review build deploys to it"
-				const whenAsked = "Only when the person asks to deploy a branch to the stage, use its own lease:"
-				const branchDeploy = "`zerops_deploy sourceService=\"<alias>\" targetService=\"<stage>\"`"
-				if !strings.Contains(stage, review) || strings.Count(stage, branchDeploy) != 1 || !strings.Contains(stage, whenAsked+" "+branchDeploy) {
-					t.Errorf("Mate stage guidance does not leave the build to Review or limit branch deploys to a request: %s", stage)
+				if !strings.Contains(stage, "Describing a draft never builds it") || !strings.Contains(stage, "Add to your app builds the draft") || strings.Contains(stage, "zerops_deploy") {
+					t.Errorf("Mate stage guidance does not leave the build to adding: %s", stage)
 				}
 			}
 		})

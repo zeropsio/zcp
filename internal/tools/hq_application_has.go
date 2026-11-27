@@ -26,12 +26,10 @@ import (
 const (
 	noProductionYet         = "this application has no production yet, so never call merged work live, deployed or released"
 	hasProductionLead       = "this application has a production"
-	releasePublishes        = hasProductionLead + ", and a merge does not publish to it, a release does: say so when you report the work, and never call it live before a release"
-	productionRunsOutside   = "this application's production runs outside Mate, so Mate releases nothing to it and cannot tell what a merge publishes there — a merge may reach production by itself: never tell the person merged work is live, and never tell them it is not; say it is on main, and that whoever runs production knows when it goes out"
-	oneRunOfAsks            = "keep each change to one run of asks, anything beyond the interface in a change of its own"
+	releasePublishes        = hasProductionLead + "; adding to the app does not change production until a release"
+	productionRunsOutside   = "this application's production runs outside Mate; Mate cannot tell when a change reaches it, so do not promise its state"
+	oneRunOfAsks            = "continue a follow-up in its open draft; start unrelated work as a separate draft from current main"
 	describeProductionRisks = "in its description, under a plain heading, call out what could hurt production: data changes, setup or environment changes, anything a rollback would not undo"
-	stageRunsMain           = "after a merge the application's Stage runs what is on main"
-	stageChecksFirst        = ": that is where it is checked before it goes live"
 	othersWorkHere          = "other Mates work in this application too: start new work from an up-to-date main, expect main to move, and " + oneRunOfAsks
 )
 
@@ -52,17 +50,6 @@ func nothingLive(state hq.MateState) bool {
 	return state.Mates > 0 && state.Production == ""
 }
 
-// mergeKeepsOnMain is what the agent tells the person of a merge while
-// nothing is live. Where the application limits who merges (limited), putting
-// the project live is not promised to be the person's (mergeLimitedRule).
-func mergeKeepsOnMain(limited bool) string {
-	live := "they put the project live in Mate"
-	if limited {
-		live = "the project is put live in Mate"
-	}
-	return "when you tell the person the work is ready, say in plain words that merging keeps it on main, where later work and other Mates build on it, and that nothing is published until " + live
-}
-
 // mergeAndProduction is what a merge does to production, for a change ready
 // or merged: nothing until a release, unknown where production runs outside
 // Mate, nothing at all while there is none; none for an older HQ and for a
@@ -79,19 +66,6 @@ func mergeAndProduction(state hq.MateState) []string {
 	return nil
 }
 
-// stageWords say where a merge runs first; with a production outside Mate a
-// merge may be live before anyone checks, so Stage is not promised to come
-// first.
-func stageWords(state hq.MateState) []string {
-	switch {
-	case !state.HasStage:
-		return nil
-	case runsOutside(state):
-		return []string{stageRunsMain}
-	}
-	return []string{stageRunsMain + stageChecksFirst}
-}
-
 // applicationOpenedWords follow a change opened: with a production, however
 // it is run, what its description owes the people it reaches.
 func applicationOpenedWords(state hq.MateState) string {
@@ -104,11 +78,7 @@ func applicationOpenedWords(state hq.MateState) string {
 // applicationReadyWords follow a change described and ready: what a merge
 // does and does not do here, for the agent to say as it reports the work.
 func applicationReadyWords(state hq.MateState) string {
-	clauses := mergeAndProduction(state)
-	if nothingLive(state) {
-		clauses = append(clauses, mergeKeepsOnMain(state.MergeLimited))
-	}
-	return sentencesOf(append(clauses, stageWords(state)...)...)
+	return sentencesOf(mergeAndProduction(state)...)
 }
 
 // applicationStartWords is develop's start's clause on how work is cut here:
@@ -126,7 +96,7 @@ func applicationStartWords(state hq.MateState) string {
 // applicationMergedWords end a merged change's note: what the merge did and
 // did not publish, and where it runs first.
 func applicationMergedWords(state hq.MateState) string {
-	clauses := append(mergeAndProduction(state), stageWords(state)...)
+	clauses := mergeAndProduction(state)
 	if len(clauses) == 0 {
 		return ""
 	}

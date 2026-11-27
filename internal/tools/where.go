@@ -568,7 +568,7 @@ func planWhereEdits(facts *workflow.WhereFacts, repos map[string]string, branche
 				group = append(group, otherInput)
 			}
 		}
-		step := workflow.PlanEdit(group, change, fresh)
+		step := workflow.PlanEdit(group, change, fresh, true)
 		workcopy.Step = &step
 	}
 }

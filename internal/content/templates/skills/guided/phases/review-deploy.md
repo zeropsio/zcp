@@ -27,7 +27,7 @@ The slice is already live on the dev runtime. Confirm it: `zerops_verify` probes
 | Reachable / healthy | ZCP | `zerops_verify` on the dev URL |
 | Looks & feels right | you | rendering the dev URL against the design chapter + the floor (screenshot if you can) |
 
-Surface the composite to the user. State it as the composite ("acceptance tests green + reviewed + the dev URL serves it + I checked it looks right"), never as a bare "verified" that implies test quality. For a dev pool, describe the result in the person's words without naming the dev URL. `zerops_verify` proves reachability only — it is not a design or test guarantee.
+Surface the composite to the user. State it as the composite ("acceptance tests green + reviewed + the dev URL serves it + I checked it looks right"), never as a bare "verified" that implies test quality. In a Mate, describe the result in the person's words without naming a URL. `zerops_verify` proves reachability only — it is not a design or test guarantee.
 
 **Delayed effects:** if the slice touched async work, cache, search indexing, webhook/email/notification, auth/session, or a migration, do not call it verified on the first HTTP response alone. Probe the delayed result explicitly after the expected delay: job result, notification record, searchable item, session behavior, migrated read path, or failure/status log. If there is no observable delayed path, add one before advancing.
 
@@ -35,7 +35,7 @@ Surface the composite to the user. State it as the composite ("acceptance tests 
 
 ### In a Mate
 
-Work in the selected dev copy and try the work on its Preview. Commit and push, then open the change with a description or describe the existing change. The Review build puts the described head on the stage as a check. Do not wait for it; you are told if it fails. Outside a dev pool, offer its address as a Review build only when it passed at the change's head, naming the head and time. Build the stage in your own turn only for an app's first pass, to work on a build or infrastructure change, or when the person asks; explain why in the person's terms.
+Work in the selected dev copy and verify the draft. Commit and push, then open the change with a description or describe the existing change. Describing it does not build the stage. The person can add it to the app; that starts the build. If the add fails, read the failure, fix and verify in the same draft, then push; zcp builds again automatically. After the tries are exhausted, ask the person what is needed.
 
 ### Outside a Mate
 
@@ -45,7 +45,7 @@ Deploy through `zerops_deploy` on the develop pipeline; the work session scopes 
 
 ## Step 4 — narrate
 
-Hand the user **working software**, not a status dump. In a Mate, use the dev copy's **Preview** and its address outside a dev pool. For a dev pool, give only **Your app** and describe the draft as "Words for the person" says; in a Mate, the draft is in the side pane. Elsewhere outside a dev pool, use the preview address chosen above:
+Hand the user **working software**, not a status dump. In a Mate, describe the draft and the app as "Words for the person" says, and direct the person to Open draft in Mate. Outside a Mate, use the preview address chosen above:
 
 > "I built **[what it does, in their words]** — you can now **[concrete thing]**. Try **[one acceptance action]** and tell me only whether **[specific outcome]** matches your real workflow."
 

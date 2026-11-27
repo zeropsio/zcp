@@ -154,11 +154,11 @@ func TestWhere_WHSIZE_KeepsNamedCopyAndWholeLines(t *testing.T) {
 		facts := WhereFacts{ReadAt: at, Lease: "pool-1", Copies: []WhereCopy{{
 			Name: "pool-1", Part: "api", Branch: strings.Repeat("\u754c", 255), Lease: true, State: "held",
 			Unsaved: &topology.LeaseUnsaved{}, HasHQ: true,
-			Change: &HQChangeLine{Number: 7, Labels: []string{"ready", "GitHub's checks failed", "Review build unavailable (" + strings.Repeat("\u754c", 300) + ")"}},
+			Change: &HQChangeLine{Number: 7, Labels: []string{"ready", "GitHub's checks failed", "Could not check the build (" + strings.Repeat("\u754c", 300) + ")"}},
 			Step:   &EditStep{Action: "handed over", Head: "abcdef0", Number: 7}, DevServers: []topology.DevServerState{},
 		}}}
 		got := RenderWhere(facts)
-		if len(got) > WhereBudgetBytes || !utf8.ValidString(got) || !strings.Contains(got, "pool-1 (this conversation's):") || !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "GitHub's checks failed") || !strings.Contains(got, "Review build unavailable") {
+		if len(got) > WhereBudgetBytes || !utf8.ValidString(got) || !strings.Contains(got, "pool-1 (this conversation's):") || !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "GitHub's checks failed") || !strings.Contains(got, "Could not check the build") {
 			t.Errorf("oversized named copy lost its step or labels: %d bytes\n%s", len(got), got)
 		}
 	}
@@ -177,11 +177,12 @@ func TestWhere_WHSIZE_KeepsNamedCopyAndWholeLines(t *testing.T) {
 }
 
 type editPlanCase struct {
-	name   string
-	copies []EditCopy
-	change *EditChange
-	fresh  bool
-	want   EditStep
+	name       string
+	copies     []EditCopy
+	change     *EditChange
+	fresh      bool
+	beforeEdit bool
+	want       EditStep
 }
 
 func runEditCases(t *testing.T, cases []editPlanCase) {
@@ -189,7 +190,7 @@ func runEditCases(t *testing.T, cases []editPlanCase) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := PlanEdit(tc.copies, tc.change, tc.fresh); got != tc.want {
+			if got := PlanEdit(tc.copies, tc.change, tc.fresh, tc.beforeEdit); got != tc.want {
 				t.Errorf("step = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -238,6 +239,8 @@ func TestWhere_WHOccupied_ClassicBranchCannotBeMoved(t *testing.T) {
 		{"dirty detached", WhereCopy{Name: "appdev", Dirty: true}, EditStep{Action: "occupied by (detached): ask the person"}},
 		{"clean detached", WhereCopy{Name: "appdev"}, EditStep{Action: EditUnknown, Reason: "checkout appdev is not on a branch"}},
 		{"clean but not handed over", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: "describe change"}}, EditStep{Action: "occupied by other: ask the person"}},
+		{"handed over but behind", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditRefreshBase, ReadyToSwitch: true}}, EditStep{Action: "checkout feature", Copy: "appdev"}},
+		{"undescribed and behind", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditRefreshBase}}, EditStep{Action: "occupied by other: ask the person"}},
 		{"unread handover", WhereCopy{Name: "appdev", Branch: "other"}, EditStep{Action: EditUnknown, Reason: "checkout appdev handover was not read"}},
 		{"HQ unread", WhereCopy{Name: "appdev", Branch: "other", Step: &EditStep{Action: EditUnknown, Reason: "HQ was not read"}}, EditStep{Action: EditUnknown, Reason: "HQ was not read"}},
 		{"checkout unread", WhereCopy{Name: "appdev", WorkUnread: "no answer"}, EditStep{Action: EditUnknown, Reason: "checkout appdev branch was not read"}},
@@ -340,9 +343,31 @@ func TestPlanEdit_WHRepair_FailedReviewAtHead(t *testing.T) {
 	ready := true
 	copies := []EditCopy{{Name: "appdev", Ref: &topology.BranchRef{Head: "head", Published: true}}}
 	runEditCases(t, []editPlanCase{
-		{name: "failed parts", copies: copies, change: &EditChange{Number: 7, Repo: "app", Head: "head", Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: "head", State: "failing", Parts: []hq.ReviewBuildPart{{Setup: "web", Outcome: "failed"}, {Setup: "db", Outcome: "ok"}, {Setup: "api", Outcome: "failed"}}}}, fresh: true, want: EditStep{Action: `read failure (zerops_check_log repo="app" change=7 setup="web"; omit setup to list and read other failed parts), fix, commit, push, describe-change`, Copy: "appdev"}},
-		{name: "no setup provided", copies: copies, change: &EditChange{Number: 7, Repo: "app", Head: "head", Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: "head", State: "failing"}}, fresh: true, want: EditStep{Action: `read failure (zerops_check_log repo="app" change=7; then read each failed part with setup), fix, commit, push, describe-change`, Copy: "appdev"}},
+		{name: "failed parts", copies: copies, change: &EditChange{Number: 7, Repo: "app", Head: "head", Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: "head", State: "failing", Parts: []hq.ReviewBuildPart{{Setup: "web", Outcome: "failed"}, {Setup: "db", Outcome: "ok"}, {Setup: "api", Outcome: "failed"}}}}, fresh: true, want: EditStep{Action: `read failure (zerops_check_log repo="app" change=7 setup="web"; omit setup to list and read other failed parts), fix and verify in the same draft, commit and push; the build retries automatically`, Copy: "appdev"}},
+		{name: "no setup provided", copies: copies, change: &EditChange{Number: 7, Repo: "app", Head: "head", Ready: &ready, ReviewBuild: &hq.ReviewBuild{Head: "head", State: "failing"}}, fresh: true, want: EditStep{Action: `read failure (zerops_check_log repo="app" change=7; then read each failed part with setup), fix and verify in the same draft, commit and push; the build retries automatically`, Copy: "appdev"}},
 	})
+}
+
+// witness: internal/workflow/where.go | if beforeEdit && change.Behind { → if beforeEdit && !change.Behind {
+func TestPlanEdit_WHBase_RefreshOnlyBeforeTheNextEdit(t *testing.T) {
+	t.Parallel()
+	ready, notReady := true, false
+	copies := []EditCopy{{Name: "appdev", Ref: &topology.BranchRef{Head: "head", Published: true}}}
+	runEditCases(t, []editPlanCase{
+		{name: "behind before edit", copies: copies, change: &EditChange{Number: 7, Head: "head", Ready: &ready, Behind: true}, fresh: true, beforeEdit: true, want: EditStep{Action: EditRefreshBase, Copy: "appdev", ReadyToSwitch: true}},
+		{name: "behind undescribed before edit", copies: copies, change: &EditChange{Number: 7, Head: "head", Ready: &notReady, Behind: true}, fresh: true, beforeEdit: true, want: EditStep{Action: EditRefreshBase, Copy: "appdev"}},
+		{name: "current before edit", copies: copies, change: &EditChange{Number: 7, Head: "head", Ready: &ready}, fresh: true, beforeEdit: true, want: EditStep{Action: EditHandedOver, Head: "head", Number: 7}},
+		{name: "behind at handover", copies: copies, change: &EditChange{Number: 7, Head: "head", Ready: &ready, Behind: true}, fresh: true, want: EditStep{Action: EditHandedOver, Head: "head", Number: 7}},
+	})
+}
+
+// witness: internal/workflow/where.go | if change.ChecksGivenUp { → if !change.ChecksGivenUp {
+func TestPlanEdit_WHGivenUp_AsksThePersonAfterFailedTries(t *testing.T) {
+	t.Parallel()
+	ready := true
+	copies := []EditCopy{{Name: "appdev", Ref: &topology.BranchRef{Head: "head", Published: true}}}
+	change := &EditChange{Number: 7, Repo: "app", Head: "head", Ready: &ready, ChecksGivenUp: true, ReviewBuild: &hq.ReviewBuild{Head: "head", State: "failing"}}
+	runEditCases(t, []editPlanCase{{name: "exhausted", copies: copies, change: change, fresh: true, beforeEdit: true, want: EditStep{Action: "ask the person about the failed build; the draft stays open", Copy: "appdev"}}})
 }
 
 // witness: internal/workflow/where.go | head = head[:7] → head = head[:8]
@@ -379,9 +404,9 @@ func TestEditStep_WHStepWords_NamesStepAndShortCommit(t *testing.T) {
 func TestWhere_WHEditLine_ShowsStepAndReview(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	facts := WhereFacts{ReadAt: at, Lease: "pool-1", Copies: []WhereCopy{{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", Unsaved: &topology.LeaseUnsaved{}, HasHQ: true, Change: &HQChangeLine{Number: 7, Labels: []string{"Review build passed"}}, Step: &EditStep{Action: "handed over", Head: "abcdef0", Number: 7}, DevServers: []topology.DevServerState{}}}}
+	facts := WhereFacts{ReadAt: at, Lease: "pool-1", Copies: []WhereCopy{{Name: "pool-1", Part: "api", Branch: "feature", Lease: true, State: "held", Unsaved: &topology.LeaseUnsaved{}, HasHQ: true, Change: &HQChangeLine{Number: 7, Labels: []string{"Build passed"}}, Step: &EditStep{Action: "handed over", Head: "abcdef0", Number: 7}, DevServers: []topology.DevServerState{}}}}
 	got := RenderWhere(facts)
-	if !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "Review build passed") {
+	if !strings.Contains(got, "handed over at abcdef0") || !strings.Contains(got, "Build passed") {
 		t.Errorf("where omitted the step or review verdict: %s", got)
 	}
 }

@@ -19,7 +19,9 @@
 - WH-HEAD — A change at another or unread head cannot establish handover of this copy.
 - WH-DESCRIBE — A draft at the published head is described before handover.
 - WH-HANDED — A ready change at the clean, published head is handed over when its Review build has not failed at that head.
-- WH-REPAIR — A failed Review build at the ready, published head directs the copy to read each failed setup's log, fix, commit, push and describe again.
+- WH-REPAIR — A failed add at the published head directs the copy to read each failed setup’s log, fix and verify in the same draft, then commit and push for an automatic rebuild.
 - WH-STEPWORDS — A step names the copy or missing read, and a handed-over change names its first seven commit characters.
 - WH-EDITLINE — A copy's where line carries its edit step and the Review build label for its change.
 - WH-GROUP — A branch is not handed over while another copy is unread or holds work, but a readable copy's work remains actionable.
+- WH-BASE — When main moved, the next edit of an open draft first brings it into that draft; handover alone does not require this update. Breaks: a draft misses already added work or delays its first handover.
+- WH-GIVENUP — An add whose failed tries are exhausted asks the person instead of starting another repair. Breaks: the agent retries after HQ handed the failure to the person.

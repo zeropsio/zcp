@@ -6,9 +6,7 @@ Goal: get the user an address they can open, named honestly. What "release" mean
 
 For experiment and real-but-lean tiers, there is no separate launch step.
 
-In a Mate, hand over the described change. Outside a dev pool, point the person to the dev copy's Preview to try it. The Review build checks the described head on the stage; outside a dev pool, offer its address as a Review build only when it passed at the change's head, naming the head and time.
-
-For a dev pool, give only **Your app** and describe the draft as "Words for the person" says; in a Mate, the draft is in the side pane.
+In a Mate, hand over the described change as a draft and direct the person to Open draft. Add to your app starts the build; the app gains the change only when adding succeeds. Follow "Words for the person" when describing the draft and app.
 
 Outside a Mate without a dev pool, each verified slice (phase 5) already runs on the dev runtime; that URL is the deliverable. Make it reachable: read the URL from `zerops_discover`, and if the runtime has no public subdomain yet, enable it with `zerops_subdomain` — never hand-author subdomain access into import YAML. Hand the user the URL as **their preview** — a copy for trying it, whose data is a test copy, never "online" or "live" and nothing to install or share — let them react, and re-narrate per slice as the app grows. When a milestone is worth a clean built-verification, promote to stage (phase 5) and hand over its URL as their preview instead.
 
@@ -26,12 +24,12 @@ The one judgment guided adds on top of the flow: **promote proportionately, on a
 
 When the app runs, tell the user plainly:
 
-- **what runs, in their words** — for a dev pool, the app and its draft as "Words for the person" says; otherwise their preview, and production once a release runs there (never the service names or the dev/stage pair),
+- **what runs, in their words** — in a Mate, the app and its draft as "Words for the person" says; otherwise their preview, and production once a release runs there (never the service names or the dev/stage pair),
 - what you **added** vs **deliberately deferred** (the visible roadmap from the PRD's out-of-scope),
 - outside a dev pool, the **owners** you consulted for each service choice,
 - the **result**, stated as the composite (`SKILL.md`) — *reachable at its address* is ZCP-verified (`zerops_verify`); *acceptance tests green + reviewed* are your own host-side work.
 
-Outside a dev pool, once production runs its first release, its address is the real app's: say so plainly — that is the one to use, share and install, with real data — and that the preview stays where the next change is tried. For a dev pool, discuss production only when asked.
+Outside a Mate and a dev pool, once production runs its first release, its address is the real app's: say so plainly — that is the one to use, share and install, with real data — and that the preview stays where the next change is tried. In a Mate, discuss production only when asked.
 
 Add one PRD note, **Next signal to watch**, naming the user or operational signal that would change the next slice/topology. This is intent, not status.
 

@@ -28,8 +28,8 @@ its containers away from the app.
 1. `zerops_lease action=acquire pool="<pool>" branch="<branch>"`
    leases a clean container with no expiry. It writes the alias
    `<pool>-<number>` (SSH), mounts the leased container at `/var/www/<alias>` and
-   checks the branch out there; a branch that does not exist yet is cut from
-   `main`, or from the branch `from="<branch>"` names. The repository is the
+   checks the branch out there; a new draft starts from up-to-date `main`,
+   never another open draft. The repository is the
    pool's, recorded by its stand-up.
    The clone uses the pool's `GIT_TOKEN` service secret; zcp clones a
    repository on this Mate's HQ itself with the Mate's project key, storing
@@ -55,21 +55,8 @@ its containers away from the app.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
    — the repository and the branch come from the lease. Describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`.
-   Never put a lease or pool URL in a reply to the person or in the change
-   description. For each user-facing part with a finished version and a
-   public address, give only **Your app:** <the part's stage public address>.
-   Say it shows the last version you handed over and is the address to
-   bookmark and share. Work in progress is the **draft**, visible in Mate's
-   side pane. The first answer speaks only of the app and its draft; mention
-   stage or production only when asked. Never say "Preview", "Review build",
-   "main", "lease" or host names to the person.
-   Read the part's stage from `zerops_workflow action="status"` and its
-   `publicAccess.url` or `publicAccess.domains` with `zerops_discover service="<stage>"`.
-   If the first version is not finished and a public address is expected, say
-   "Your app gets its address when the first version is finished." If the stage
-   is private or its address cannot be read, explain that without naming the
-   stage or a host. The address survives merge. A successful Review build can
-   update the stage; another handover may replace its version.
+   Tell the person the work is a draft and invite them to Open draft in Mate;
+   follow AGENTS.md's "Words for the person" for the app and its address.
    Pushing to the branch again moves its change,
    a draft until described again; to add work to it, lease the branch again
    if it was released.
@@ -99,22 +86,16 @@ edit there. Its first page after a start compiles for a minute or two; sign
 in there once. With several servers that listen, mark the one the preview
 reaches with `"preview": true` — one per pool.
 
-**Stage.** The part's stage is not where edits are seen: it runs `main` from
-its birth, then the latest described head the Review build deploys to it.
-Only when the person asks to deploy a branch to the stage, use its own lease:
-`zerops_deploy sourceService="<alias>" targetService="<stage>"`.
-To deploy `main`:
-`zerops_deploy sourceService="<alias>" targetService="<stage>" sha="origin/main"`
-ships `origin/main` as the lease last fetched it: run
-`zcp git <alias> fetch origin` first to ship main as HQ has it now. Verify a container with
-`zerops_verify serviceHostname="<alias>"` — it reports SSH reachability, the
-supervisor and the dev servers.
+**Stage.** The part's stage serves the app's added work. Describing a draft
+never builds it: Add to your app builds the draft merged with current `main`
+before the change is added. If the build fails, fix and verify the same draft,
+then push; zcp builds again automatically. If HQ gives up, ask the person what
+is needed. A backstop builds `main` after an outside merge.
 
 **A pool or stage that is not built.** zcp builds a part's pool and stage
 from `main` at the Mate's birth; `zerops_standup` gives each one's state,
-cause and `next` step. A ready pool's failed stage is fixed from a branch
-lease; anything else through a change on `main`, then
-`zerops_standup` again.
+cause and `next` step. Fix a failed build in the draft when one is being
+added; zcp retries it. Otherwise use a change from `main` for a needed fix.
 
 **Data.** Every lease of a part uses the part's dev database. The pool's
 service env reaches every leased container, so each branch's app connects
@@ -170,17 +151,13 @@ leases are keyed by branch, so they never meet.
 - Each acquires its own group on its branch and pushes there. An
   independent piece opens and describes its own change (step 4); subagents
   on one piece open none: merge their branches into one and open its change.
-- Describe each piece of work and give the app address as above;
-  the shared stage may show another branch's handover.
-- Once one change merges, the others are behind `main`. Bring one up to date
-  only when the person asks or it no longer merges cleanly: in a lease of
-  it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
-  (a repository outside this Mate's HQ over SSH:
-  `git fetch origin && git merge origin/main`), check the preview, push,
-  sync the group's other leases and describe it again — never rebase, never
+- Describe each piece of work as its own draft. Follow-up asks continue that
+  draft; unrelated asks start from up-to-date `main`, never another draft.
+- Before editing an open draft when `main` moved, in a lease of it run
+  `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
+  (for a repository outside this Mate's HQ, run those git commands over SSH).
+  Verify the draft, push and sync the group's other leases; never rebase or
   force-push.
-- A change that needs another's unmerged work may be cut from that branch;
-  its description says it builds on that change.
 
 **Pitfalls**
 

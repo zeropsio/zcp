@@ -21,6 +21,9 @@ const EditUnknown = "unknown"
 // EditHandedOver is a step whose change is ready at the published head.
 const EditHandedOver = "handed over"
 
+// EditRefreshBase is work needed before editing an otherwise handed-over draft.
+const EditRefreshBase = "before editing this draft, fetch origin and merge origin/main into its branch"
+
 // WhereFacts holds the facts read for a turn, including reasons for missed reads.
 type WhereFacts struct {
 	ReadAt    time.Time
@@ -66,23 +69,26 @@ type EditCopy struct {
 
 // EditChange is HQ's open change, as answered for this branch now.
 type EditChange struct {
-	Number      int
-	Repo, Head  string
-	Ready       *bool
-	ReviewBuild *hq.ReviewBuild
+	Number        int
+	Repo, Head    string
+	Ready         *bool
+	ReviewBuild   *hq.ReviewBuild
+	Behind        bool
+	ChecksGivenUp bool
 }
 
 // EditStep is the next action and the copy that needs it.
 type EditStep struct {
-	Action string
-	Copy   string
-	Reason string
-	Head   string
-	Number int
+	Action        string
+	Copy          string
+	Reason        string
+	Head          string
+	Number        int
+	ReadyToSwitch bool
 }
 
 // PlanEdit decides the next step from the copies' own reads and HQ's answer.
-func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
+func PlanEdit(copies []EditCopy, change *EditChange, fresh, beforeEdit bool) EditStep {
 	if len(copies) == 0 {
 		return MissingEditCopyStep("", nil)
 	}
@@ -132,10 +138,10 @@ func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
 	if change.Head == "" || change.Head != copies[0].Ref.Head || change.Ready == nil {
 		return EditStep{Action: EditUnknown, Reason: "HQ's change head or readiness was not read at this head"}
 	}
-	if !*change.Ready {
-		return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
-	}
 	if build := change.ReviewBuild; build != nil && build.Head == change.Head && build.State == "failing" {
+		if change.ChecksGivenUp {
+			return EditStep{Action: "ask the person about the failed build; the draft stays open", Copy: copies[0].Name}
+		}
 		log := fmt.Sprintf("zerops_check_log repo=%q change=%d", change.Repo, change.Number)
 		setup := ""
 		for _, part := range build.Parts {
@@ -149,7 +155,13 @@ func PlanEdit(copies []EditCopy, change *EditChange, fresh bool) EditStep {
 		} else {
 			log += fmt.Sprintf(" setup=%q; omit setup to list and read other failed parts", setup)
 		}
-		return EditStep{Action: "read failure (" + log + "), fix, commit, push, describe-change", Copy: copies[0].Name}
+		return EditStep{Action: "read failure (" + log + "), fix and verify in the same draft, commit and push; the build retries automatically", Copy: copies[0].Name}
+	}
+	if beforeEdit && change.Behind {
+		return EditStep{Action: EditRefreshBase, Copy: copies[0].Name, ReadyToSwitch: *change.Ready}
+	}
+	if !*change.Ready {
+		return EditStep{Action: "describe change", Head: change.Head, Number: change.Number}
 	}
 	return EditStep{Action: EditHandedOver, Head: change.Head, Number: change.Number}
 }
@@ -179,7 +191,7 @@ func MissingEditCopyStep(branch string, classic *WhereCopy) EditStep {
 	if classic.Step == nil {
 		return EditStep{Action: EditUnknown, Reason: "checkout " + classic.Name + " handover was not read"}
 	}
-	if classic.Step.Action != EditHandedOver {
+	if classic.Step.Action != EditHandedOver && (classic.Step.Action != EditRefreshBase || !classic.Step.ReadyToSwitch) {
 		return occupied
 	}
 	return EditStep{Action: "checkout " + branch, Copy: classic.Name}

@@ -72,17 +72,17 @@ func changeLabels(t *workflow.HQChangeTold, now time.Time) []string {
 	}
 	switch state {
 	case "awaiting":
-		labels = append(labels, "Awaiting Review build")
+		labels = append(labels, "Checking it builds")
 	case "failing":
-		labels = append(labels, "Review build failed")
+		labels = append(labels, "Not added yet: did not build")
 	case reviewUnavailable:
-		label := "Review build unavailable"
+		label := "Could not check the build"
 		if reason != "" {
 			label += " (" + reason + ")"
 		}
 		labels = append(labels, label)
 	case "passing":
-		labels = append(labels, "Review build passed")
+		labels = append(labels, "Build passed")
 	}
 	if t.ChecksGivenUp {
 		labels = append(labels, "over to you")
@@ -343,10 +343,8 @@ func openChangeLabelsOf(c workflow.HQChange, now time.Time) []string {
 }
 
 // changeUpdatedWords says how long ago HQ last changed a change as told — in
-// minutes under an hour, hours under two days, days after — so the agent can
-// apply AGENTS.md's "What one change holds", which joins unrelated interface
-// work only to a change updated within about the last two hours; "" when HQ
-// sent no time.
+// minutes under an hour, hours under two days, days after; "" when HQ sent no
+// time.
 func changeUpdatedWords(told *workflow.HQChangeTold, now time.Time) string {
 	if told == nil || told.UpdatedAt == "" {
 		return ""

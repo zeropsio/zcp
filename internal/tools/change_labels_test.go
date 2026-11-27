@@ -46,12 +46,12 @@ func TestChangeLabels_CL2_ReviewBuildAndChecksHandoff(t *testing.T) {
 		{name: "no standing"},
 		{name: "no build", told: &workflow.HQChangeTold{}},
 		{name: "unknown state", told: &workflow.HQChangeTold{ReviewBuildState: "other"}},
-		{name: "awaiting", told: &workflow.HQChangeTold{ReviewBuildState: "awaiting"}, labels: []string{"Awaiting Review build"}},
-		{name: "passing", told: &workflow.HQChangeTold{ReviewBuildState: "passing"}, labels: []string{"Review build passed"}},
-		{name: "failing with GitHub", told: &workflow.HQChangeTold{ReviewBuildState: "failing", Checks: "failing"}, labels: []string{"GitHub's checks failed", "Review build failed"}},
-		{name: "unavailable with reason", told: &workflow.HQChangeTold{ReviewBuildState: "unavailable", ReviewBuildReason: "stage moved"}, labels: []string{"Review build unavailable (stage moved)"}},
-		{name: "unavailable without reason", told: &workflow.HQChangeTold{ReviewBuildState: "unavailable"}, labels: []string{"Review build unavailable"}},
-		{name: "given up", told: &workflow.HQChangeTold{ReviewBuildState: "failing", ChecksGivenUp: true}, labels: []string{"Review build failed", "over to you"}},
+		{name: "awaiting", told: &workflow.HQChangeTold{ReviewBuildState: "awaiting"}, labels: []string{"Checking it builds"}},
+		{name: "passing", told: &workflow.HQChangeTold{ReviewBuildState: "passing"}, labels: []string{"Build passed"}},
+		{name: "failing with GitHub", told: &workflow.HQChangeTold{ReviewBuildState: "failing", Checks: "failing"}, labels: []string{"GitHub's checks failed", "Not added yet: did not build"}},
+		{name: "unavailable with reason", told: &workflow.HQChangeTold{ReviewBuildState: "unavailable", ReviewBuildReason: "stage moved"}, labels: []string{"Could not check the build (stage moved)"}},
+		{name: "unavailable without reason", told: &workflow.HQChangeTold{ReviewBuildState: "unavailable"}, labels: []string{"Could not check the build"}},
+		{name: "given up", told: &workflow.HQChangeTold{ReviewBuildState: "failing", ChecksGivenUp: true}, labels: []string{"Not added yet: did not build", "over to you"}},
 		{name: "GitHub given up without a build", told: &workflow.HQChangeTold{Checks: "failing", ChecksGivenUp: true}, labels: []string{"GitHub's checks failed", "over to you"}},
 	}
 	for _, tt := range tests {
@@ -71,10 +71,10 @@ func TestChangeLabels_CL3_DeadlineChangesAwaitingToUnavailable(t *testing.T) {
 	for _, tt := range []struct {
 		name, until, want string
 	}{
-		{"before", "2026-11-26T12:00:01Z", "Awaiting Review build"},
-		{"at", "2026-11-26T12:00:00Z", "Awaiting Review build"},
-		{"after", "2026-11-26T11:59:59Z", "Review build unavailable (no result arrived)"},
-		{"unreadable deadline", "broken", "Awaiting Review build"},
+		{"before", "2026-11-26T12:00:01Z", "Checking it builds"},
+		{"at", "2026-11-26T12:00:00Z", "Checking it builds"},
+		{"after", "2026-11-26T11:59:59Z", "Could not check the build (no result arrived)"},
+		{"unreadable deadline", "broken", "Checking it builds"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -98,11 +98,11 @@ func TestChangeLabels_CL4_HQStateReachesEveryLabel(t *testing.T) {
 		labels  []string
 	}{
 		{"no build", nil, false, []string{"ready"}},
-		{"awaiting", &hq.ReviewBuild{State: "awaiting", Until: "2026-11-26T12:01:00Z"}, false, []string{"ready", "Awaiting Review build"}},
-		{"deadline passed", &hq.ReviewBuild{State: "awaiting", Until: "2026-11-26T11:59:00Z"}, false, []string{"ready", "Review build unavailable (no result arrived)"}},
-		{"unavailable", &hq.ReviewBuild{State: "unavailable", Reason: "stage moved"}, false, []string{"ready", "Review build unavailable (stage moved)"}},
-		{"failed and given up", &hq.ReviewBuild{State: "failing"}, true, []string{"ready", "Review build failed", "over to you"}},
-		{"passed", &hq.ReviewBuild{State: "passing"}, false, []string{"ready", "Review build passed"}},
+		{"awaiting", &hq.ReviewBuild{State: "awaiting", Until: "2026-11-26T12:01:00Z"}, false, []string{"ready", "Checking it builds"}},
+		{"deadline passed", &hq.ReviewBuild{State: "awaiting", Until: "2026-11-26T11:59:00Z"}, false, []string{"ready", "Could not check the build (no result arrived)"}},
+		{"unavailable", &hq.ReviewBuild{State: "unavailable", Reason: "stage moved"}, false, []string{"ready", "Could not check the build (stage moved)"}},
+		{"failed and given up", &hq.ReviewBuild{State: "failing"}, true, []string{"ready", "Not added yet: did not build", "over to you"}},
+		{"passed", &hq.ReviewBuild{State: "passing"}, false, []string{"ready", "Build passed"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

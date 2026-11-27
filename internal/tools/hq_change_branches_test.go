@@ -213,7 +213,7 @@ func TestOpenChange_TooManyOpen_NamesThem(t *testing.T) {
 			t.Errorf("the refusal does not name %s: %s", want, text)
 		}
 	}
-	for _, want := range []string{"Nothing was opened", "merge or close", `action=\"close-change\"`} {
+	for _, want := range []string{"Nothing was opened", "add or close", `action=\"close-change\"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the refusal lacks %q: %s", want, text)
 		}
@@ -223,29 +223,23 @@ func TestOpenChange_TooManyOpen_NamesThem(t *testing.T) {
 	}
 }
 
-// TestTooManyOpen_OffersFoldingFirstWhetherOrNotMergingIsLimited: past as
-// many open changes as HQ keeps a Mate in a repository, the refusal's first
-// way out is folding the Mate's own changes AGENTS.md's "What one change
-// holds" would have made one — also where the application limits who merges,
-// where the person may be unable to merge any of them and folding is the one
-// way out that waits on nobody (docs/spec-mate.md §10.10, MB-53).
-// witness: internal/tools/hq_change_open.go | suggestion = foldOwnChanges + ` Otherwise close one → suggestion = ` Otherwise close one
+// Past HQ's open-change limit, the refusal keeps unrelated drafts separate,
+// both with and without an application restriction on who adds changes.
+// witness: internal/tools/hq_change_open.go | suggestion += " Keep unrelated drafts separate." → suggestion += " Combine unrelated drafts."
 func TestTooManyOpen_OffersFoldingFirstWhetherOrNotMergingIsLimited(t *testing.T) {
 	t.Parallel()
 	app := "app-1"
 	target := changeTarget{AppID: app, Repo: "web"}
 	for _, limited := range []bool{false, true} {
 		refusal := tooManyOpen(target, "work-6", hq.MateState{AppID: &app, OpenPerBranch: true, MergeLimited: limited}, nil)
-		if !strings.HasPrefix(refusal.Suggestion, foldOwnChanges) {
-			t.Errorf("merging limited %v: the refusal's first way out is not folding: %s", limited, refusal.Suggestion)
+		if !strings.Contains(refusal.Suggestion, "Keep unrelated drafts separate") || strings.Contains(refusal.Suggestion, "fold") {
+			t.Errorf("merging limited %v: refusal must keep drafts separate: %s", limited, refusal.Suggestion)
 		}
 	}
 }
 
 // TestTooManyOpen_LabelsAHandedChange: the refusal past five open changes
-// labels a change a person handed this Mate "handed to you", and no other, so
-// its advice to fold the Mate's own changes never offers a handed one
-// (docs/spec-mate.md §10.10, MB-53).
+// labels a change a person handed this Mate "handed to you", and no other.
 // witness: internal/tools/hq_change_target.go | InState: true, Handed: c.Handed} → InState: true}
 func TestTooManyOpen_LabelsAHandedChange(t *testing.T) {
 	t.Parallel()

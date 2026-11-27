@@ -20,11 +20,11 @@ Keep a branch current by merging `main` into it: `zcp git <host> fetch origin &&
 
 ## 3. Changes
 
-A change you carry on stays on its own branch: status lists each repository's open changes by number and branch. Cut new work from another open change's branch only when it needs that change's code, and say in its description that it builds on #N: HQ squashes each change into one commit on `main`, so once that base merges, the change built on it can conflict with `main` — merge `main` in, push, and describe it again, since the push makes it a draft.
+A follow-up continues its open draft on its own branch; status lists each repository's open changes by number and branch. Start an unrelated draft from current `main`, never another draft. Before the next edit of an open draft, fetch and merge `main` into it if `main` moved; verify the draft and push.
 
 Never open a change only to record another's merge or to update a plan, roadmap or log: put it in the change doing the work, or in the next one that has work in it. A file every change appends to — a work log, a diary kept in one file — makes each open change conflict with `main` once another merges: give each change an entry of its own, such as a file per change, or per day and change. An HQ that keeps one open change per repository answers its open one instead, and open-change then says the work goes on that change's branch.
 
-The person reviews a change by its description: write it with `zerops_workflow action="describe-change"`. Mate builds its stage from the described commit as the Review build; do not wait, and report it verified only after that head passes. Deploys within this project follow the ZCP workflow's guidance.
+The person reviews a draft by its description: write it with `zerops_workflow action="describe-change"`. Describing it does not build the stage. Add to your app starts the build; if it fails, fix and verify the same draft and push, and zcp builds again automatically. Deploys within this project follow the ZCP workflow's guidance.
 
 ## 4. A repository kept on GitHub
 

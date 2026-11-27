@@ -430,15 +430,9 @@ func handedElsewhere(handed []hq.MateChange, repo string) string {
 	return fmt.Sprintf(" Handed to this Mate from a Mate that is gone, %s in %q stays open too, its work on its own branch.", strings.Join(named, " and "), repo)
 }
 
-// foldOwnChanges is the first way out of tooManyOpen, whether or not the
-// application limits who merges: the Mate's own open changes AGENTS.md's
-// "What one change holds" would have made one are folded into one, freeing
-// the others without waiting on anyone (docs/spec-mate.md §10.10).
-const foldOwnChanges = `First fold open changes of yours that AGENTS.md's "What one change holds" would have made one: merge their branches into one of them, push, describe it again as a list, one item per ask, naming the changes it folds, and close each folded one (zerops_workflow action="close-change" branch="<its branch>"); or, where that rule says so, put this work on one of them instead of opening it.`
-
 // tooManyOpen refuses an open past as many open changes as HQ keeps the Mate
 // in the repository, naming them from the Mate's state when it was read — a
-// handed one labelled, never to fold — with folding the Mate's own first.
+// handed one labelled. Each unrelated draft stays separate.
 func tooManyOpen(target changeTarget, branch string, state hq.MateState, stateErr error) *platform.PlatformError {
 	var named []string
 	if stateErr == nil {
@@ -459,10 +453,12 @@ func tooManyOpen(target changeTarget, branch string, state hq.MateState, stateEr
 	if len(named) > 0 {
 		held += ": " + strings.Join(named, ", ")
 	}
-	suggestion := foldOwnChanges + ` Otherwise ask the person to merge or close one of them in its review, or close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"); then open this one again — the branch you pushed stays as it is.`
+	suggestion := `Ask the person to add or close one of the open drafts, or close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"); then open this one again — the branch you pushed stays as it is.`
 	if stateErr == nil && state.MergeLimited {
-		suggestion = foldOwnChanges + ` Otherwise close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"), or wait until one of them is merged or closed; then open this one again — the branch you pushed stays as it is. ` + mergeLimitedRule
+		suggestion = `Close one this Mate abandoned (zerops_workflow action="close-change" branch="<its branch>"), or wait until one of them is added or closed; then open this one again — the branch you pushed stays as it is. ` + mergeLimitedRule
 	}
+	suggestion += " Keep unrelated drafts separate."
+	suggestion += " Tell the person simply that an open draft must be added or discarded before another can be opened; do not quote this refusal or list the other changes in chat."
 	return platform.NewPlatformError(platform.ErrPrerequisiteMissing,
 		fmt.Sprintf("Nothing was opened for %q: this Mate already holds, in %q, %s.", branch, target.Repo, held), suggestion)
 }
