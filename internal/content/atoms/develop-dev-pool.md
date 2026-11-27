@@ -56,8 +56,8 @@ its containers away from the app.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
    — the repository and the branch come from the lease. Describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`,
-   naming the branch's lease preview URLs as where to try it and which push
-   last built and verified on the stage.
+   naming which push last built and verified on the stage. Leave lease preview
+   URLs out of the description: they last only while the lease is held.
    Pushing to the branch again moves its change,
    a draft until described again; to add work to it, lease the branch again
    if it was released.
@@ -167,7 +167,8 @@ leases are keyed by branch, so they never meet.
 - Each acquires its own group on its branch and pushes there. An
   independent piece opens and describes its own change (step 4); subagents
   on one piece open none: merge their branches into one and open its change.
-- Report each branch's change and its lease preview URLs to the person.
+- Report each branch's change to the person using its link. While its lease is
+  held, the reply may name its Preview.
 - Once one change merges, the others are behind `main`. Bring one up to date
   only when the person asks or it no longer merges cleanly: in a lease of
   it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
