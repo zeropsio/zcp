@@ -1,7 +1,7 @@
 # Review build
 
 - RB-TRIGGER — Only a ready, open code change without a passing or failing Review build at its head starts or resumes its Review build.
-- RB-TAKE — A failed take is tried again; a result already accepted by HQ is never overwritten by a take from stale state.
+- RB-TAKE — A failed or expired take is taken again; a result already accepted by HQ is never overwritten by a take from stale state.
 - RB-DEADLINE — A resumed take keeps its original deadline and reserves the HQ write's call budget; a new or expired take gets the current run's budget.
 - RB-FLIGHT — A stage build already running for the ready head is joined after a restart.
 - RB-ACTIVE — An active stage version identified as the ready head is probed without another build.

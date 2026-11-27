@@ -51,8 +51,8 @@ func reviewNext(c hq.MateChange, running bool, now time.Time) reviewAction {
 	}
 }
 
-func reviewNeedsTake(action reviewAction, resultStored bool) bool {
-	return action == reviewTake && !resultStored
+func reviewNeedsTake(action reviewAction, resultStored bool, build *hq.ReviewBuild) bool {
+	return !resultStored && (action == reviewTake || action == reviewRetry && build != nil && build.Until != "")
 }
 
 // reviewStages reads the same per-pair setup records the stand-up writes.

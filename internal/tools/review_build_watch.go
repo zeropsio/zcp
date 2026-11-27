@@ -199,9 +199,9 @@ func (o *reviewObserver) start(ctx context.Context, key reviewKey, change hq.Mat
 		return
 	}
 	a.running = true
-	// A failed take must be retried. Once HQ accepted a result, do not
-	// overwrite it with a take while the Mate state catches up.
-	take := reviewNeedsTake(action, a.resultStored)
+	// Renew an expired take, but leave an accepted result intact while
+	// the Mate state catches up.
+	take := reviewNeedsTake(action, a.resultStored, change.ReviewBuild)
 	go func() {
 		unavailable, updatedAt, runErr := func() (unavailable bool, updatedAt string, err error) {
 			defer func() {

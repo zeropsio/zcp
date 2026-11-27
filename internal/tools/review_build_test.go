@@ -51,15 +51,25 @@ func TestReviewNext_RBTrigger_Change_SelectsWork(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build.go | return action == reviewTake && !resultStored → return action == reviewTake && resultStored
+// witness: internal/tools/review_build.go | action == reviewTake || action == reviewRetry && build != nil && build.Until != "" → action == reviewTake
 func TestReviewTake_RBTake_Retry_ProtectsStoredResult(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		action       reviewAction
-		stored, want bool
-	}{{reviewTake, false, true}, {reviewTake, true, false}, {reviewRun, false, false}, {reviewRetry, true, false}} {
-		if got := reviewNeedsTake(tc.action, tc.stored); got != tc.want {
-			t.Fatalf("action %v stored %t: got %t, want %t", tc.action, tc.stored, got, tc.want)
+		name   string
+		action reviewAction
+		stored bool
+		build  *hq.ReviewBuild
+		want   bool
+	}{
+		{"new", reviewTake, false, nil, true},
+		{"stale new", reviewTake, true, nil, false},
+		{"live take", reviewRun, false, &hq.ReviewBuild{State: "awaiting", Until: "2026-11-27T12:30:00Z"}, false},
+		{"expired take", reviewRetry, false, &hq.ReviewBuild{State: "unavailable", Until: "2026-11-27T11:30:00Z"}, true},
+		{"stale expired take", reviewRetry, true, &hq.ReviewBuild{State: "unavailable", Until: "2026-11-27T11:30:00Z"}, false},
+		{"unavailable result", reviewRetry, false, &hq.ReviewBuild{State: "unavailable", Parts: []hq.ReviewBuildPart{{Outcome: "unavailable"}}}, false},
+	} {
+		if got := reviewNeedsTake(tc.action, tc.stored, tc.build); got != tc.want {
+			t.Fatalf("%s: got %t, want %t", tc.name, got, tc.want)
 		}
 	}
 }
