@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // A lease holding work that is not pushed need not be released to stop
@@ -214,6 +217,7 @@ func LeasePark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, error
 			return remounted(leaseOrchestratorError(ctx, d, rp, "park "+alias, err))
 		}
 	}
+	publishMateLeaseEvent(d, rec, mate.CopyEvent{Kind: mate.CopyPark})
 	v := rec.view(LeaseStateParked)
 	notes = append(notes, "parked: its container is stopped, its processes (dev servers, supervisor) ended and "+filepath.Join(mountBase, alias)+" is unmounted; "+parkedKeeps(alias))
 	if siblings, err := siblingRecords(d.StateDir, rec); err != nil {
@@ -258,6 +262,7 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "unpark "+alias, err)
 	}
+	publishMateLeaseEvent(d, rec, mate.CopyEvent{Kind: mate.CopyLinkLost})
 	v := rec.view(LeaseStateHeld)
 	// ssh reaches the container through its alias: put back a stanza another
 	// call or a redeploy lost.
@@ -299,6 +304,13 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 	}
 	if restarted {
 		notes = append(notes, rerouteUnparked(ctx, d, rp, rec))
+	}
+	if d.SSH != nil && runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		read, _ := ReadDevServers(ctx, d.SSH, alias, "")
+		target := MateCopyTarget{Hostname: alias, Pool: rec.PoolHostname, Branch: rec.Branch, AcquiredAt: rec.AcquiredAt}
+		if err := ReportMateCopy(ctx, d, mate.StatusFilePath(), target, read); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcp] report unparked copy: %v\n", err)
+		}
 	}
 	v.Note = joinNotes(notes...)
 	return v, nil

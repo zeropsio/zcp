@@ -1,118 +1,150 @@
 package ops
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"time"
+	"io"
 
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/mate"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// MateServerWait identifies the observation that caused a bounded wait.
-type MateServerWait struct {
-	Hostname, Pool, Branch, AcquiredAt, Name string
-	ReadAt                                   time.Time
+type copyStateSSH interface {
+	ExecSSHStdio(context.Context, string, string, io.Reader, io.Writer, io.Writer) (int, error)
 }
 
-// AwaitMateServer waits for one start and records the answer only if the
-// observation and (for a lease) the reservation have not since changed.
-func AwaitMateServer(ctx context.Context, d LeaseDeps, statusPath, root string, target MateServerWait) (time.Time, error) {
-	var rec leaseRecord
+// copyServerState is one read-only snapshot or one held supervisor wait.
+// The wait uses the SSH transport without ExecSSH's five-minute ceiling.
+func copyServerState(ctx context.Context, ssh SSHDeployer, host string, after devsup.Status) (devsup.Status, error) {
+	cmd := "zcp-devsup ctl copy-state"
+	if after != "" {
+		cmd += " --after " + shellQuote(string(after))
+	}
+	cmd += " --json"
+	var output []byte
+	if after == "" {
+		readCtx, cancel := context.WithTimeout(ctx, devsupCtlTimeout)
+		defer cancel()
+		out, err := ssh.ExecSSH(readCtx, host, cmd)
+		if err != nil {
+			return "", fmt.Errorf("copy state snapshot: %w", err)
+		}
+		output = out
+	} else {
+		stream, ok := ssh.(copyStateSSH)
+		if !ok {
+			return "", fmt.Errorf("copy state wait: ssh transport cannot hold a wait")
+		}
+		var stdout, stderr bytes.Buffer
+		code, err := stream.ExecSSHStdio(ctx, host, cmd, nil, &stdout, &stderr)
+		if err != nil {
+			return "", fmt.Errorf("copy state wait: %w", err)
+		}
+		if code != 0 {
+			return "", fmt.Errorf("copy state wait: supervisor exited %d", code)
+		}
+		output = stdout.Bytes()
+	}
+	var answer struct {
+		Status devsup.Status `json:"status"`
+	}
+	if err := json.Unmarshal(output, &answer); err != nil {
+		return "", fmt.Errorf("copy state answer: %w", err)
+	}
+	switch answer.Status {
+	case devsup.StatusStarting, devsup.StatusRunning, devsup.StatusStopped, devsup.StatusCrashed:
+		return answer.Status, nil
+	default:
+		return "", fmt.Errorf("copy state answer: invalid status %q", answer.Status)
+	}
+}
+
+func copyWaitAfter(state mate.CopyState) devsup.Status {
+	switch state {
+	case mate.CopyStarting:
+		return devsup.StatusStarting
+	case mate.CopyRunning:
+		return devsup.StatusRunning
+	case mate.CopyStopped:
+		return devsup.StatusStopped
+	case mate.CopyFailed:
+		return devsup.StatusCrashed
+	case mate.CopyParked, mate.CopyGone, mate.CopyUnknown:
+		return ""
+	default:
+		return ""
+	}
+}
+
+// ReportMateCopy records one supervisor snapshot. Its start time prevents an
+// older read from replacing a later event; missing capability means link lost.
+func ReportMateCopy(ctx context.Context, d LeaseDeps, statusPath string, target MateCopyTarget, ds *DevServers) error {
+	at := d.now().UTC()
+	event := mate.CopyEvent{Kind: mate.CopyLinkLost}
+	var readErr error
+	if ds != nil && ds.Supervisor.Supports(devsup.CapabilityCopyState) {
+		var status devsup.Status
+		status, readErr = copyServerState(ctx, d.SSH, target.Hostname, "")
+		if readErr == nil {
+			event = mate.CopyEvent{Kind: mate.CopyReport, Report: string(status)}
+		}
+	}
+	if err := StoreMateCopyEvent(d.StateDir, statusPath, target, event, at, ""); err != nil {
+		return fmt.Errorf("publish copy report: %w", err)
+	}
+	if readErr != nil {
+		return fmt.Errorf("read copy report: %w", readErr)
+	}
+	return nil
+}
+
+// AwaitMateServer holds one wait for a copy and writes its answer only over
+// the state on which it was armed. A lost connection writes unknown once.
+func AwaitMateServer(ctx context.Context, d LeaseDeps, statusPath, root string, target MateCopyTarget) error {
 	if target.Pool != "" {
 		lease, ok, err := LeaseTargetChecked(ctx, d, target.Hostname, "observed")
 		if err != nil {
-			return time.Time{}, fmt.Errorf("check lease for server wait: %w", err)
+			return recordLostCopy(ctx, d, statusPath, target, err)
 		}
-		if !ok || lease.Parked || lease.AcquiredAt != target.AcquiredAt || lease.Branch != target.Branch {
-			return time.Time{}, nil
+		if !ok || lease.AcquiredAt != target.AcquiredAt || lease.Branch != target.Branch {
+			return nil
 		}
-		rec, ok, err = readLeaseRecord(d.StateDir, target.Hostname)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("read lease for server wait: %w", err)
-		}
-		if !ok || rec.AcquiredAt != target.AcquiredAt || rec.Branch != target.Branch {
-			return time.Time{}, nil
+		if lease.Parked {
+			if err := StoreMateCopyEvent(d.StateDir, statusPath, target, mate.CopyEvent{Kind: mate.CopyPark}, d.now().UTC(), target.StateAt); err != nil {
+				return fmt.Errorf("store parked copy: %w", err)
+			}
+			return nil
 		}
 	}
 	ds, err := readDevServers(ctx, d.SSH, target.Hostname, root, d.now)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("read server for wait: %w", err)
+		return recordLostCopy(ctx, d, statusPath, target, err)
 	}
-	if !ds.Supervisor.Supports(devsup.CapabilityWait) {
-		return time.Time{}, nil
+	if !ds.Supervisor.Supports(devsup.CapabilityCopyState) {
+		return recordLostCopy(ctx, d, statusPath, target, fmt.Errorf("supervisor lacks copy-state capability"))
 	}
-	state, err := supervisorWait(ctx, d.SSH, target.Hostname, target.Name, int(devsup.ListenWait/time.Second))
+	after := copyWaitAfter(target.State)
+	if after == "" {
+		return nil
+	}
+	status, err := copyServerState(ctx, d.SSH, target.Hostname, after)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("wait for server: %w", err)
+		return recordLostCopy(ctx, d, statusPath, target, err)
 	}
-	ds.State, ds.ReadAt = state, d.now().UTC()
-	ds.Service = target.Pool
-	servers := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: target.Hostname, Pool: target.Pool, Read: ds})
-	var observed *topology.DevServerState
-	for i := range servers {
-		if servers[i].Name == target.Name {
-			observed = &servers[i]
-			break
-		}
+	if err := StoreMateCopyEvent(d.StateDir, statusPath, target, mate.CopyEvent{Kind: mate.CopyReport, Report: string(status)}, d.now().UTC(), target.StateAt); err != nil {
+		return fmt.Errorf("store waited copy: %w", err)
 	}
-	if observed == nil {
-		return ds.ReadAt, nil
-	}
-	if target.Pool != "" {
-		unlock, err := lockLeaseRecord(d.StateDir, target.Hostname)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("lock lease after server wait: %w", err)
-		}
-		defer unlock()
-		current, found, err := readLeaseRecord(d.StateDir, target.Hostname)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("read lease after server wait: %w", err)
-		}
-		if !found || current.Lease != rec.Lease || current.ContainerID != rec.ContainerID {
-			return ds.ReadAt, nil
-		}
-	}
-	if err := mate.UpdateStatus(statusPath, func(s *mate.Status) {
-		if s.Copies == nil {
-			return
-		}
-		if target.Pool != "" {
-			for i := range s.Copies.Leases {
-				v := &s.Copies.Leases[i]
-				if v.Alias == target.Hostname && v.AcquiredAt == target.AcquiredAt && v.Branch == target.Branch {
-					mergeWaitedServer(v.DevServers, &v.DevServersReadAt, target, *observed)
-					return
-				}
-			}
-			return
-		}
-		for i := range s.Copies.DevServices {
-			v := &s.Copies.DevServices[i]
-			if v.Hostname == target.Hostname {
-				mergeWaitedServer(v.DevServers, &v.DevServersReadAt, target, *observed)
-				return
-			}
-		}
-	}); err != nil {
-		return time.Time{}, fmt.Errorf("store waited server: %w", err)
-	}
-	return ds.ReadAt, nil
+	return nil
 }
 
-func mergeWaitedServer(servers *[]topology.DevServerState, at *string, target MateServerWait, observed topology.DevServerState) {
-	if servers == nil {
-		return
+func recordLostCopy(ctx context.Context, d LeaseDeps, statusPath string, target MateCopyTarget, cause error) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("copy wait stopped: %w", err)
 	}
-	for i := range *servers {
-		old := &(*servers)[i]
-		if old.Name == target.Name && old.ReadAt.Equal(target.ReadAt) {
-			*old = observed
-			if observed.ReadAt.After(parseCopyTime(*at)) {
-				*at = observed.ReadAt.UTC().Format(time.RFC3339Nano)
-			}
-			return
-		}
+	if err := StoreMateCopyEvent(d.StateDir, statusPath, target, mate.CopyEvent{Kind: mate.CopyLinkLost}, d.now().UTC(), target.StateAt); err != nil {
+		return fmt.Errorf("store lost copy link: %w", err)
 	}
+	return fmt.Errorf("copy link: %w", cause)
 }

@@ -193,6 +193,19 @@ func (c *Container) ExecSSH(_ context.Context, hostname string, command string) 
 		return []byte(c.PrepareOutput), nil
 	case strings.Contains(command, "@@zcp-devsup version"):
 		return []byte(c.read()), nil
+	case strings.Contains(command, "zcp-devsup ctl copy-state"):
+		if !c.Installed || !c.Running || !slices.Contains(c.Capabilities, devsup.CapabilityCopyState) {
+			return nil, errors.New("copy-state unavailable")
+		}
+		status := devsup.StatusStopped
+		if declaration, err := devsup.ParseDeclaration([]byte(c.Declaration)); err == nil {
+			if preview, ok := devsup.PreviewServer(declaration.Servers); ok {
+				if server := c.Servers[preview.Name]; server != nil {
+					status = server.Status
+				}
+			}
+		}
+		return []byte(encode(map[string]any{"status": status})), nil
 	case strings.Contains(command, "zcp-devsup ctl logs"):
 		return c.logs(command)
 	case strings.Contains(command, "@@zcp-devsup ctl"):

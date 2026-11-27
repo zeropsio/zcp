@@ -225,6 +225,14 @@ func RegisterDevServer(srv *mcp.Server, d DevServerDeps) {
 			states = ops.DevServerStates(ctx, client, projectID, result)
 		}
 		if d.RtInfo.MateEnabled && result.Read != nil {
+			target := ops.MateCopyTarget{Hostname: input.Hostname}
+			if isLease {
+				target.Pool, target.Branch, target.AcquiredAt = lease.Pool, lease.Branch, lease.AcquiredAt
+			}
+			ld := ops.LeaseDeps{StateDir: stateDir, SSH: ssh, Client: client, ProjectID: projectID}
+			if err := ops.ReportMateCopy(ctx, ld, mate.StatusFilePath(), target, result.Read); err != nil {
+				logMateCopyError("report dev server", err)
+			}
 			if isLease {
 				if err := ops.StoreMateLeaseServers(stateDir, mate.StatusFilePath(), lease, states, result.Read.ReadAt); err != nil {
 					logMateCopyError("publish lease servers", err)

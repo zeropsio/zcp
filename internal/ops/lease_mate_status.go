@@ -40,10 +40,27 @@ func PublishMateLeases(stateDir, statusPath string) error {
 			for _, old := range previous {
 				if old.Alias == v.Alias && old.AcquiredAt == v.AcquiredAt && old.Branch == v.Branch {
 					v.DevServers, v.DevServersReadAt = old.DevServers, old.DevServersReadAt
+					v.State, v.StateAt = old.State, old.StateAt
 					break
 				}
 			}
+			if v.State == "" {
+				v.State, _ = mate.NextCopyState("", mate.CopyEvent{Kind: mate.CopyRecorded})
+				v.StateAt = time.Now().UTC().Format(time.RFC3339Nano)
+			}
 			leases = append(leases, v)
+		}
+		for _, old := range previous {
+			found := false
+			for _, current := range leases {
+				if old.Alias == current.Alias && old.AcquiredAt == current.AcquiredAt && old.Branch == current.Branch {
+					found = true
+					break
+				}
+			}
+			if !found {
+				_, _ = mate.NextCopyState(old.State, mate.CopyEvent{Kind: mate.CopyRelease})
+			}
 		}
 		s.Copies.Leases = leases
 		return nil
@@ -90,4 +107,109 @@ func StoreMateLeaseServers(stateDir, statusPath string, target LeaseTargetInfo, 
 func parseCopyTime(raw string) time.Time {
 	at, _ := time.Parse(time.RFC3339Nano, raw)
 	return at
+}
+
+// MateCopyTarget identifies an entry and, for a held wait, the state it saw.
+type MateCopyTarget struct {
+	Hostname, Pool, Branch, AcquiredAt string
+	State                              mate.CopyState
+	StateAt                            string
+}
+
+// StoreMateCopyEvent orders the event under the status lock. A held wait may
+// write only over the state from which it was armed; a late snapshot may not
+// overwrite a newer event. Lease identity is checked under the record lock.
+func StoreMateCopyEvent(stateDir, statusPath string, target MateCopyTarget, event mate.CopyEvent, at time.Time, expected string) error {
+	if target.Pool != "" {
+		unlock, err := lockLeaseRecord(stateDir, target.Hostname)
+		if err != nil {
+			return fmt.Errorf("lock copy event: %w", err)
+		}
+		defer unlock()
+		rec, ok, err := readLeaseRecord(stateDir, target.Hostname)
+		if err != nil {
+			return fmt.Errorf("read copy event lease: %w", err)
+		}
+		if !ok || rec.AcquiredAt != target.AcquiredAt || rec.Branch != target.Branch {
+			return nil
+		}
+	}
+	if err := mate.UpdateStatus(statusPath, func(s *mate.Status) {
+		if s.Copies == nil {
+			return
+		}
+		apply := func(state *mate.CopyState, stateAt *string) {
+			if expected != "" && *stateAt != expected {
+				return
+			}
+			if !at.After(parseCopyTime(*stateAt)) {
+				return
+			}
+			next, ok := mate.NextCopyState(*state, event)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "[zcp] copy %s refused event %s in %s\n", target.Hostname, event.Kind, *state)
+				return
+			}
+			*state, *stateAt = next, at.UTC().Format(time.RFC3339Nano)
+		}
+		if target.Pool != "" {
+			for i := range s.Copies.Leases {
+				v := &s.Copies.Leases[i]
+				if v.Alias == target.Hostname && v.AcquiredAt == target.AcquiredAt && v.Branch == target.Branch {
+					apply(&v.State, &v.StateAt)
+					return
+				}
+			}
+		} else {
+			for i := range s.Copies.DevServices {
+				v := &s.Copies.DevServices[i]
+				if v.Hostname == target.Hostname {
+					apply(&v.State, &v.StateAt)
+					return
+				}
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("store copy event: %w", err)
+	}
+	return nil
+}
+
+// MarkMateCopiesUnknown is the observer's boot event for every held copy.
+func MarkMateCopiesUnknown(statusPath string, at time.Time) error {
+	if err := mate.UpdateStatus(statusPath, func(s *mate.Status) {
+		if s.Copies == nil {
+			return
+		}
+		apply := func(state *mate.CopyState, when *string) {
+			if !at.After(parseCopyTime(*when)) {
+				return
+			}
+			next, ok := mate.NextCopyState(*state, mate.CopyEvent{Kind: mate.CopyLinkLost})
+			if ok {
+				*state, *when = next, at.UTC().Format(time.RFC3339Nano)
+			}
+		}
+		for i := range s.Copies.Leases {
+			v := &s.Copies.Leases[i]
+			apply(&v.State, &v.StateAt)
+		}
+		for i := range s.Copies.DevServices {
+			v := &s.Copies.DevServices[i]
+			apply(&v.State, &v.StateAt)
+		}
+	}); err != nil {
+		return fmt.Errorf("mark copy links lost: %w", err)
+	}
+	return nil
+}
+
+func publishMateLeaseEvent(d LeaseDeps, rec leaseRecord, event mate.CopyEvent) {
+	if !runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		return
+	}
+	target := MateCopyTarget{Hostname: rec.alias(), Pool: rec.PoolHostname, Branch: rec.Branch, AcquiredAt: rec.AcquiredAt}
+	if err := StoreMateCopyEvent(d.StateDir, mate.StatusFilePath(), target, event, d.now().UTC(), ""); err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] publish lease copy event: %v\n", err)
+	}
 }

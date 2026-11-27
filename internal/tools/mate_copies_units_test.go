@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"testing/synctest"
@@ -16,6 +17,98 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// witness: internal/tools/mate_copies.go | if active.at != target.StateAt { → if true {
+func TestMateCopies_MCWait_UnchangedStateKeepsOneWait(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ host string }{{"appdev"}, {"anotherdev"}} {
+		t.Run(tc.host, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "status.json")
+				if err := mate.UpdateStatus(path, func(s *mate.Status) {
+					s.Copies = &mate.CopyStatus{DevServices: []mate.DevCopyStatus{{Hostname: tc.host, State: mate.CopyRunning, StateAt: "2026-11-27T07:00:00Z"}}}
+				}); err != nil {
+					t.Fatal(err)
+				}
+				started, release := make(chan struct{}, 2), make(chan struct{})
+				ssh := &leaseStubSSH{fn: func(string) ([]byte, error) { started <- struct{}{}; <-release; return nil, errors.New("closed") }}
+				o := &mateCopyObserver{statusPath: path, log: func(string) {}, done: make(chan mateCopyWaitKey, 2),
+					active: map[mateCopyWaitKey]mateCopyActive{}, seen: map[mateCopyWaitKey]string{},
+					deps: func(context.Context) (devGitDeps, bool) { return devGitDeps{ssh: ssh}, true }}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer close(release)
+				defer cancel()
+				o.observe(ctx)
+				synctest.Wait()
+				if len(o.active) != 1 || len(started) != 1 {
+					t.Fatalf("active = %d, started = %d, want one", len(o.active), len(started))
+				}
+				key := mateCopyWaitKey{host: tc.host}
+				a := o.active[key]
+				originalCancel := a.cancel
+				cancelled := false
+				a.cancel = func() { cancelled = true; originalCancel() }
+				o.active[key] = a
+				o.observe(ctx)
+				synctest.Wait()
+				if len(o.active) != 1 || len(started) != 1 || cancelled {
+					t.Fatalf("unchanged copy replaced its wait: active=%d started=%d cancelled=%v", len(o.active), len(started), cancelled)
+				}
+			})
+		})
+	}
+}
+
+// non-parallel: the preview reporting entry point reads the process environment.
+// witness: internal/tools/mate_copies.go | reportPreviewCopy(ctx, d, req, lease, host, ds) →
+func TestMateCopies_MCPreviewState_PublishesThePreviewReport(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		legacy bool
+		want   mate.CopyState
+	}{{"supported", false, mate.CopyRunning}, {"older supervisor", true, mate.CopyUnknown}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "status.json")
+			t.Setenv("ZCP_MATE_ENABLED", "1")
+			t.Setenv(mate.EnvStatusFile, path)
+			synctest.Test(t, func(t *testing.T) {
+				writeDevpoolLeaseFile(t, dir)
+				if err := ops.PublishMateLeases(dir, path); err != nil {
+					t.Fatal(err)
+				}
+				if err := ops.MarkMateCopiesUnknown(path, time.Now().Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				pool := platform.ServiceStack{ID: "svc-pool", Name: "devpool", ProjectID: "proj-1", Status: "ACTIVE", SubdomainAccess: true,
+					Ports: []platform.Port{{Port: 9003, Protocol: "tcp", HTTPSupport: true}}, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}}
+				client := platform.NewMock().WithServices([]platform.ServiceStack{pool}).WithService(&pool).
+					WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "abc1.prg1.zerops.app"}).
+					WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: "test-bearer"}})
+				c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"web","port":3000,"command":"run web","preview":true}]}`)
+				c.StableNumber = 3
+				if tc.legacy {
+					c.Capabilities = nil
+				}
+				d := ops.LeaseDeps{Client: client, ProjectID: "proj-1", StateDir: dir, SSH: c,
+					Swarm: func(string, string) ops.SwarmAPI { return mateCopySwarm{} }, Env: func(string) (string, bool) { return "", false },
+					Now: func() time.Time { return time.Now().Add(2 * time.Second) }}
+				answer := EnsureMatePreview(t.Context(), d, okHTTP, MatePreviewRequest{Lease: "devpool-3", AcquiredAt: "2026-10-23T12:00:00Z", Branch: "feat-x"})
+				if answer.Status != "running" {
+					t.Fatalf("preview = %+v, want running", answer)
+				}
+				status, err := mate.ReadStatus(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := status.Copies.Leases[0].State; got != tc.want {
+					t.Fatalf("copy state = %s, want %s", got, tc.want)
+				}
+			})
+		})
+	}
+}
 
 // witness: internal/tools/mate_copies.go | if state.Status == devsup.StatusStarting && ds.Supervisor.Supports(devsup.CapabilityWait) { → if true {
 func TestMateCopies_MCPreview_EnsuresTheSelectedServerAndReportsItsAddress(t *testing.T) {

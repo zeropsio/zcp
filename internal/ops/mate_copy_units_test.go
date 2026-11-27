@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,54 @@ import (
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
-	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// witness: internal/ops/lease_mate_status.go | next, ok := mate.NextCopyState(*state, mate.CopyEvent{Kind: mate.CopyLinkLost}) → next, ok := mate.NextCopyState(*state, mate.CopyEvent{Kind: mate.CopyStop})
+func TestDevServer_DSCopyBoot_UnknownUntilTheSnapshot(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name          string
+		initial       time.Time
+		wantAfterBoot mate.CopyState
+	}{
+		{"older state", base, mate.CopyUnknown},
+		{"newer report", base.Add(2 * time.Minute), mate.CopyRunning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "status.json")
+			if err := mate.UpdateStatus(path, func(s *mate.Status) {
+				s.Copies = &mate.CopyStatus{DevServices: []mate.DevCopyStatus{{Hostname: "appdev", State: mate.CopyRunning, StateAt: tc.initial.Format(time.RFC3339Nano)}}}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := MarkMateCopiesUnknown(path, base.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			status, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status.Copies.DevServices[0].State; got != tc.wantAfterBoot {
+				t.Fatalf("boot = %s, want %s", got, tc.wantAfterBoot)
+			}
+			c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"run","preview":true}]}`)
+			d := LeaseDeps{SSH: c, Now: func() time.Time { return base.Add(3 * time.Minute) }}
+			read := &DevServers{Supervisor: SupervisorVersion{Capabilities: []string{devsup.CapabilityCopyState}}}
+			if err := ReportMateCopy(context.Background(), d, path, MateCopyTarget{Hostname: "appdev"}, read); err != nil {
+				t.Fatal(err)
+			}
+			status, err = mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status.Copies.DevServices[0].State; got != mate.CopyRunning {
+				t.Fatalf("snapshot = %s, want running", got)
+			}
+		})
+	}
+}
 
 // non-parallel: the publishing entry point reads the process environment.
 // witness: internal/ops/lease.go | publishMateLeases(stateDir, "record") →
@@ -91,60 +138,86 @@ func TestLease_LPMateRelease_DropsOnlyTheReleasedLease(t *testing.T) {
 	}
 }
 
-// witness: internal/ops/mate_server_wait.go | *old = observed → observed = *old
-func TestDevServer_DSMateWait_SupervisorAnswerIsRecorded(t *testing.T) {
+// non-parallel: writing a lease record consults the process environment.
+// witness: internal/ops/lease_mate_status.go | *state, *stateAt = next, at.UTC().Format(time.RFC3339Nano) → *state, *stateAt = *state, at.UTC().Format(time.RFC3339Nano)
+func TestDevServer_DSCopyEvents_OnlyCurrentLeaseAndNewerReportAreApplied(t *testing.T) {
+	t.Setenv("ZCP_MATE_ENABLED", "0")
+	start := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, acquired, expected string
+		at                       time.Time
+		want                     mate.CopyState
+	}{
+		{"current", "2026-11-27T07:00:00Z", "", start.Add(time.Minute), "running"},
+		{"prior lease", "2026-11-27T06:00:00Z", "", start.Add(time.Minute), "starting"},
+		{"older report", "2026-11-27T07:00:00Z", "", start.Add(-time.Minute), "starting"},
+		{"superseded wait", "2026-11-27T07:00:00Z", "2026-11-27T06:59:00Z", start.Add(time.Minute), "starting"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "status.json")
+			rec := leaseRecord{PoolHostname: "webpool", ContainerNumber: 1, Branch: "feature", AcquiredAt: "2026-11-27T07:00:00Z"}
+			if err := writeLeaseRecord(dir, rec); err != nil {
+				t.Fatal(err)
+			}
+			if err := mate.UpdateStatus(path, func(s *mate.Status) {
+				s.Standup.Error = "kept"
+				s.Copies = &mate.CopyStatus{Leases: []mate.LeaseCopyStatus{
+					{Alias: "webpool-1", Pool: "webpool", Branch: "feature", AcquiredAt: rec.AcquiredAt, State: "starting", StateAt: start.Format(time.RFC3339Nano)},
+					{Alias: "webpool-2", State: "stopped", StateAt: start.Format(time.RFC3339Nano)},
+				}}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			target := MateCopyTarget{Hostname: "webpool-1", Pool: "webpool", Branch: "feature", AcquiredAt: tc.acquired}
+			if err := StoreMateCopyEvent(dir, path, target, mate.CopyEvent{Kind: mate.CopyReport, Report: "running"}, tc.at, tc.expected); err != nil {
+				t.Fatal(err)
+			}
+			status, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status.Copies.Leases[0].State; got != tc.want {
+				t.Errorf("state = %s, want %s", got, tc.want)
+			}
+			if status.Standup.Error != "kept" || status.Copies.Leases[1].State != "stopped" {
+				t.Error("another section or copy changed")
+			}
+		})
+	}
+}
+
+// witness: internal/ops/mate_server_wait.go | mate.CopyEvent{Kind: mate.CopyLinkLost}, d.now().UTC(), target.StateAt → mate.CopyEvent{Kind: mate.CopyStop}, d.now().UTC(), target.StateAt
+func TestDevServer_DSCopyLink_WaitFailureAndOlderSupervisorAreUnknown(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
-	finish := start.Add(time.Minute)
 	for _, tc := range []struct {
-		name, status, want      string
-		readAt, wantAt, laterAt time.Time
-		wait                    bool
+		name         string
+		capabilities []string
 	}{
-		{name: "running", status: "running", readAt: start, wait: true, want: "running", wantAt: finish},
-		{name: "crashed", status: "crashed", readAt: start, wait: true, want: "crashed", wantAt: finish},
-		{name: "newer observation", status: "running", readAt: finish.Add(time.Minute), wait: true, want: "starting", wantAt: finish.Add(time.Minute)},
-		{name: "older supervisor", status: "running", readAt: start, want: "starting", wantAt: start},
-		{name: "another server read later", status: "running", readAt: start, wait: true, want: "running", wantAt: finish, laterAt: finish.Add(time.Minute)},
+		{"older supervisor", nil}, {"lost wait", []string{devsup.CapabilityCopyState}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(t.TempDir(), "status.json")
-			synctest.Test(t, func(t *testing.T) {
-				servers := []topology.DevServerState{{Name: "web", Status: "starting", ReadAt: tc.readAt}}
-				var listAt string
-				if !tc.laterAt.IsZero() {
-					servers = append(servers, topology.DevServerState{Name: "api", Status: "running", ReadAt: tc.laterAt})
-					listAt = tc.laterAt.Format(time.RFC3339Nano)
-				}
-				if err := mate.UpdateStatus(path, func(s *mate.Status) {
-					s.Copies = &mate.CopyStatus{DevServices: []mate.DevCopyStatus{{Hostname: "appdev", DevServers: &servers, DevServersReadAt: listAt}}}
-				}); err != nil {
-					t.Fatal(err)
-				}
-				c := &devservertest.Container{Installed: true, Running: true, SupervisorVersion: "v1", Formats: []int{1},
-					Servers:   map[string]*devsup.ServerState{"web": {Status: devsup.StatusStarting, Desired: devsup.DesiredRunning}},
-					WaitFinds: map[string]devsup.ServerState{"web": {Status: devsup.Status(tc.status), Desired: devsup.DesiredRunning}}}
-				if tc.wait {
-					c.Capabilities = []string{devsup.CapabilityWait}
-				}
-				d := LeaseDeps{SSH: c, Now: func() time.Time { return finish }}
-				_, err := AwaitMateServer(t.Context(), d, path, "", MateServerWait{Hostname: "appdev", Name: "web", ReadAt: start})
-				if err != nil {
-					t.Fatal(err)
-				}
-				status, err := mate.ReadStatus(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				got := (*status.Copies.DevServices[0].DevServers)[0]
-				if got.Status != tc.want || !got.ReadAt.Equal(tc.wantAt) {
-					t.Errorf("server = %+v, want %s observed at %s", got, tc.want, tc.wantAt)
-				}
-				if !tc.laterAt.IsZero() && status.Copies.DevServices[0].DevServersReadAt != listAt {
-					t.Error("an earlier server wait moved the list observation time backwards")
-				}
-			})
+			if err := mate.UpdateStatus(path, func(s *mate.Status) {
+				s.Copies = &mate.CopyStatus{DevServices: []mate.DevCopyStatus{{Hostname: "appdev", State: "running", StateAt: start.Format(time.RFC3339Nano)}}}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			c := &devservertest.Container{Installed: true, Running: true, SupervisorVersion: "v1", Formats: []int{1}, Capabilities: tc.capabilities}
+			d := LeaseDeps{SSH: c, Now: func() time.Time { return start.Add(time.Minute) }}
+			target := MateCopyTarget{Hostname: "appdev", State: "running", StateAt: start.Format(time.RFC3339Nano)}
+			if err := AwaitMateServer(t.Context(), d, path, "", target); err == nil {
+				t.Fatal("lost link must be reported")
+			}
+			status, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status.Copies.DevServices[0].State; got != "unknown" {
+				t.Errorf("state = %s, want unknown", got)
+			}
 		})
 	}
 }

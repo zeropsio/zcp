@@ -60,6 +60,7 @@ func EnsureMatePreview(ctx context.Context, d ops.LeaseDeps, httpClient ops.HTTP
 		return previewFailure(reason)
 	}
 	ds, err := ops.ReadDevServers(ctx, d.SSH, host, root)
+	reportPreviewCopy(ctx, d, req, lease, host, ds)
 	var noSupervisor *ops.NoSupervisorError
 	noSupervisorForLease := req.Lease != "" && ds != nil && errors.As(err, &noSupervisor)
 	if ds == nil || ds.DeclarationErr != nil || (err != nil && !noSupervisorForLease) {
@@ -94,6 +95,9 @@ func EnsureMatePreview(ctx context.Context, d ops.LeaseDeps, httpClient ops.HTTP
 				}
 				result, reason, err = awaitPreviewServer(ctx, d, req, result.Read, server, lease.Pool, root)
 			}
+		}
+		if result != nil {
+			reportPreviewCopy(ctx, d, req, lease, host, result.Read)
 		}
 		if reason != "" {
 			return previewFailure(reason)
@@ -147,6 +151,19 @@ func EnsureMatePreview(ctx context.Context, d ops.LeaseDeps, httpClient ops.HTTP
 		return previewFailure(reason)
 	}
 	return MatePreviewAnswer{Status: "running", URL: address}
+}
+
+func reportPreviewCopy(ctx context.Context, d ops.LeaseDeps, req MatePreviewRequest, lease ops.LeaseTargetInfo, host string, read *ops.DevServers) {
+	if !runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		return
+	}
+	target := ops.MateCopyTarget{Hostname: host}
+	if req.Lease != "" {
+		target.Pool, target.Branch, target.AcquiredAt = lease.Pool, req.Branch, req.AcquiredAt
+	}
+	if err := ops.ReportMateCopy(ctx, d, mate.StatusFilePath(), target, read); err != nil {
+		logMateCopyError("report preview copy", err)
+	}
 }
 
 // awaitPreviewServer uses the supervisor's existing start receipt, then reads
@@ -252,37 +269,47 @@ func KeepMateCopies(ctx context.Context, env func() func(string) string, statusP
 	if err := ops.PublishMateLeases(stateDir, statusPath); err != nil {
 		log("copy observer cannot publish leases")
 	}
+	if err := reconcileMateDevServices(stateDir, statusPath); err != nil {
+		log("copy observer cannot publish development services")
+	}
+	if err := ops.MarkMateCopiesUnknown(statusPath, time.Now().UTC()); err != nil {
+		log("copy observer cannot mark its lost links")
+	}
 	o := &mateCopyObserver{stateDir: stateDir, statusPath: statusPath, log: log,
 		deps: liveDevGitDeps(env, log), ssh: platform.NewSystemSSHDeployer(),
-		done: make(chan mateCopyWaited, 64), scanDone: make(chan struct{}, 1),
-		seen: map[mateCopyWaitKey]time.Time{}, active: map[mateCopyWaitKey]bool{}}
-	o.refresh(ctx)
+		done: make(chan mateCopyWaitKey, 64), scanDone: make(chan struct{}, 1),
+		active: map[mateCopyWaitKey]mateCopyActive{}, seen: map[mateCopyWaitKey]string{}}
+	o.bootLeases(ctx)
+	o.scan(ctx)
 	o.observe(ctx)
 	o.run(ctx, watcher, changed)
 }
 
-type mateCopyWaitKey struct{ host, acquired, branch, name string }
-
-type mateCopyWaited struct {
-	key mateCopyWaitKey
-	at  time.Time
+type mateCopyWaitKey struct{ host, acquired, branch string }
+type mateCopyActive struct {
+	at     string
+	cancel context.CancelFunc
 }
 
-// mateCopyObserver owns its watches, in-flight waits and coalesced scan. All
-// maps and scan flags are changed only by run's goroutine.
+// Only run's goroutine changes active and the scan flags.
 type mateCopyObserver struct {
 	stateDir, statusPath string
 	log                  func(string)
 	deps                 func(context.Context) (devGitDeps, bool)
 	ssh                  ops.SSHDeployer
-	done                 chan mateCopyWaited
+	done                 chan mateCopyWaitKey
 	scanDone             chan struct{}
-	seen                 map[mateCopyWaitKey]time.Time
-	active               map[mateCopyWaitKey]bool
+	active               map[mateCopyWaitKey]mateCopyActive
+	seen                 map[mateCopyWaitKey]string
 	scanning, scanAgain  bool
 }
 
 func (o *mateCopyObserver) run(ctx context.Context, watcher *fsnotify.Watcher, changed <-chan struct{}) {
+	defer func() {
+		for _, active := range o.active {
+			active.cancel()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -306,12 +333,8 @@ func (o *mateCopyObserver) run(ctx context.Context, watcher *fsnotify.Watcher, c
 				return
 			}
 			o.log("copy observer service metadata watch lost events")
-			o.refresh(ctx)
-		case result := <-o.done:
-			delete(o.active, result.key)
-			if !result.at.IsZero() {
-				o.seen[result.key] = result.at
-			}
+		case key := <-o.done:
+			delete(o.active, key)
 			o.observe(ctx)
 		case <-o.scanDone:
 			o.scanning = false
@@ -347,6 +370,38 @@ func (o *mateCopyObserver) scan(ctx context.Context) {
 	}()
 }
 
+// bootLeases reads each held lease once after publishing unknown.
+func (o *mateCopyObserver) bootLeases(ctx context.Context) {
+	status, err := mate.ReadStatus(o.statusPath)
+	if err != nil || status.Copies == nil {
+		return
+	}
+	d, ok := o.deps(ctx)
+	if !ok {
+		return
+	}
+	for _, lease := range status.Copies.Leases {
+		target := ops.MateCopyTarget{Hostname: lease.Alias, Pool: lease.Pool, Branch: lease.Branch, AcquiredAt: lease.AcquiredAt, State: lease.State, StateAt: lease.StateAt}
+		go func() {
+			ld := LeaseDepsFor(d.client, d.rt.ProjectID, o.stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), nil, d.ssh, d.rt)
+			info, exists, checkErr := ops.LeaseTargetChecked(ctx, ld, target.Hostname, "observed")
+			if checkErr != nil || !exists || info.AcquiredAt != target.AcquiredAt || info.Branch != target.Branch {
+				return
+			}
+			if info.Parked {
+				if err := ops.StoreMateCopyEvent(o.stateDir, o.statusPath, target, mate.CopyEvent{Kind: mate.CopyPark}, time.Now().UTC(), ""); err != nil {
+					o.log("copy observer cannot store parked lease")
+				}
+				return
+			}
+			read, _ := ops.ReadDevServers(ctx, d.ssh, target.Hostname, supervisorRoot(o.stateDir, target.Hostname))
+			if err := ops.ReportMateCopy(ctx, ld, o.statusPath, target, read); err != nil {
+				o.log("copy observer cannot read lease state")
+			}
+		}()
+	}
+}
+
 func (o *mateCopyObserver) observe(ctx context.Context) {
 	status, err := mate.ReadStatus(o.statusPath)
 	if err != nil || status.Copies == nil {
@@ -355,10 +410,23 @@ func (o *mateCopyObserver) observe(ctx context.Context) {
 	var d devGitDeps
 	var haveDeps, checked bool
 	present := map[mateCopyWaitKey]bool{}
-	start := func(target ops.MateServerWait) {
-		key := mateCopyWaitKey{target.Hostname, target.AcquiredAt, target.Branch, target.Name}
+	start := func(target ops.MateCopyTarget) {
+		key := mateCopyWaitKey{target.Hostname, target.AcquiredAt, target.Branch}
 		present[key] = true
-		if o.active[key] || o.seen[key].Equal(target.ReadAt) {
+		active, running := o.active[key]
+		if target.State == mate.CopyUnknown || target.State == mate.CopyParked || target.State == mate.CopyGone || target.State == "" {
+			if running {
+				active.cancel()
+			}
+			return
+		}
+		if running {
+			if active.at != target.StateAt {
+				active.cancel()
+			}
+			return
+		}
+		if o.seen[key] == target.StateAt {
 			return
 		}
 		if !checked {
@@ -369,22 +437,15 @@ func (o *mateCopyObserver) observe(ctx context.Context) {
 			o.startWait(ctx, key, target, d)
 		}
 	}
-	for _, lease := range status.Copies.Leases {
-		if lease.DevServers != nil {
-			for _, server := range *lease.DevServers {
-				if server.Status == string(devsup.StatusStarting) {
-					start(ops.MateServerWait{Hostname: lease.Alias, Pool: lease.Pool, Branch: lease.Branch, AcquiredAt: lease.AcquiredAt, Name: server.Name, ReadAt: server.ReadAt})
-				}
-			}
-		}
+	for _, v := range status.Copies.Leases {
+		start(ops.MateCopyTarget{Hostname: v.Alias, Pool: v.Pool, Branch: v.Branch, AcquiredAt: v.AcquiredAt, State: v.State, StateAt: v.StateAt})
 	}
-	for _, dev := range status.Copies.DevServices {
-		if dev.DevServers != nil {
-			for _, server := range *dev.DevServers {
-				if server.Status == string(devsup.StatusStarting) {
-					start(ops.MateServerWait{Hostname: dev.Hostname, Name: server.Name, ReadAt: server.ReadAt})
-				}
-			}
+	for _, v := range status.Copies.DevServices {
+		start(ops.MateCopyTarget{Hostname: v.Hostname, State: v.State, StateAt: v.StateAt})
+	}
+	for key, active := range o.active {
+		if !present[key] {
+			active.cancel()
 		}
 	}
 	for key := range o.seen {
@@ -394,17 +455,19 @@ func (o *mateCopyObserver) observe(ctx context.Context) {
 	}
 }
 
-func (o *mateCopyObserver) startWait(ctx context.Context, key mateCopyWaitKey, target ops.MateServerWait, d devGitDeps) {
-	o.active[key], o.seen[key] = true, target.ReadAt
+func (o *mateCopyObserver) startWait(ctx context.Context, key mateCopyWaitKey, target ops.MateCopyTarget, d devGitDeps) {
+	waitCtx, cancel := context.WithCancel(ctx)
+	o.active[key] = mateCopyActive{target.StateAt, cancel}
+	o.seen[key] = target.StateAt
 	go func() {
+		defer cancel()
 		ld := LeaseDepsFor(d.client, d.rt.ProjectID, o.stateDir, ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout}), nil, d.ssh, d.rt)
 		root := supervisorRoot(o.stateDir, target.Hostname)
-		at, err := ops.AwaitMateServer(ctx, ld, o.statusPath, root, target)
-		if err != nil {
+		if err := ops.AwaitMateServer(waitCtx, ld, o.statusPath, root, target); err != nil && waitCtx.Err() == nil {
 			o.log("copy observer could not wait for a dev server")
 		}
 		select {
-		case o.done <- mateCopyWaited{key, at}:
+		case o.done <- key:
 		case <-ctx.Done():
 		}
 	}()
@@ -445,6 +508,10 @@ func reconcileMateDevServices(stateDir, statusPath string) error {
 		for _, host := range names {
 			dev := old[host]
 			dev.Hostname = host
+			if dev.State == "" {
+				dev.State, _ = mate.NextCopyState("", mate.CopyEvent{Kind: mate.CopyRecorded})
+				dev.StateAt = time.Now().UTC().Format(time.RFC3339Nano)
+			}
 			devs = append(devs, dev)
 		}
 		s.Copies.DevServices = devs
@@ -480,6 +547,10 @@ func lookMateDevServices(ctx context.Context, stateDir, statusPath string, ssh o
 		}
 		if branchErr != nil || serverErr != nil {
 			log("copy observer could not read every fact for " + dev.Hostname)
+		}
+		ld := ops.LeaseDeps{StateDir: stateDir, SSH: ssh, Client: client, ProjectID: projectID}
+		if err := ops.ReportMateCopy(ctx, ld, statusPath, ops.MateCopyTarget{Hostname: dev.Hostname}, read); err != nil {
+			log("copy observer could not report " + dev.Hostname)
 		}
 		if err := storeClassicLook(statusPath, dev.Hostname, branchRead, branchAt, servers, serversAt); err != nil {
 			log("copy observer could not store the observation for " + dev.Hostname)

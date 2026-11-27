@@ -163,6 +163,10 @@ func acquiredDevServers(ctx context.Context, d LeaseDeps, rec leaseRecord, subdo
 	ds.Service = rec.PoolHostname
 	servers := DevServerStates(ctx, d.Client, d.ProjectID, &DevServerResult{Hostname: rec.alias(), Pool: rec.PoolHostname, Read: ds, subdomainOn: subdomainOn})
 	if runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		target := MateCopyTarget{Hostname: rec.alias(), Pool: rec.PoolHostname, Branch: rec.Branch, AcquiredAt: rec.AcquiredAt}
+		if err := ReportMateCopy(ctx, d, mate.StatusFilePath(), target, ds); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcp] report acquired copy: %v\n", err)
+		}
 		if err := StoreMateLeaseServers(d.StateDir, mate.StatusFilePath(), rec.targetInfo(), servers, ds.ReadAt); err != nil {
 			fmt.Fprintf(os.Stderr, "[zcp] publish lease servers: %v\n", err)
 		}
