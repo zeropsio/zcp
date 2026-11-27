@@ -82,8 +82,8 @@ func RegisterBoard(srv *mcp.Server, httpClient hq.Doer, rt runtime.Info, carries
 		}
 		return jsonResult(boardProposeAnswer{
 			Proposed: boardProposed{Board: proposal},
-			NextActions: "Nothing was written: Mate shows the task in a card above, where the person can edit the brief and put it on the board. " +
-				"Say one sentence — that you proposed it for the board, in the card above — and never start that work yourself, on no branch. " +
+			NextActions: "Nothing was written: Mate shows the task in a card in this conversation, where the person can edit the brief and put it on the board. " +
+				"Say one sentence — that you proposed it for the board, in its card — and never start that work yourself, on no branch. " +
 				"Then go on with what the person asked for.",
 		}), nil, nil
 	})

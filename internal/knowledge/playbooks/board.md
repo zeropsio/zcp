@@ -18,6 +18,6 @@ Work nobody asked for that you find outside every open change — a bug in anoth
 
 1. Read the board first: `zerops_board_list`. When an open task already covers the work, propose nothing and tell the person in one sentence that it is on the board.
 2. Otherwise `zerops_board_propose title="<one line>" brief="<the whole task>"`. Write the brief for whoever takes it, who has not seen this conversation: what is wrong or missing, where, how you found it, and what done looks like. Every member of the organization reads the board: no secret, value or excerpt of this conversation.
-3. Say one sentence — that you proposed it for the board, in the card above — and go on with what the person asked for.
+3. Say one sentence — that you proposed it for the board, in its card — and go on with what the person asked for. Never say where the card stands (above or below): Mate places it.
 
 Never ask the person for a token, a link or a board address: the card is the whole ask. When the board cannot be read, propose anyway; the person sees the board before they put the task there.

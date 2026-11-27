@@ -4279,7 +4279,7 @@ names no application has no board.
   nothing is proposed and the refusal names the bound. It writes nothing and asks HQ nothing. It
   answers `{"proposed":{"board":{"title":"<title>","brief":"<brief>"}},"nextActions":"…"}`,
   telling the agent that nothing was written, to say one sentence — that it proposed the task for
-  the board, in the card above — never to start that work itself on any branch, and to go on with
+  the board, in its card, naming no place for it — never to start that work itself on any branch, and to go on with
   what the person asked for. Its annotations are those of a proposal: read-only, since it writes
   nothing, and not idempotent, since each call draws a new card.
 - `zerops_board_list` takes `{}` and reads `GET /api/mate/tasks` under the project key, once, within
