@@ -319,7 +319,10 @@ knows about mate lives in `internal/mate`: stdlib, the Go-maintained
 beside the `ZCP_AUTHORING` gate. It accepts `1` or `true`, case-insensitive, surrounding space
 tolerated — deliberately more forgiving than `ZCP_AUTHORING`'s exact `1`, because this one is typed
 into a service's env in the Zerops GUI, where a silently ignored value is indistinguishable from a
-broken feature.
+broken feature. `zcp serve` reads it, with the container's identity, from the container's live env
+store before its own environment, so the zcp an agent's MCP client starts is the Mate's whatever
+environment that client passes on (Cursor's passes only the variables its config names): it never
+recovers a conversation's interrupted bootstrap as a standalone zcp would.
 
 The governing rule is stated as a test, not as prose: **with the flag unset, a container running a
 zcp release that carries this delivery path behaves exactly as one that predates it.** Concretely,
@@ -3784,15 +3787,18 @@ branch=…` releases them together. A lease that comes back `reused: true` — t
 already held on that pool — is a lease held already, which binds nothing. A pool hands a released
 container out again under the same alias, with a new `acquiredAt`.
 
-A lease never decides where a conversation's sessions run: the agent's session keeps opening in the
-Mate workspace, because zcp keeps its state in the session's working directory (`.zcp/state`: the
-lease records, the work session, the ssh aliases it rewrites from them). A session opened in the lease
-mount would lose every lease record ("No lease record" on release), write `.zcp/state` into the leased
-checkout, and rewrite the ssh aliases from an empty set. The agent reaches the lease the way it reaches
-a dev service: files under `/var/www/<alias>`, commands over `ssh <alias>`.
-Because every session opens in the workspace, the workspace `CLAUDE.md` zcp writes imports each pair's
-repository `CLAUDE.md` (`@<host>/CLAUDE.md`), so a repository's own instructions load at session start;
-a lease's do not — they load once the agent reads a file in its lease (`docs/spec-workflows.md` §5.1).
+**One state directory per container.** Every zcp in a container keeps the project's records in the
+workspace's `/var/www/.zcp/state` (service records, bootstrap sessions, work sessions, lease records
+and the ssh aliases it rewrites from them), whatever directory its agent was started in: the Mate's own
+agent, a crewmate working in its copy (`<mount>/.crew/<handle>`) and a session opened in a lease mount
+read one set of records, so each answers the same status about the project. A session keeps what it
+owns — a bootstrap its conversation, a work session its process — and a zcp that owns neither reads
+the services a finished bootstrap set up as set up. A lease never decides where a conversation's
+sessions run: the agent reaches the lease the way it reaches a dev service, files under
+`/var/www/<alias>` and commands over `ssh <alias>`. A conversation's session opens in the workspace,
+so the workspace `CLAUDE.md` zcp writes, which imports each pair's repository `CLAUDE.md`
+(`@<host>/CLAUDE.md`), loads a repository's own instructions at session start; a lease's load once
+the agent reads a file in its lease (`docs/spec-workflows.md` §5.1).
 
 **Release on archive and on completion.** When the person archives a conversation bound to a lease,
 Mate runs `zcp lease release --branch <branch> --repo <repo> --json` (MA-6, `docs/spec-workflows.md` §8
