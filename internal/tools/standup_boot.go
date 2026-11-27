@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
@@ -13,7 +12,6 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/platform/watch"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -68,7 +66,7 @@ func StandupAtBoot(ctx context.Context, env func() func(string) string, statusPa
 		batch: batchDeployer{
 			client: client, httpClient: httpClient, projectID: rt.ProjectID,
 			sshDeployer: platform.NewSystemSSHDeployer(),
-			rtInfo:      rt, stateDir: filepath.Join(topology.CodeMountRoot, ".zcp", "state"),
+			rtInfo:      rt, stateDir: runtime.ContainerStateDir,
 		},
 		identity:    func() hq.Identity { return hqIdentity(rt) },
 		runtimeWait: standupRuntimeWait,

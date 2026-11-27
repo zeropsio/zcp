@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,7 +21,6 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
-	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // These Mate server verbs run against the MCP server's lease state and read no stdin.
@@ -258,7 +256,7 @@ func resolveLiveLeaseDeps(ctx context.Context) (ops.LeaseDeps, error) {
 	if err != nil {
 		return ops.LeaseDeps{}, fmt.Errorf("build the platform client: %w", err)
 	}
-	stateDir := filepath.Join(topology.CodeMountRoot, ".zcp", "state")
+	stateDir := runtime.ContainerStateDir
 	swarm := ops.NewSwarmFactory(&http.Client{Timeout: ops.LeaseCallTimeout})
 	return tools.LeaseDepsFor(client, rt.ProjectID, stateDir, swarm, platform.NewSystemMounter(), platform.NewSystemSSHDeployer(), rt), nil
 }

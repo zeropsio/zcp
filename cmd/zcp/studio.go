@@ -212,7 +212,7 @@ func runStudioDeploy(args []string) {
 			fmt.Fprintf(os.Stderr, "deploy: resolve target: %v\n", err)
 			os.Exit(1)
 		}
-		stateDir := filepath.Join(topology.CodeMountRoot, ".zcp", "state")
+		stateDir := runtime.ContainerStateDir
 		release, err := ops.LockStage(ctx, stateDir, target.ID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "deploy: %v\n", err)

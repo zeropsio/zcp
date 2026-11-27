@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -100,7 +99,7 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 	logFetcher := platform.NewLogFetcher()
 	sshDeployer := platform.NewSystemSSHDeployer()
 	mounter := platform.NewSystemMounter()
-	stateDir := filepath.Join(topology.CodeMountRoot, ".zcp", "state")
+	stateDir := runtime.ContainerStateDir
 	return func(ctx context.Context) (devGitDeps, bool) {
 		lookup := env()
 		rt := runtime.DetectFrom(lookup)

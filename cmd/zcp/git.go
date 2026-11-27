@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -147,7 +146,7 @@ func handleSIGPIPE() {
 // fixed, never the caller's working directory, which `zcp git` may be run
 // from anywhere.
 func brokeredGitStateDir() string {
-	return filepath.Join(topology.CodeMountRoot, ".zcp", "state")
+	return runtime.ContainerStateDir
 }
 
 // runGitCmd runs `zcp git` with args — everything after "git" — on d. A call

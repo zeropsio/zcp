@@ -228,7 +228,7 @@ func KeepMateCopies(ctx context.Context, env func() func(string) string, statusP
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stateDir := filepath.Join(topology.CodeMountRoot, ".zcp", "state")
+	stateDir := runtime.ContainerStateDir
 	servicesDir := filepath.Join(stateDir, "services")
 	if err := os.MkdirAll(servicesDir, 0o755); err != nil {
 		log("copy observer cannot open service metadata")
