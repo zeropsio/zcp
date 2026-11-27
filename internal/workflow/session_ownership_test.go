@@ -117,7 +117,7 @@ func TestBootstrapOwnership_SO2_NewBootstrapKeepsInterruptedWork(t *testing.T) {
 	}
 }
 
-// witness: internal/workflow/registry.go | if s.alive || !old || s.hasPlan || s.hasIncompleteMeta { → if s.alive || !old || s.hasPlan || s.hasIncompleteMeta || old {
+// witness: internal/workflow/registry.go | if s.alive || !old || s.hasPlan || s.hasIncompleteMeta || s.unread { → if s.alive || !old || s.hasPlan || s.hasIncompleteMeta || s.unread || old {
 func TestPruneDeadSessions_SO4_RetainsOnlyHeldOrRecentMateBootstraps(t *testing.T) {
 	t.Parallel()
 	cutoff := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -132,6 +132,7 @@ func TestPruneDeadSessions_SO4_RetainsOnlyHeldOrRecentMateBootstraps(t *testing.
 		{"Mate exactly at cutoff", true, sessionRetention{entry: SessionEntry{SessionID: "s", Workflow: WorkflowBootstrap, CreatedAt: "2026-01-02T00:00:00Z"}}, true},
 		{"Mate old dead plan", true, sessionRetention{entry: SessionEntry{SessionID: "s", Workflow: WorkflowBootstrap, CreatedAt: "2020-01-01T00:00:00Z"}, hasPlan: true}, true},
 		{"Mate old dead meta", true, sessionRetention{entry: SessionEntry{SessionID: "s", Workflow: WorkflowBootstrap, CreatedAt: "2020-01-01T00:00:00Z"}, hasIncompleteMeta: true}, true},
+		{"Mate old dead unread", true, sessionRetention{entry: SessionEntry{SessionID: "s", Workflow: WorkflowBootstrap, CreatedAt: "2020-01-01T00:00:00Z"}, unread: true}, true},
 		{"Mate old live", true, sessionRetention{entry: SessionEntry{SessionID: "s", Workflow: WorkflowBootstrap, CreatedAt: "2020-01-01T00:00:00Z"}, alive: true}, true},
 		{"standalone dead recent", false, sessionRetention{entry: SessionEntry{SessionID: "s", Workflow: WorkflowBootstrap, CreatedAt: "2026-01-02T00:00:01Z"}}, false},
 		{"standalone live old", false, sessionRetention{entry: SessionEntry{SessionID: "s", Workflow: WorkflowBootstrap, CreatedAt: "2020-01-01T00:00:00Z"}, alive: true}, false},

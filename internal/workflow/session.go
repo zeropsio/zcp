@@ -205,11 +205,7 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string, mate bo
 	}
 
 	err = withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		var err error
-		reg.Sessions, err = pruneRegistrySessions(stateDir, reg.Sessions, mate)
-		if err != nil {
-			return nil, fmt.Errorf("init session atomic: %w", err)
-		}
+		reg.Sessions = pruneRegistrySessions(stateDir, reg.Sessions, mate)
 		liveIDs := make(map[string]bool, len(reg.Sessions)+1)
 		for _, s := range reg.Sessions {
 			liveIDs[s.SessionID] = true

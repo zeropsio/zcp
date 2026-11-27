@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -296,11 +298,13 @@ type sessionRetention struct {
 	alive             bool
 	hasPlan           bool
 	hasIncompleteMeta bool
+	unread            bool // a file that holds the fact could not be read: kept, never erased
 }
 
 // pruneRegistrySessions reads the facts owned by session and meta files before
-// deciding retention. A failed read stops the start before anything is pruned.
-func pruneRegistrySessions(stateDir string, sessions []SessionEntry, mate bool) ([]SessionEntry, error) {
+// deciding retention. A missing session file holds no plan; any other failed
+// read keeps the entry, so neither lost work nor a wedged start follows from it.
+func pruneRegistrySessions(stateDir string, sessions []SessionEntry, mate bool) []SessionEntry {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	facts := make([]sessionRetention, len(sessions))
 	needsOwners := false
@@ -311,10 +315,7 @@ func pruneRegistrySessions(stateDir string, sessions []SessionEntry, mate bool) 
 		}
 	}
 	if needsOwners {
-		metas, err := ListServiceMetas(stateDir)
-		if err != nil {
-			return nil, fmt.Errorf("prune sessions: %w", err)
-		}
+		metas, metasErr := ListServiceMetas(stateDir)
 		owners := make(map[string]bool, len(metas))
 		for _, meta := range metas {
 			if !meta.IsComplete() && meta.BootstrapSession != "" {
@@ -327,17 +328,21 @@ func pruneRegistrySessions(stateDir string, sessions []SessionEntry, mate bool) 
 				continue
 			}
 			s.hasIncompleteMeta = owners[s.entry.SessionID]
-			if s.hasIncompleteMeta {
+			if s.hasIncompleteMeta || metasErr != nil {
+				s.unread = metasErr != nil
 				continue
 			}
 			state, err := LoadSessionByID(stateDir, s.entry.SessionID)
-			if err != nil {
-				return nil, fmt.Errorf("prune sessions: %w", err)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+			case err != nil:
+				s.unread = true
+			default:
+				s.hasPlan = state.Bootstrap != nil && state.Bootstrap.Plan != nil
 			}
-			s.hasPlan = state.Bootstrap != nil && state.Bootstrap.Plan != nil
 		}
 	}
-	return pruneDeadSessions(facts, mate, cutoff), nil
+	return pruneDeadSessions(facts, mate, cutoff)
 }
 
 func olderThan(created string, cutoff time.Time) bool {
@@ -352,7 +357,7 @@ func pruneDeadSessions(sessions []sessionRetention, mate bool, cutoff time.Time)
 	for _, s := range sessions {
 		old := olderThan(s.entry.CreatedAt, cutoff)
 		if mate && s.entry.Workflow == WorkflowBootstrap {
-			if s.alive || !old || s.hasPlan || s.hasIncompleteMeta {
+			if s.alive || !old || s.hasPlan || s.hasIncompleteMeta || s.unread {
 				kept = append(kept, s.entry)
 			}
 			continue
