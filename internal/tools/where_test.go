@@ -404,7 +404,7 @@ func TestDescribed_WGPoolAddress_DraftAndAppStayDistinct(t *testing.T) {
 	const head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	step := workflow.EditStep{Action: workflow.EditHandedOver, Head: head, Number: 7}
 	answer := describedHandover(7, head, step, nil, time.Time{})
-	for _, want := range []string{"direct them to Open draft for this change in Mate", "app changes only when adding succeeds", "Copy link in Mate", "Never put a hostname or address in chat"} {
+	for _, want := range []string{"direct them to Open draft for this change in Mate", "app changes only when adding succeeds", "Copy link in Mate", "Your app shows what has been added to it and is the address to bookmark and share; a draft is seen only in Mate until it is added.", "Never put a hostname or address in chat"} {
 		if !strings.Contains(answer, want) {
 			t.Errorf("handover omitted %q: %s", want, answer)
 		}

@@ -59,10 +59,10 @@ its containers away from the app.
    naming which push last built and verified. Never put a lease or pool URL
    in a reply to the person or in the change description. For each
    user-facing part with a finished version and a public address, give only
-   **Your app:** <the part's stage public address>. Say it shows the last
-   version you handed over and is the address to bookmark and share. Work in
-   progress is the **draft**. The first answer speaks only of the app and its
-   draft; mention stage or production only when asked. Never say "Preview",
+   **Your app:** <the part's stage public address>. Say this is the address to
+   bookmark and share. Work in progress is the **draft**. The first answer
+   speaks only of the app and its draft; mention stage or production only when
+   asked. Never say "Preview",
    "Review build", "main", "lease" or host names to the person.
    Read the part's stage from `zerops_workflow action="status"` and its
    `publicAccess.url` or `publicAccess.domains` with `zerops_discover service="<stage>"`.
