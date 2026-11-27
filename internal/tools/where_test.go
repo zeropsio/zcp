@@ -278,56 +278,40 @@ func TestDescribed_WGReviewPromise_OnlyObservedHeadAwaits(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/hq_change_description.go | kept.Head != head → kept.Head == head
-func TestDescription_WGKeptHead_KeptWordsStayAtTheirCommit(t *testing.T) {
+// witness: internal/tools/hq_change_description.go | c.Description = kept → if !existed { c.Description = kept }
+func TestDescription_WGKeptHead_ExplicitDescribeBindsWordsToNewHead(t *testing.T) {
 	t.Parallel()
+	const words = "The same reviewed description."
+	const newHead = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	for _, tc := range []struct {
-		name, text, head string
-		kept             *workflow.ChangeDescription
-		want             bool
+		name, previousHead string
 	}{
-		{"same words, moved head", "words", "new", &workflow.ChangeDescription{Text: "words", Head: "old"}, true},
-		{"same words, same head", "words", "old", &workflow.ChangeDescription{Text: "words", Head: "old"}, false},
-		{"new words", "new words", "new", &workflow.ChangeDescription{Text: "words", Head: "old"}, false},
-		{"nothing kept", "words", "new", nil, false},
+		{"previous commit", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{"empty previous head", ""},
+		{"same commit", newHead},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := keptDescriptionAtAnotherHead(tc.kept, tc.text, tc.head); got != tc.want {
-				t.Fatalf("kept at another head = %v, want %v", got, tc.want)
+			dir := t.TempDir()
+			ref := changeRef{AppID: "app", Repo: "repo", Number: 7}
+			pick := changePick{Branch: "feature"}
+			if err := keepChangeDescription(dir, ref, pick, words, "title", tc.previousHead); err != nil {
+				t.Fatal(err)
 			}
-		})
-	}
-}
-
-// witness: internal/tools/hq_change_description.go | step.Head == workcopy.head → step.Head != workcopy.head
-func TestDescription_WGKeptStep_OnlyRewriteAtPublishedHead(t *testing.T) {
-	t.Parallel()
-	head, older := "newcommit", "oldcommit"
-	workcopy := descriptionCopy{name: "pool-1", head: head}
-	for _, tc := range []struct {
-		name    string
-		step    workflow.EditStep
-		want    []string
-		rewrite bool
-	}{
-		{"ahead", workflow.EditStep{Action: "push", Copy: "pool-1"}, []string{"push", "pool-1"}, false},
-		{"behind", workflow.EditStep{Action: "pull", Copy: "pool-1"}, []string{"pull", "pool-1"}, false},
-		{"unread", workflow.EditStep{Action: workflow.EditUnknown, Reason: "HQ was not read"}, []string{"unknown", "HQ was not read"}, false},
-		{"other change", workflow.EditStep{Action: workflow.EditHandedOver, Number: 8, Head: head}, []string{"handed over", "#8"}, false},
-		{"head changed since read", workflow.EditStep{Action: workflow.EditHandedOver, Number: 7, Head: older}, []string{"handed over", "#7"}, false},
-		{"same change and head", workflow.EditStep{Action: "describe change", Number: 7, Head: head}, []string{"write", "current commit"}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := keptDescriptionReply(7, older, workcopy, tc.step)
-			for _, want := range append(tc.want, older) {
-				if !strings.Contains(got, want) {
-					t.Fatalf("kept description reply = %q, want %q", got, want)
-				}
+			before, found, err := workflow.ReadHQChange(dir, ref.AppID, ref.Repo, ref.Number)
+			if err != nil || !found || before.Description == nil || before.Description.Text != words || before.Description.Head != tc.previousHead {
+				t.Fatalf("before new call: %+v, found %v, err %v", before.Description, found, err)
 			}
-			if rewrite := strings.Contains(got, "write ") && strings.Contains(got, "current commit"); rewrite != tc.rewrite {
-				t.Fatalf("kept description reply = %q, want rewrite=%v", got, tc.rewrite)
+			if err := keepChangeDescription(dir, ref, pick, words, "title", newHead); err != nil {
+				t.Fatal(err)
+			}
+			after, found, err := workflow.ReadHQChange(dir, ref.AppID, ref.Repo, ref.Number)
+			if err != nil || !found || after.Description == nil || after.Description.Text != words || after.Description.Head != newHead {
+				t.Fatalf("after new call: %+v, found %v, err %v; want words at %s", after.Description, found, err, newHead)
+			}
+			edit := descriptionEdit(words, "title", newHead, false, time.Time{})
+			if edit.Body == nil || *edit.Body != words || edit.ExpectedHead != newHead {
+				t.Fatalf("description edit = %+v, want same words at %s", edit, newHead)
 			}
 		})
 	}

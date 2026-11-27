@@ -359,13 +359,6 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 		}
 	}
 	ref := changeRef{AppID: target.AppID, Repo: target.Repo, Number: number}
-	for _, change := range kept {
-		if change.Number == number && keptDescriptionAtAnotherHead(change.Description, text, workcopy.head) {
-			step, _ := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
-			return jsonResult(changeDescriptionResult{Service: service, Parts: parts, PullRequest: number, Kept: true,
-				Message: keptDescriptionReply(number, change.Description.Head, workcopy, step)}), nil, nil
-		}
-	}
 	metas, err := workflow.ListServiceMetas(stateDir)
 	if err != nil {
 		return convertError(fmt.Errorf("read the recorded stages for the description: %w", err), WithRecoveryStatus()), nil, nil
@@ -401,16 +394,6 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 		Labels:         describedLabels(answered, time.Now()),
 		Message:        message,
 	}), nil, nil
-}
-
-// keptDescriptionReply does not ask for new words while the branch still needs
-// to reach HQ, or either source could not be read.
-func keptDescriptionReply(number int, keptHead string, workcopy descriptionCopy, step workflow.EditStep) string {
-	message := fmt.Sprintf("The kept description of change #%d was written for commit %s, but %s is at %s. It was not written.", number, keptHead, workcopy.name, workcopy.head)
-	if step.Number == number && step.Head == workcopy.head {
-		return message + " Review the work and write a description for the current commit."
-	}
-	return message + " Next: " + step.Words() + "."
 }
 
 // descriptionWriteFailure preserves only words that can still be put on this change.
@@ -450,10 +433,6 @@ func descriptionWriteFailure(stateDir string, ref changeRef, result changeDescri
 		result.Message = fmt.Sprintf("HQ did not take the description of change #%d (%v). It is kept; call describe-change again to put it on #%d.", number, err, number)
 	}
 	return jsonResult(result)
-}
-
-func keptDescriptionAtAnotherHead(kept *workflow.ChangeDescription, text, head string) bool {
-	return kept != nil && kept.Text == text && kept.Head != head
 }
 
 // describedLabels labels the change HQ answered the describe with, as status
