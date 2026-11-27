@@ -55,23 +55,21 @@ its containers away from the app.
 4. Open the branch's change in HQ: `zerops_workflow action="open-change" service="<alias>" title="<what it does>"`
    — the repository and the branch come from the lease. Describe it with
    `zerops_workflow action="describe-change" service="<alias>" description="…"`.
-   Leave lease preview URLs out of the description: they last only while the
-   lease is held.
-   When telling the person where to look, give both addresses for each
-   user-facing part:
-   - **Live while I work:** <lease Preview URL> (ends at merge or when the
-     lease ends).
-   - **Your app:** <the part's stage public address> (shows the version last
-     deployed there; a successful Review build of a handover can update it).
-     This is the address to bookmark and share: it survives merge. After a
-     merge the stage keeps that version until another deploy replaces it;
-     another handover can have put a different version there.
-   Read the part's stage from `zerops_workflow action="status"` and its `publicAccess.url` or
-   `publicAccess.domains` with `zerops_discover service="<stage>"`. If a public
-   address will become available at the first handover, say "Your app gets its
-   address after the first handover". If the stage is private or its address
-   cannot be read, say so. If the lease has no Preview URL, say that instead
-   of inventing one.
+   Never put a lease or pool URL in a reply to the person or in the change
+   description. For each user-facing part with a finished version and a
+   public address, give only **Your app:** <the part's stage public address>.
+   Say it shows the last version you handed over and is the address to
+   bookmark and share. Work in progress is the **draft**, visible in Mate's
+   side pane. The first answer speaks only of the app and its draft; mention
+   stage or production only when asked. Never say "Preview", "Review build",
+   "main", "lease" or host names to the person.
+   Read the part's stage from `zerops_workflow action="status"` and its
+   `publicAccess.url` or `publicAccess.domains` with `zerops_discover service="<stage>"`.
+   If the first version is not finished and a public address is expected, say
+   "Your app gets its address when the first version is finished." If the stage
+   is private or its address cannot be read, explain that without naming the
+   stage or a host. The address survives merge. A successful Review build can
+   update the stage; another handover may replace its version.
    Pushing to the branch again moves its change,
    a draft until described again; to add work to it, lease the branch again
    if it was released.
@@ -172,7 +170,7 @@ leases are keyed by branch, so they never meet.
 - Each acquires its own group on its branch and pushes there. An
   independent piece opens and describes its own change (step 4); subagents
   on one piece open none: merge their branches into one and open its change.
-- Report each branch's change by its link and give the two addresses as above;
+- Describe each piece of work and give the app address as above;
   the shared stage may show another branch's handover.
 - Once one change merges, the others are behind `main`. Bring one up to date
   only when the person asks or it no longer merges cleanly: in a lease of
