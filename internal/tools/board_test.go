@@ -88,7 +88,7 @@ func callBoard(t *testing.T, rt runtime.Info, h *boardHQ, carries bool, name str
 	return result
 }
 
-// witness: internal/ops/board_proposal.go | case utf8.RuneCountInString(brief) > BoardBriefMax: → case len(brief) > BoardBriefMax:
+// witness: internal/ops/board_proposal.go | case utf8.RuneCountInString(brief) > BoardBriefMax: → case utf8.RuneCountInString(brief) > BoardBriefMax+1:
 func TestBoardPropose_BD1_AnswersTheCheckedProposalAndWritesNothing(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("é", 8000)
@@ -117,12 +117,7 @@ func TestBoardPropose_BD1_AnswersTheCheckedProposalAndWritesNothing(t *testing.T
 				}
 				return
 			}
-			var answer struct {
-				Proposed struct {
-					Board struct{ Title, Brief string } `json:"board"`
-				} `json:"proposed"`
-				NextActions string `json:"nextActions"`
-			}
+			var answer boardProposeAnswer
 			if result.IsError || json.Unmarshal([]byte(extractText(result)), &answer) != nil {
 				t.Fatalf("answer: %s", extractText(result))
 			}
@@ -133,7 +128,7 @@ func TestBoardPropose_BD1_AnswersTheCheckedProposalAndWritesNothing(t *testing.T
 	}
 }
 
-// witness: internal/mate/manifest.go | return carriesParts(core, BoardMateVersion) → return carriesParts(installed, BoardMateVersion)
+// witness: internal/mate/manifest.go | return carriesParts(core, BoardMateVersion) → core, _, _ = strings.Cut(installed, "+"); return carriesParts(core, BoardMateVersion)
 // witness: internal/tools/board.go | if !carriesBoard() { → if carriesBoard() {
 func TestBoardPropose_BD2_RefusedBelowTheMateThatDrawsTheCard(t *testing.T) {
 	t.Parallel()
