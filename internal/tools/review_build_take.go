@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -182,7 +183,20 @@ func reviewAwaitDecision(ctx context.Context, changed <-chan struct{}, read func
 
 // executeReviewMain follows merges made outside Mate, under the same locks as
 // adding builds and only if HQ still says no change is being added.
-func executeReviewMain(ctx context.Context, d devGitDeps, hqc hq.Client, app, repo, main string, metas []*workflow.ServiceMeta, stages []topology.StageRef, read func() (hq.MateStateDocument, error), log func(string)) (bool, error) {
+func executeReviewMain(ctx context.Context, d devGitDeps, hqc hq.Client, app, repo, main string, metas []*workflow.ServiceMeta, stages []topology.StageRef, read func() (hq.MateStateDocument, error), log func(string)) (unavailable bool, runErr error) {
+	statusPath := mate.StatusFilePath()
+	startedStages := false
+	defer func() {
+		if runErr == nil || startedStages || ctx.Err() != nil {
+			return
+		}
+		for _, stage := range stages {
+			failure := reviewUnavailablePart(hq.ReviewBuildPart{Part: stage.Hostname}, "follow main", runErr)
+			if err := recordReviewMain(statusPath, repo, main, failure); err != nil {
+				runErr = errors.Join(runErr, err)
+			}
+		}
+	}()
 	if err := reviewResolveSetups(ctx, hqc, app, repo, metas, stages); err != nil {
 		return true, fmt.Errorf("read main stage setups: %w", err)
 	}
@@ -207,15 +221,70 @@ func executeReviewMain(ctx context.Context, d devGitDeps, hqc hq.Client, app, re
 		return false, nil
 	}
 	source := ops.NewHQDeploySource(d.httpClient, hqIdentity(d.rt))
-	unavailable := false
+	startedStages = true
 	for _, binding := range bindings {
 		part := reviewBuildStageWithLock(ctx, d, source, app+"/"+repo, main, binding.ref, log, true)
+		if err := recordReviewMain(statusPath, repo, main, part); err != nil {
+			unavailable = true
+			runErr = errors.Join(runErr, err)
+		}
 		if part.Outcome != "ok" {
 			if log != nil {
 				log(fmt.Sprintf("Main stage %s %s: %s", part.Stage, part.Outcome, part.Reason))
 			}
-			unavailable = true
+			unavailable = unavailable || part.Outcome == reviewUnavailable
 		}
 	}
-	return unavailable, nil
+	return unavailable, runErr
+}
+
+func recordReviewMain(path, repo, head string, part hq.ReviewBuildPart) error {
+	stage := mate.StageStatus{Hostname: part.Part, Repo: repo, MainFollow: topology.MainFollowStatus{
+		Head: head, Outcome: part.Outcome, Reason: part.Reason,
+	}}
+	if err := mate.RecordStageMainFollow(path, stage); err != nil {
+		return fmt.Errorf("record main-follow result for %s: %w", part.Part, err)
+	}
+	return nil
+}
+
+// Only a stage still owned by the recorded repository carries its last result.
+func attachStageMainFollow(stages []workflow.WhereStage, recorded []mate.StageStatus) {
+	for i := range stages {
+		for _, result := range recorded {
+			if stages[i].Hostname != result.Hostname || stages[i].Repo == "" || stages[i].Repo != result.Repo {
+				continue
+			}
+			follow := result.MainFollow
+			stages[i].MainFollow = fmt.Sprintf("main %s: %s", follow.Head, follow.Outcome)
+			if follow.Reason != "" {
+				stages[i].MainFollow += " (" + follow.Reason + ")"
+			}
+			break
+		}
+	}
+}
+
+func mainFollowStatusGuidance(env workflow.StateEnvelope, statusPath string) string {
+	status, err := mate.ReadStatus(statusPath)
+	if err != nil {
+		return ""
+	}
+	var stages []workflow.WhereStage
+	for _, service := range env.WithParts(nil).Services {
+		for _, stage := range service.WireStages {
+			stages = append(stages, workflow.WhereStage{Hostname: stage.Hostname, Repo: service.HQRepo})
+		}
+	}
+	attachStageMainFollow(stages, status.Stages)
+	var lines []string
+	for _, stage := range stages {
+		if stage.MainFollow != "" {
+			lines = append(lines, fmt.Sprintf("- stage %s: %s", stage.Hostname, stage.MainFollow))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "Main-follow results:\n" + strings.Join(lines, "\n")
 }

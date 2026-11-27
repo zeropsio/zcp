@@ -6,7 +6,7 @@
 - RB-CUT — A cut upload is removed before the selected source is built; an in-flight build of that source prevents another build.
 - RB-STAGES — A Review build covers every recorded stage of the change’s repository and identifies an empty stage set.
 - RB-SETUP — A stage whose setup is not recorded takes the setup from its repository's stand-up tier; a missing row is not guessed.
-- RB-RETRY — A Review build whose infrastructure cannot be reached retries after one, five and fifteen minutes and no fourth time.
+- RB-RETRY — An unavailable Review or main-follow build retries after one, five and fifteen minutes and no fourth time; a failed build does not retry on that clock.
 - RB-WAIT — A Review build waits for a held stage until its own deadline, says it is waiting, and continues when the stage is free.
 - RB-NAME — A stage version missing from the name search is not proof that the head has no build.
 - RB-RESUME — A named in-flight head is waited to its result and returned without starting another build.
@@ -23,6 +23,7 @@
 - RB-NEEDED — A stage builds the selected source when it is not the active version and no build is running.
 - RB-CURRENT — An active stage version at the selected source is probed without another build.
 - RB-MAIN — A stage behind main follows it only while no change is adding and no follow build is running.
+- RB-MAINRESULT — A stage's last main-follow result survives in its Mate's status and reaches the agent beside that stage, without treating a failed build as unavailable.
 - RB-CANDIDATE — A change's candidate identity includes both its main and its change head, so a main move makes another build.
 - RB-WORKER — A worker stage keeps its own readiness check and relies on its deployment result without an added HTTP check.
 - RB-READINESS — A public stage's readiness check uses the same path as its probe and keeps the old version serving.

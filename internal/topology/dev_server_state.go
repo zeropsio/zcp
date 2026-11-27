@@ -40,3 +40,10 @@ type StageWire struct {
 	// without its `stage` suffix (docs/spec-mate.md §2.8a.3).
 	Part string `json:"part,omitempty"`
 }
+
+// MainFollowStatus is the last result of bringing a stage to a main head.
+type MainFollowStatus struct {
+	Head    string `json:"head"`
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+}

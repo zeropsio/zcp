@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -204,14 +206,34 @@ func TestReviewSetups_RBSetup_Tier_ResolvesOnlyTheRepository(t *testing.T) {
 	}
 }
 
-// witness: internal/tools/review_build.go | return 5 * time.Minute → return 6 * time.Minute
+// witness: internal/tools/review_build_watch.go | if result.unavailable { → if result.unavailable && result.err != nil {
 func TestReviewRetry_RBRetry_Unavailable_IsBounded(t *testing.T) {
 	t.Parallel()
-	for i, want := range []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, 0, 0} {
-		if got := reviewRetryDelay(i); got != want {
-			t.Fatalf("retry %d = %v, want %v", i, got, want)
+	synctest.Test(t, func(t *testing.T) {
+		for _, number := range []int{0, 7} {
+			for i, delay := range []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, 0, 0} {
+				key := reviewKey{repo: "code", number: number}
+				a := &reviewAttempt{head: "head", main: "main", tries: i, running: true}
+				o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: a}}
+				now := time.Now()
+				o.finish(reviewDone{key: key, head: "head", main: "main", unavailable: true})
+				if delay == 0 {
+					if !a.stopped || !a.next.IsZero() {
+						t.Fatalf("%d retry %d: %+v, want stopped", number, i, a)
+					}
+				} else if !a.next.Equal(now.Add(delay)) || a.stopped {
+					t.Fatalf("%d retry %d: %+v, want after %s", number, i, a, delay)
+				}
+			}
+			key := reviewKey{repo: "code", number: number}
+			a := &reviewAttempt{head: "head", main: "main", running: true}
+			o := &reviewObserver{attempts: map[reviewKey]*reviewAttempt{key: a}}
+			o.finish(reviewDone{key: key, head: "head", main: "main"})
+			if !a.completed || !a.next.IsZero() || a.stopped {
+				t.Fatalf("%d failed build scheduled a retry: %+v", number, a)
+			}
 		}
-	}
+	})
 }
 
 // witness: internal/tools/review_build_watch.go | a.head != *change.Head || a.main != main → a.head != *change.Head || a.main == main
@@ -759,6 +781,73 @@ func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("after declined candidate: main checked %d times, want 1", calls)
 	}
+}
+
+// witness: internal/tools/review_build_take.go | recordReviewMain(statusPath, repo, main, part) → recordReviewMain(statusPath, repo, "", part)
+func TestReviewMain_RBMainResult_StageOutcome_ReachesStatus(t *testing.T) {
+	// non-parallel: the running service and its status reader share ZCP_STATUS_FILE.
+	statusPath := filepath.Join(t.TempDir(), "mate-status.json")
+	t.Setenv(mate.EnvStatusFile, statusPath)
+	synctest.Test(t, func(t *testing.T) {
+		if err := mate.UpdateStatus(statusPath, func(s *mate.Status) {
+			s.Standup.State = mate.StandupDone
+			s.Stages = []mate.StageStatus{{Hostname: "otherstage", Repo: "other", MainFollow: topology.MainFollowStatus{Head: "other-head", Outcome: "ok"}}}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		main := "abcdef"
+		for _, tc := range []struct {
+			name, version, outcome, reason string
+			active, unavailable, bindError bool
+		}{
+			{"failed", "BUILD_FAILED", "failed", "build: BUILD_FAILED", false, false, false},
+			{"unavailable", "BUILDING", "unavailable", "read stage version: version ver-1 is BUILDING and has no live build", false, true, false},
+			{"before lock", "", "unavailable", "follow main: find main stages: read services: temporarily unreachable", false, true, true},
+			{"recovered", "ACTIVE", "ok", "", true, false, false},
+		} {
+			svc := platform.ServiceStack{ID: "stage", Name: "apistage", ProjectID: "project"}
+			if tc.active {
+				svc.ActiveAppVersion = &platform.ActiveAppVersionDigest{ID: "ver-1"}
+			}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+				WithProject(&platform.Project{ID: "project"}).
+				WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "ver-1", Status: tc.version}}).
+				WithAppVersionEvents([]platform.AppVersionEvent{{ID: "ver-1", ServiceStackID: "stage", Name: "zcp " + main}})
+			if tc.bindError {
+				client.WithError("ListServicesDirect", errors.New("temporarily unreachable"))
+			}
+			d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
+			read := func() (hq.MateStateDocument, error) {
+				return hq.MateStateDocument{Link: hq.MateLinkLinked, Mate: &hq.MateState{Repos: []hq.MateRepo{{Name: "code", MainHead: &main}}}}, nil
+			}
+			unavailable, err := executeReviewMain(t.Context(), d, hq.Client{}, "app", "code", main, nil, []topology.StageRef{{Hostname: "apistage", SetupName: "api"}}, read, nil)
+			if (err != nil) != tc.bindError || unavailable != tc.unavailable {
+				t.Fatalf("%s: unavailable = %t, err = %v; want %t", tc.name, unavailable, err, tc.unavailable)
+			}
+			status, err := mate.ReadStatus(statusPath)
+			if err != nil || status.Standup.State != mate.StandupDone || len(status.Stages) != 2 {
+				t.Fatalf("status = %+v, err = %v", status, err)
+			}
+			got := status.Stages[1]
+			want := mate.StageStatus{Hostname: "apistage", Repo: "code", MainFollow: topology.MainFollowStatus{Head: main, Outcome: tc.outcome, Reason: tc.reason}}
+			if got != want || status.Stages[0].MainFollow.Head != "other-head" {
+				t.Fatalf("stage = %+v, other = %+v; want %+v", got, status.Stages[0], want)
+			}
+			env := workflow.StateEnvelope{Services: []workflow.ServiceSnapshot{{Hostname: "pool", HQRepo: "code", DevIsPool: true, Stages: []topology.StageRef{{Hostname: "apistage", SetupName: "api"}}}}}
+			wantText := "main " + main + ": " + tc.outcome
+			if tc.reason != "" {
+				wantText += " (" + tc.reason + ")"
+			}
+			where := renderWhereAnswer(env, map[string]whereEvent{"apistage": {kind: whereVersionEvent, value: "zcp previous"}}, nil, nil, nil, nil, runtime.Info{MateEnabled: true}, "", time.Now(), nil, nil, status.Stages)
+			if !strings.Contains(where, "stage apistage (part api) runs zcp previous; "+wantText) || !strings.Contains(mainFollowStatusGuidance(env, statusPath), "stage apistage: "+wantText) {
+				t.Fatalf("where = %q, status = %q", where, mainFollowStatusGuidance(env, statusPath))
+			}
+			env.Services[0].HQRepo = "another-repo"
+			if strings.Contains(mainFollowStatusGuidance(env, statusPath), "stage apistage:") {
+				t.Fatalf("old repository's result shown after the stage moved: %+v", status.Stages)
+			}
+		}
+	})
 }
 
 // witness: internal/tools/review_build_take.go | base + "\x00" + head → base[:0] + "\x00" + head

@@ -307,9 +307,7 @@ func (o *reviewObserver) finish(result reviewDone) {
 		o.log(fmt.Sprintf("Review build: %v", result.err))
 	}
 	if result.unavailable {
-		if result.err != nil {
-			o.schedule(a, time.Now())
-		}
+		o.schedule(a, time.Now())
 	}
 }
 

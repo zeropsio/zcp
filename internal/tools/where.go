@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/hq"
+	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/ops/git"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -171,7 +172,13 @@ func (g *whereGatherer) atDeadline(ctx context.Context) error {
 }
 
 func (g *whereGatherer) render() string {
-	return renderWhereAnswer(g.env, g.versions, g.branches, g.servers, g.work, g.changes, g.rt, g.alias, g.now, g.refs, g.hqReads)
+	var recorded []mate.StageStatus
+	if g.rt.MateEnabled {
+		if status, err := mate.ReadStatus(mate.StatusFilePath()); err == nil {
+			recorded = status.Stages
+		}
+	}
+	return renderWhereAnswer(g.env, g.versions, g.branches, g.servers, g.work, g.changes, g.rt, g.alias, g.now, g.refs, g.hqReads, recorded)
 }
 
 func (g *whereGatherer) facts() workflow.WhereFacts {
@@ -353,8 +360,10 @@ func (g *whereGatherer) waitRead(ctx context.Context, kind, host string, receipt
 	}
 }
 
-func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string]whereEvent, servers, work map[string]ops.DevServerRead, changes []workflow.HQRepoChanges, rt runtime.Info, alias string, now time.Time, refs, hqReads map[string]whereEvent) string {
-	return workflow.RenderWhere(whereFacts(env, versions, branches, servers, work, changes, rt, alias, now, refs, hqReads))
+func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string]whereEvent, servers, work map[string]ops.DevServerRead, changes []workflow.HQRepoChanges, rt runtime.Info, alias string, now time.Time, refs, hqReads map[string]whereEvent, recorded []mate.StageStatus) string {
+	facts := whereFacts(env, versions, branches, servers, work, changes, rt, alias, now, refs, hqReads)
+	attachStageMainFollow(facts.Stages, recorded)
+	return workflow.RenderWhere(facts)
 }
 
 func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereEvent, servers, work map[string]ops.DevServerRead, changes []workflow.HQRepoChanges, rt runtime.Info, alias string, now time.Time, refs, hqReads map[string]whereEvent) workflow.WhereFacts {
@@ -384,7 +393,7 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 		repos[service.Hostname] = service.HQRepo
 		for _, stage := range service.WireStages {
 			got, ok := versions[stage.Hostname]
-			item := workflow.WhereStage{Hostname: stage.Hostname, Part: stage.Part}
+			item := workflow.WhereStage{Hostname: stage.Hostname, Part: stage.Part, Repo: service.HQRepo}
 			switch {
 			case !ok:
 				item.Unread = whereNoAnswer

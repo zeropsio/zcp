@@ -221,7 +221,7 @@ func ShortEditHead(head string) string {
 
 // WhereStage is a stage's active version, or the reason it was not read.
 type WhereStage struct {
-	Hostname, Part, Version, Unread string
+	Hostname, Part, Repo, Version, Unread, MainFollow string
 }
 
 // RenderWhere is the one wording of the facts sent to an agent starting work.
@@ -265,7 +265,11 @@ func RenderWhere(facts WhereFacts) string {
 		} else if stage.Version == "" {
 			version = "runs no deployed version"
 		}
-		lines = append(lines, fmt.Sprintf("stage %s (part %s) %s", stage.Hostname, stage.Part, version))
+		line := fmt.Sprintf("stage %s (part %s) %s", stage.Hostname, stage.Part, version)
+		if stage.MainFollow != "" {
+			line += "; " + stage.MainFollow
+		}
+		lines = append(lines, line)
 	}
 	for _, change := range changes {
 		copyState := "no working copy"
