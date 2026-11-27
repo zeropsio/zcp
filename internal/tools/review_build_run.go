@@ -126,7 +126,7 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 		part.Stage = parsed.Hostname()
 	}
 	if found.action == reviewFailed {
-		return reviewFailedPart(ctx, d, part, found)
+		return reviewFailedPart(ctx, d, stage.Hostname, part, found)
 	}
 	if found.action == reviewBuild {
 		res, deployErr := ops.CommitDeploy(ctx, d.client, source, ops.CommitDeployRequest{
@@ -158,7 +158,7 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 			return unavailable("read finished build", fmt.Errorf("version %s was not returned", found.id))
 		}
 		if reviewFailedStatus(version.Status) || status == platform.ProcessStatusFailed {
-			return reviewFailedPart(ctx, d, part, reviewVersion{id: version.ID, status: version.Status, reason: status})
+			return reviewFailedPart(ctx, d, stage.Hostname, part, reviewVersion{id: version.ID, status: version.Status, reason: status})
 		}
 		if version.Status != platform.AppVersionStatusActive {
 			return unavailable("read finished build", fmt.Errorf("version %s is %s", version.ID, version.Status))
@@ -220,10 +220,10 @@ func reviewUnavailablePart(part hq.ReviewBuildPart, step string, err error) hq.R
 	return part
 }
 
-func reviewFailedPart(ctx context.Context, d devGitDeps, part hq.ReviewBuildPart, version reviewVersion) hq.ReviewBuildPart {
+func reviewFailedPart(ctx context.Context, d devGitDeps, serviceHostname string, part hq.ReviewBuildPart, version reviewVersion) hq.ReviewBuildPart {
 	part.Outcome, part.Phase, part.AppVersionID = reviewOutcomeFailed, reviewFailurePhase(version.status), version.id
 	reason := version.reason
-	lines, err := ops.FetchVersionBuildLogs(ctx, d.client, platform.NewLogFetcher(), d.rt.ProjectID, part.Stage, version.id, 200)
+	lines, err := ops.FetchVersionBuildLogs(ctx, d.client, d.logFetcher, d.rt.ProjectID, serviceHostname, version.id, 200)
 	if err == nil && len(lines) > 0 {
 		reason = lines[len(lines)-1]
 	}

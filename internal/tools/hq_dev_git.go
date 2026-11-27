@@ -27,10 +27,11 @@ import (
 // runs only when an agent bootstraps, adopts or starts develop; the Mate's
 // own service does at its start (KeepMateDevGit).
 
-// devGitDeps is what keeping the dev services' git reaches: the platform,
-// HQ, the dev services over SSH, the container and its state.
+// devGitDeps is what the Mate's dev git and Review observers reach: the
+// platform and its log backend, HQ, dev services, the container and its state.
 type devGitDeps struct {
 	client     platform.Client
+	logFetcher platform.LogFetcher
 	httpClient ops.HTTPDoer
 	ssh        ops.SSHDeployer
 	rt         runtime.Info
@@ -96,6 +97,7 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 		client           platform.Client
 	)
 	httpClient := &http.Client{Timeout: hqCallTimeout}
+	logFetcher := platform.NewLogFetcher()
 	sshDeployer := platform.NewSystemSSHDeployer()
 	mounter := platform.NewSystemMounter()
 	stateDir := filepath.Join(topology.CodeMountRoot, ".zcp", "state")
@@ -127,7 +129,7 @@ func liveDevGitDeps(env func() func(string) string, log func(string)) func(conte
 		// A lease's release runs git over its own ssh, never the look's
 		// bounded one: its guard and its rewire have bounds of their own.
 		release := leaseBranchReleaseFor(client, rt.ProjectID, stateDir, mounter, sshDeployer, rt)
-		return devGitDeps{client: client, httpClient: httpClient, ssh: sshDeployer, rt: rt, stateDir: stateDir, release: release}, true
+		return devGitDeps{client: client, logFetcher: logFetcher, httpClient: httpClient, ssh: sshDeployer, rt: rt, stateDir: stateDir, release: release}, true
 	}
 }
 

@@ -280,6 +280,37 @@ func TestReviewStage_RBResume_HeadInFlight_WaitsForVersion(t *testing.T) {
 	}
 }
 
+// witness: internal/tools/review_build_run.go | d.rt.ProjectID, serviceHostname, version.id, 200) → d.rt.ProjectID, part.Stage, version.id, 200)
+func TestReviewStage_RBFaillog_PublicFailure_ReportsLastBuildLine(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, processStatus string
+	}{
+		{"already failed", "FINISHED"},
+		{"joined in flight", "RUNNING"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := platform.ServiceStack{ID: "stage", Name: "apistage", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}}}
+			client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+				WithProject(&platform.Project{ID: "project", SubdomainHost: "1df2.prg1.zerops.app"}).
+				WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "BUILD_FAILED"}}).
+				WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", tc.processStatus)}).
+				WithProcess(&platform.Process{ID: "process", Status: "FINISHED"}).
+				WithLogAccess(&platform.LogAccess{URL: "https://logs.example"})
+			fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+				{Timestamp: "2026-11-27T12:00:00Z", Facility: "local0", Tag: "zbuilder@version", Message: "compiling"},
+				{Timestamp: "2026-11-27T12:00:01Z", Facility: "local0", Tag: "zbuilder@version", Message: "missing module"},
+			})
+			d := devGitDeps{client: client, logFetcher: fetcher, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"}}
+			part := reviewBuildStage(context.Background(), d, nil, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "api"})
+			if part.Outcome != "failed" || part.Phase != "build" || part.AppVersionID != "version" || part.Stage != "apistage-1df2.prg1.zerops.app" || part.Reason != "build: missing module" {
+				t.Fatalf("public stage failure: %+v", part)
+			}
+		})
+	}
+}
+
 // witness: internal/tools/review_build_run.go | part.Outcome, part.Reason = reviewUnavailable, reviewReason(step, err.Error()) → part.Outcome, part.Reason = reviewOutcomeFailed, reviewReason(step, err.Error())
 func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.T) {
 	t.Parallel()

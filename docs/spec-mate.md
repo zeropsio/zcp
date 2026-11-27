@@ -2389,6 +2389,7 @@ read key remains `null` until its readers remove it.
 | `dev-server.running-http-404.json` | a running api with no root route: `running` true from the supervisor, its probe's 404 only in `healthStatus`, `reason` and the entry's `verify` |
 | `dev-server.status-starting.json` | a status of a server whose port is still awaited (`startPhase: awaiting_port`): `running` false, `reason: "starting"` with when to read it again, its `newLog` with an error line first, the entry's `status: "starting"` |
 | `dev-servers.declaration.json` | the §2.8a.1 example, `admin` with `autostart: false` |
+| `hq-change.receipt.json` | an HQ change record carrying the legacy receipt kept for existing readers |
 
 - zcp: `TestMateContractFixtures_*` (`internal/tools/mate_contract_fixtures_test.go`) parses every
   file strictly against the contract shapes, asserts the values, and marshals today's single-pair

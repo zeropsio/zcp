@@ -14,6 +14,7 @@
 - RB-RESULT — One result includes all stage parts; a failed part prevents a mixed failed and unavailable result from being retried as unavailable.
 - RB-OBSERVE — An identified private stage already active at the ready head returns that version without starting another build.
 - RB-RESUME — A named in-flight head is waited to its result and returned without starting another build.
+- RB-FAILLOG — A failed public stage reports the last build-log line while retaining its public host in the result, whether the failure was already known or was joined in flight.
 - RB-UNAVAILABLE — A stage lock or build wait that ends without a verdict is unavailable, with the step and its last error line.
 - RB-HEALTH — A public stage's probe uses its setup's declared health path, including an inherited path, or the default when none is declared.
 - RB-DEVWATCH — The dev git observer reads a replacement after its state watch ends and is opened again, or uses its retry wake when reopening fails.
