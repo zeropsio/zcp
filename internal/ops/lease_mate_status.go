@@ -24,6 +24,16 @@ func publishMateLeases(stateDir, action string) {
 // PublishMateLeases replaces the record projection while holding the status
 // lock. Reading inside that lock orders concurrent writers across aliases.
 func PublishMateLeases(stateDir, statusPath string) error {
+	return publishMateLeaseRecords(stateDir, statusPath, time.Time{})
+}
+
+// PublishMateLeasesAtBoot discovers held records without first publishing
+// their previous state as current. A report newer than boot remains newer.
+func PublishMateLeasesAtBoot(stateDir, statusPath string, at time.Time) error {
+	return publishMateLeaseRecords(stateDir, statusPath, at)
+}
+
+func publishMateLeaseRecords(stateDir, statusPath string, bootAt time.Time) error {
 	if err := mate.UpdateStatusChecked(statusPath, func(s *mate.Status) error {
 		records, err := readLeaseRecords(stateDir)
 		if err != nil {
@@ -44,7 +54,10 @@ func PublishMateLeases(stateDir, statusPath string) error {
 					break
 				}
 			}
-			if v.State == "" {
+			if !bootAt.IsZero() && bootAt.After(parseCopyTime(v.StateAt)) {
+				v.State, _ = mate.NextCopyState(v.State, mate.CopyEvent{Kind: mate.CopyLinkLost})
+				v.StateAt = bootAt.UTC().Format(time.RFC3339Nano)
+			} else if v.State == "" {
 				v.State, _ = mate.NextCopyState("", mate.CopyEvent{Kind: mate.CopyRecorded})
 				v.StateAt = time.Now().UTC().Format(time.RFC3339Nano)
 			}

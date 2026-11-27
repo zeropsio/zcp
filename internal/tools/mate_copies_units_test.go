@@ -18,6 +18,44 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// witness: internal/tools/mate_copies.go | dev.State, _ = mate.NextCopyState(dev.State, mate.CopyEvent{Kind: mate.CopyLinkLost}) → dev.State, _ = mate.NextCopyState(dev.State, mate.CopyEvent{Kind: mate.CopyStop})
+func TestMateCopies_MCBoot_ClassicCopiesStartUnknown(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		previous bool
+		at       time.Time
+		want     mate.CopyState
+	}{{"new", false, time.Time{}, mate.CopyUnknown}, {"existing", true, base, mate.CopyUnknown}, {"newer report", true, base.Add(2 * time.Minute), mate.CopyRunning}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "status.json")
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.previous {
+				if err := mate.UpdateStatus(path, func(s *mate.Status) {
+					s.Copies = &mate.CopyStatus{DevServices: []mate.DevCopyStatus{{Hostname: "appdev", State: mate.CopyRunning, StateAt: tc.at.Format(time.RFC3339Nano)}}}
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := reconcileMateDevServicesAtBoot(dir, path, base.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			status, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status.Copies.DevServices[0].State; got != tc.want {
+				t.Fatalf("boot copy = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // witness: internal/tools/mate_copies.go | o.startWait(ctx, result.key, result.target, d) → _ = d
 func TestMateCopies_MCWrite_WaitsForTheNextEventAfterAWriteFailure(t *testing.T) {
 	t.Parallel()

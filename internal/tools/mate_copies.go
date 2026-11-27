@@ -266,14 +266,15 @@ func KeepMateCopies(ctx context.Context, env func() func(string) string, statusP
 		log("copy observer cannot watch Mate status")
 		return
 	}
-	if err := ops.PublishMateLeases(stateDir, statusPath); err != nil {
+	bootAt := time.Now().UTC()
+	if err := ops.MarkMateCopiesUnknown(statusPath, bootAt); err != nil {
+		log("copy observer cannot mark its lost links")
+	}
+	if err := ops.PublishMateLeasesAtBoot(stateDir, statusPath, bootAt); err != nil {
 		log("copy observer cannot publish leases")
 	}
-	if err := reconcileMateDevServices(stateDir, statusPath); err != nil {
+	if err := reconcileMateDevServicesAtBoot(stateDir, statusPath, bootAt); err != nil {
 		log("copy observer cannot publish development services")
-	}
-	if err := ops.MarkMateCopiesUnknown(statusPath, time.Now().UTC()); err != nil {
-		log("copy observer cannot mark its lost links")
 	}
 	o := &mateCopyObserver{stateDir: stateDir, statusPath: statusPath, log: log,
 		deps: liveDevGitDeps(env, log), ssh: platform.NewSystemSSHDeployer(),
@@ -495,6 +496,10 @@ func (o *mateCopyObserver) startWait(ctx context.Context, key mateCopyWaitKey, t
 // reconcileMateDevServices replaces the set without losing observations of
 // copies that remain in it. Service metadata is read under the status lock.
 func reconcileMateDevServices(stateDir, statusPath string) error {
+	return reconcileMateDevServicesAtBoot(stateDir, statusPath, time.Time{})
+}
+
+func reconcileMateDevServicesAtBoot(stateDir, statusPath string, bootAt time.Time) error {
 	return mate.UpdateStatusChecked(statusPath, func(s *mate.Status) error {
 		metas, err := workflow.ListServiceMetas(stateDir)
 		if err != nil {
@@ -527,7 +532,11 @@ func reconcileMateDevServices(stateDir, statusPath string) error {
 		for _, host := range names {
 			dev := old[host]
 			dev.Hostname = host
-			if dev.State == "" {
+			at, _ := time.Parse(time.RFC3339Nano, dev.StateAt)
+			if !bootAt.IsZero() && bootAt.After(at) {
+				dev.State, _ = mate.NextCopyState(dev.State, mate.CopyEvent{Kind: mate.CopyLinkLost})
+				dev.StateAt = bootAt.UTC().Format(time.RFC3339Nano)
+			} else if dev.State == "" {
 				dev.State, _ = mate.NextCopyState("", mate.CopyEvent{Kind: mate.CopyRecorded})
 				dev.StateAt = time.Now().UTC().Format(time.RFC3339Nano)
 			}

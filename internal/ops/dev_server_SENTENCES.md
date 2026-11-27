@@ -3,6 +3,7 @@
 - DS-COPY-EVENTS — A supervisor report changes only its still-held lease and cannot replace a newer report, so a previous holder or delayed wait cannot change another Draft.
 - DS-COPY-LINK — A lost supervisor wait or a supervisor without copy-state capability leaves the Draft unknown until a writer reports it.
 - DS-COPY-BOOT — At observer boot a held copy becomes unknown and only a later supervisor snapshot reports its state; an older boot event cannot overwrite a newer report.
+- DS-COPY-BOOT-RECORD — Boot projects newly discovered leases as unknown and never republishes an older held state as current before a new report.
 - DS-COPY-WRITE — If publishing a supervisor answer fails, the observer can wait for the next transition from that answer without retrying the write.
 
 - DS-WAIT-BOUND — How long a call waits is decided once: a start or restart 15 s unless asked, a status not at all unless asked, at most 300 s where the supervisor lists `wait` and does the waiting, and without it a start at most 45 s by zcp's own probe and a status never. Breaks: a status blocks a turn nobody asked it to, or an older supervisor is sent a verb its ctl fails on.

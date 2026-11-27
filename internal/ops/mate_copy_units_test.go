@@ -14,6 +14,45 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 )
 
+// non-parallel: recording a lease consults the process environment.
+// witness: internal/ops/lease_mate_status.go | v.State, _ = mate.NextCopyState(v.State, mate.CopyEvent{Kind: mate.CopyLinkLost}) → v.State, _ = mate.NextCopyState(v.State, mate.CopyEvent{Kind: mate.CopyStop})
+func TestDevServer_DSCopyBootRecord_NewAndExistingLeasesStartUnknown(t *testing.T) {
+	t.Setenv("ZCP_MATE_ENABLED", "0")
+	base := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		previous bool
+		at       time.Time
+		want     mate.CopyState
+	}{{"new", false, time.Time{}, mate.CopyUnknown}, {"existing", true, base, mate.CopyUnknown}, {"newer report", true, base.Add(2 * time.Minute), mate.CopyRunning}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "status.json")
+			rec := leaseRecord{PoolHostname: "webpool", ContainerNumber: 1, Branch: "feature", Lease: "test", AcquiredAt: "2026-11-27T06:00:00Z"}
+			if err := writeLeaseRecord(dir, rec); err != nil {
+				t.Fatal(err)
+			}
+			if tc.previous {
+				if err := mate.UpdateStatus(path, func(s *mate.Status) {
+					s.Copies = &mate.CopyStatus{Leases: []mate.LeaseCopyStatus{{Alias: rec.alias(), Branch: rec.Branch, AcquiredAt: rec.AcquiredAt, State: mate.CopyRunning, StateAt: tc.at.Format(time.RFC3339Nano)}}}
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := PublishMateLeasesAtBoot(dir, path, base.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			status, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status.Copies.Leases[0].State; got != tc.want {
+				t.Fatalf("boot lease = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // witness: internal/ops/mate_server_wait.go | next, _ = mate.NextCopyState(target.State, event) → next, _ = mate.NextCopyState(target.State, mate.CopyEvent{Kind: mate.CopyLinkLost})
 func TestDevServer_DSCopyWrite_FailedPublicationKeepsTheAnsweredState(t *testing.T) {
 	t.Parallel()
