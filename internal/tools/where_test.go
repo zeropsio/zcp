@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -216,5 +217,137 @@ func TestWhere_WGGroup_UnreadOtherCopyPreventsHandover(t *testing.T) {
 	}
 	if got := facts.Copies[1].Step; got == nil || got.Action != workflow.EditUnknown {
 		t.Errorf("unread copy = %+v, want unknown", got)
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | step.Head == head → step.Head != head
+func TestDescribed_WGDescribedHead_OnlySameCommitHandedOver(t *testing.T) {
+	t.Parallel()
+	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	other := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		step workflow.EditStep
+		want bool
+	}{
+		{"same change and head", workflow.EditStep{Action: "handed over", Head: head, Number: 7}, true},
+		{"other head", workflow.EditStep{Action: "handed over", Head: other, Number: 7}, false},
+		{"other change", workflow.EditStep{Action: "handed over", Head: head, Number: 8}, false},
+		{"other copy dirty", workflow.EditStep{Action: "commit", Copy: "pool-2"}, false},
+		{"unknown", workflow.EditStep{Action: workflow.EditUnknown, Reason: "HQ was not read"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := describedAtHandedOverHead(7, head, tc.step); got != tc.want {
+				t.Fatalf("handed over = %v, want %v", got, tc.want)
+			}
+			answer := describedHandover(7, head, tc.step, nil, now)
+			if tc.step.Copy != "" && !strings.Contains(answer, tc.step.Copy) {
+				t.Fatalf("answer omitted the copy holding work: %s", answer)
+			}
+			t.Log(answer)
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | current.ReviewBuild.Head == head → current.ReviewBuild.Head != head
+func TestDescribed_WGReviewPromise_OnlyObservedHeadAwaits(t *testing.T) {
+	t.Parallel()
+	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	other := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	step := workflow.EditStep{Action: "handed over", Head: head, Number: 7}
+	for _, tc := range []struct {
+		name    string
+		current *hq.Change
+		wait    bool
+	}{
+		{name: "no observation"},
+		{name: "other head", current: &hq.Change{ReviewBuild: &hq.ReviewBuild{Head: other, State: "awaiting", Until: "2026-11-27T12:30:00Z"}}},
+		{name: "current head", current: &hq.Change{ReviewBuild: &hq.ReviewBuild{Head: head, State: "awaiting", Until: "2026-11-27T12:30:00Z"}}, wait: true},
+		{name: "deadline passed", current: &hq.Change{ReviewBuild: &hq.ReviewBuild{Head: head, State: "awaiting", Until: "2026-11-27T11:30:00Z"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			answer := describedHandover(7, head, step, tc.current, now)
+			if got := strings.Contains(answer, "awaits its Review build"); got != tc.wait {
+				t.Fatalf("awaiting promise = %v, want %v: %s", got, tc.wait, answer)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | kept.Head != head → kept.Head == head
+func TestDescription_WGKeptHead_KeptWordsStayAtTheirCommit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, text, head string
+		kept             *workflow.ChangeDescription
+		want             bool
+	}{
+		{"same words, moved head", "words", "new", &workflow.ChangeDescription{Text: "words", Head: "old"}, true},
+		{"same words, same head", "words", "old", &workflow.ChangeDescription{Text: "words", Head: "old"}, false},
+		{"new words", "new words", "new", &workflow.ChangeDescription{Text: "words", Head: "old"}, false},
+		{"nothing kept", "words", "new", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := keptDescriptionAtAnotherHead(tc.kept, tc.text, tc.head); got != tc.want {
+				t.Fatalf("kept at another head = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | || c.Description.Head != head →
+func TestDescription_WGAckHead_OldAcknowledgementKeepsNewWords(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, keptHead, ackHead string
+		wantKept                bool
+	}{
+		{"same head", "head-a", "head-a", false},
+		{"new head", "head-b", "head-a", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			ref := changeRef{AppID: "app", Repo: "repo", Number: 7}
+			if err := keepChangeDescription(dir, ref, changePick{Branch: "feature"}, "words", "title", tc.keptHead); err != nil {
+				t.Fatal(err)
+			}
+			forgetChangeDescription(dir, ref, "words", tc.ackHead)
+			change, found, err := workflow.ReadHQChange(dir, "app", "repo", 7)
+			if err != nil || !found || (change.Description != nil) != tc.wantKept {
+				t.Fatalf("stored description = %+v, found %v, err %v; want kept %v", change.Description, found, err, tc.wantKept)
+			}
+			if tc.wantKept && change.Description.Head != tc.keptHead {
+				t.Fatalf("stored head = %q, want %q", change.Description.Head, tc.keptHead)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | len(candidates) > 1 → len(candidates) > 2
+func TestDescription_WGDescribeCopy_OnlyOneAddressedCheckout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		candidates []descriptionCopy
+		want       string
+		wantError  bool
+	}{
+		{name: "none"},
+		{name: "one", candidates: []descriptionCopy{{name: "pool-1"}}, want: "pool-1"},
+		{name: "several", candidates: []descriptionCopy{{name: "pool-1"}, {name: "pool-2"}}, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := uniqueDescriptionCopy(tc.candidates)
+			if got.name != tc.want || (err != nil) != tc.wantError {
+				t.Fatalf("copy = %q, error = %v; want %q, error %v", got.name, err, tc.want, tc.wantError)
+			}
+		})
 	}
 }

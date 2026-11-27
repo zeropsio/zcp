@@ -284,13 +284,15 @@ func resolveTrackedBranch(stateDir, targetService, inputBranch string) string {
 // pushes from its checkout as it did before `zcp git` (plainGit).
 func hqGitPushRefusal(hostname string, mate bool) *platform.PlatformError {
 	push := fmt.Sprintf("In %s's checkout, commit on a branch of your own and run %s", hostname, plainGit("push origin <branch>"))
+	deploy := `Deploy the pair directly (strategy "ssh") to run the code.`
 	if mate {
 		push = fmt.Sprintf("In %s's dev service, commit on a branch of your own and push it with `zcp git %s push origin <branch>`", hostname, hostname)
+		deploy = mateStageRule
 	}
 	return platform.NewPlatformError(
 		platform.ErrInvalidUsage,
 		fmt.Sprintf("git-push from %s did not run: its code goes to this Mate's HQ by plain git, not by a deploy.", hostname),
-		fmt.Sprintf("%s — never push %q and never force-push: %q moves only when a person merges. Deploy the pair directly (strategy \"ssh\") to run the code.", push, hqBase, hqBase),
+		fmt.Sprintf("%s — never push %q and never force-push: %q moves only when a person merges. %s", push, hqBase, hqBase, deploy),
 	)
 }
 
@@ -305,9 +307,13 @@ func leaseGitPushRefusal(lease ops.LeaseTargetInfo, rt runtime.Info) *platform.P
 	if hqRemoteOfThisMate(lease.Repo, rt) {
 		push = fmt.Sprintf("Commit on a branch of your own and `git push -u origin <branch>` over ssh to %s yourself — never push %q and never force-push: HQ refuses both, and a branch another Mate's open change holds; %q moves only when a person merges", alias, hqBase, hqBase)
 	}
+	next := fmt.Sprintf("%s, and try the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). For the branch's stage check, deploy it with zerops_deploy sourceService=%q targetService=<stage> and verify it with zerops_verify serviceHostname=<stage>", push, alias, alias)
+	if rt.MateEnabled {
+		next = fmt.Sprintf("%s, and try the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). %s For a permitted stage deploy, name sourceService=%q.", push, alias, mateStageRule, alias)
+	}
 	return platform.NewPlatformError(platform.ErrInvalidUsage,
 		fmt.Sprintf("git-push from the lease %s did not run: a lease pushes its own branch, and this strategy pushes the target's tracked branch", alias),
-		fmt.Sprintf("%s, and try the branch on the lease's preview URL (zerops_dev_server action=status hostname=%q names it as previewUrl). For the branch's stage check, deploy it with zerops_deploy sourceService=%q targetService=<stage> and verify it with zerops_verify serviceHostname=<stage>", push, alias, alias))
+		next)
 }
 
 // gitPushEnvRefPreflight validates the run.envVariables refs of the named
@@ -768,7 +774,7 @@ func handleGitPush(
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:    result,
 		Warnings:         warnings,
-		WorkSessionState: sessionAnnotations(stateDir),
+		WorkSessionState: sessionAnnotationsForRuntime(stateDir, rt),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rt),
 	})
 }

@@ -246,6 +246,8 @@ type ChangeDescription struct {
 	Title string `json:"title,omitempty"`
 	// Change is the change it was written for.
 	Change int `json:"change,omitempty"`
+	// Head is the addressed checkout's commit when the words were written.
+	Head string `json:"head"`
 }
 
 // PublicAccessFor returns the persisted public-access record for hostname —

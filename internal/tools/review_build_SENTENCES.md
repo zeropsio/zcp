@@ -20,3 +20,5 @@
 - RB-SOURCE — A public stage's probe reads its setup from the head built by its version, even when Zerops stores no yaml for that version.
 - RB-DEVWATCH — The dev git observer reads a replacement after its state watch ends and is opened again, or uses its retry wake when reopening fails.
 - RB-WATCH — The Review observer reads a replacement after its state watch ends and is opened again, or uses its stand-up wake when reopening fails.
+- RB-DESCRIBEHEAD — A description write addresses the checkout's captured head so HQ refuses words for a moved change.
+- RB-DESCRIBETAKE — A stage-backed description takes the Review build at the same head for thirty minutes; a repository without a recorded stage takes none.

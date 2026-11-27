@@ -258,17 +258,3 @@ func hqPairPushes(state topology.GitPushState) bool {
 func hqRemoteOfThisMate(remoteURL string, rt runtime.Info) bool {
 	return ops.IsHQRemote(remoteURL, hqAddress(rt))
 }
-
-// hqHandoffNote points to a change's Review, the action Mate shows there —
-// or, in an application that limits who merges (limited), to the change
-// alone, with the rule in Review's place (mergeLimitedRule): the person may
-// have no Review to press. Production setup belongs to the project's card,
-// so this text needs no production fact from HQ. A release's confirmed
-// address is the app; the Mate's address remains its preview.
-func hqHandoffNote(limited bool) string {
-	change := "the change to review, by its link, and that they can press Review to look it over and merge it."
-	if limited {
-		change = "the change, by its link." + mergeLimitedNote(true)
-	}
-	return "In your closing message tell the person: " + change + " Production setup belongs to the project's card; Mate shows the available release actions. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
-}

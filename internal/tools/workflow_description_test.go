@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -49,6 +50,66 @@ func TestWorkflowDescription_WD1_CICDOfferedExactlyWhereAccepted(t *testing.T) {
 				if strings.Contains(desc, s) {
 					t.Errorf("description holds %q", s)
 				}
+			}
+		})
+	}
+}
+
+// witness: internal/tools/deploy_local.go | rt.MateEnabled && state.Status == "none" → !rt.MateEnabled && state.Status == "none"
+func TestSessionAnnotation_WDNoSession_StageRuleOnlyInMate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		mate bool
+	}{
+		{name: "standalone"},
+		{name: "Mate", mate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := sessionAnnotationsForRuntime(t.TempDir(), runtime.Info{MateEnabled: tc.mate})
+			if got.Status != "none" || strings.Contains(got.Note, "Building the stage because") != tc.mate {
+				t.Fatalf("untracked deploy annotation = %+v, want Mate stage rule %v", got, tc.mate)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/deploy_git_push.go | deploy = mateStageRule → deploy = noActiveSessionNote
+func TestPushRefusal_WDPairPush_StageRuleOnlyInMate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		mate bool
+	}{
+		{name: "standalone"},
+		{name: "Mate", mate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := hqGitPushRefusal("appdev", tc.mate).Suggestion
+			if strings.Contains(got, "Building the stage because") != tc.mate || (!tc.mate && !strings.Contains(got, `strategy "ssh"`)) {
+				t.Fatalf("push suggestion = %q, want Mate stage rule %v", got, tc.mate)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/deploy_git_push.go | mateStageRule, alias) → "", alias)
+func TestPushRefusal_WDLeasePush_StageRuleOnlyInMate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		mate bool
+	}{
+		{name: "standalone"},
+		{name: "Mate", mate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := leaseGitPushRefusal(ops.LeaseTargetInfo{Alias: "pool-1"}, runtime.Info{MateEnabled: tc.mate}).Suggestion
+			if strings.Contains(got, "Building the stage because") != tc.mate || (!tc.mate && !strings.Contains(got, "stage check")) {
+				t.Fatalf("lease suggestion = %q, want Mate stage rule %v", got, tc.mate)
 			}
 		})
 	}

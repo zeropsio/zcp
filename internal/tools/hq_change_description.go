@@ -25,8 +25,8 @@ import (
 // A change's description is what the person reviews a Mate's change by — in
 // the app's review, right after the verdict. It is the body of the change in
 // HQ, and only the Mate writes it (zerops_workflow action="describe-change"):
-// zcp opens the change titled by what it holds and nothing more, because that
-// is all zcp knows. The Mate keeps working on top of an open change,
+// open-change can put the Mate's words on the change as it opens it. The Mate
+// keeps working on top of an open change,
 // so it rewrites the description as the change grows; a link to try the change
 // can go stale, and the description is where what it does and how it was
 // checked stays true.
@@ -53,6 +53,8 @@ const changeDescriptionMaxRunes = 20000
 // changePictureMaxBytes is the largest picture HQ keeps for a description.
 const changePictureMaxBytes = 20 << 20
 
+const editHandedOver = "handed over"
+
 // changeDescriptionResult is describe-change's answer.
 type changeDescriptionResult struct {
 	Service string `json:"service"`
@@ -67,6 +69,171 @@ type changeDescriptionResult struct {
 	// write (describedLabels), as status labels it.
 	Labels  []string `json:"labels,omitempty"`
 	Message string   `json:"message"`
+}
+
+// descriptionCopy identifies the checkout whose words are being written.
+type descriptionCopy struct {
+	name, root, branch, head string
+	lease                    bool
+}
+
+// readDescriptionCopy reads Git before a change operation reaches HQ.
+func readDescriptionCopy(ctx context.Context, ssh ops.SSHDeployer, stateDir, address string, target changeTarget, named string) (descriptionCopy, error) {
+	var candidates []descriptionCopy
+	switch {
+	case target.Lease != "":
+		candidates = append(candidates, descriptionCopy{name: target.Lease, root: ops.LeaseWorkDir, lease: true})
+	case named != "" && target.Pair != nil && !target.Pair.DevIsPool():
+		candidates = append(candidates, descriptionCopy{name: target.Pair.Hostname})
+	default:
+		leases, err := ops.LeaseBranches(stateDir)
+		if err != nil {
+			return descriptionCopy{}, fmt.Errorf("read the branch's leases: %w", err)
+		}
+		for _, lease := range leases {
+			app, repo, ok := hq.RepoOfURL(address, lease.Repo)
+			if !ok || app != target.AppID || repo != target.Repo || (target.Branch != "" && lease.Branch != target.Branch) || (named != "" && target.Pair != nil && lease.Pool != target.Pair.Hostname) {
+				continue
+			}
+			candidates = append(candidates, descriptionCopy{name: lease.Alias, root: ops.LeaseWorkDir, lease: true})
+		}
+		if len(candidates) == 0 && named == "" {
+			metas, err := workflow.ListServiceMetas(stateDir)
+			if err != nil {
+				return descriptionCopy{}, fmt.Errorf("read the repository's dev services: %w", err)
+			}
+			for _, meta := range metas {
+				if hqPairWired(meta) && meta.HQ.AppID == target.AppID && meta.HQ.Repo == target.Repo && !meta.DevIsPool() {
+					candidates = append(candidates, descriptionCopy{name: meta.Hostname})
+				}
+			}
+		}
+	}
+	workcopy, err := uniqueDescriptionCopy(candidates)
+	if err != nil {
+		return descriptionCopy{}, err
+	}
+	if !workcopy.lease && workcopy.name != "" {
+		workcopy.root = supervisorRoot(stateDir, workcopy.name)
+		if workcopy.root == "" {
+			workcopy.root = ops.DevRepoRoot
+		}
+	}
+	if workcopy.name == "" || ssh == nil {
+		return descriptionCopy{}, errors.New("the addressed checkout was not read: name its lease or dev service and ensure SSH is available")
+	}
+	head, branch, _, err := ops.ReadEditHead(ctx, ssh, workcopy.name, workcopy.root)
+	if err != nil {
+		return descriptionCopy{}, fmt.Errorf("read the addressed checkout %s: %w", workcopy.name, err)
+	}
+	if head == "" || branch == "" || branch == hqBase || (target.Branch != "" && branch != target.Branch) {
+		return descriptionCopy{}, fmt.Errorf("the addressed checkout %s has branch %q and head %q; it must hold the named branch and a commit", workcopy.name, branch, head)
+	}
+	workcopy.head, workcopy.branch = head, branch
+	return workcopy, nil
+}
+
+func uniqueDescriptionCopy(candidates []descriptionCopy) (descriptionCopy, error) {
+	if len(candidates) > 1 {
+		return descriptionCopy{}, errors.New("several copies can hold these words: name the addressed lease or dev service")
+	}
+	if len(candidates) == 0 {
+		return descriptionCopy{}, nil
+	}
+	return candidates[0], nil
+}
+
+// readHandoverStep reads each copy and HQ through the same owners as where,
+// then lets the shared planner decide what remains for the branch group.
+func readHandoverStep(ctx context.Context, ssh ops.SSHDeployer, hqc hq.Client, stateDir string, target changeTarget, addressed descriptionCopy) (workflow.EditStep, *hq.Change) {
+	group := []descriptionCopy{addressed}
+	if addressed.lease {
+		leases, err := ops.LeaseBranches(stateDir)
+		if err != nil {
+			return workflow.EditStep{Action: workflow.EditUnknown, Reason: "branch leases were not read"}, nil
+		}
+		for _, lease := range leases {
+			app, repo, ok := hq.RepoOfURL(hqc.Address(), lease.Repo)
+			if ok && app == target.AppID && repo == target.Repo && lease.Branch == addressed.branch && lease.Alias != addressed.name {
+				group = append(group, descriptionCopy{name: lease.Alias, root: ops.LeaseWorkDir, branch: lease.Branch, lease: true})
+			}
+		}
+	}
+	copies := make([]workflow.EditCopy, 0, len(group))
+	for _, copy := range group {
+		item := workflow.EditCopy{Name: copy.name}
+		if ssh == nil {
+			item.Unread = "checkout was not read"
+		} else if head, branch, dirty, err := ops.ReadEditHead(ctx, ssh, copy.name, copy.root); err != nil || head == "" || branch != addressed.branch {
+			item.Unread = "checkout head, branch or work was not read"
+		} else if ref, err := ops.ReadBranchRef(ctx, ssh, copy.name, copy.root, branch, head); err != nil {
+			item.Unread = "branch remote ref or checkout history was not read"
+		} else {
+			item.Dirty, item.Ref = dirty, &ref
+		}
+		copies = append(copies, item)
+	}
+	current, err := hqc.OpenChangeOnBranch(ctx, target.Repo, addressed.branch)
+	var change *workflow.EditChange
+	if err == nil && current != nil {
+		head := ""
+		if current.Head != nil {
+			head = *current.Head
+		}
+		change = &workflow.EditChange{Number: current.Number, Head: head, Ready: current.Ready}
+	}
+	return workflow.PlanEdit(copies, change, err == nil), current
+}
+
+func handoverStepWords(step workflow.EditStep) string {
+	if step.Action == workflow.EditUnknown {
+		return "unknown: " + step.Reason
+	}
+	if step.Action == editHandedOver {
+		return fmt.Sprintf("handed over at %s (change #%d)", handoverHead(step.Head), step.Number)
+	}
+	if step.Copy != "" {
+		return step.Action + " in " + step.Copy
+	}
+	return step.Action
+}
+
+func handoverHead(head string) string {
+	if len(head) > 7 {
+		return head[:7]
+	}
+	return head
+}
+
+func describedAtHandedOverHead(number int, head string, step workflow.EditStep) bool {
+	return step.Action == editHandedOver && step.Head == head && step.Number == number
+}
+
+// describedHandover never says a build is running without HQ's observation.
+func describedHandover(number int, head string, step workflow.EditStep, current *hq.Change, now time.Time) string {
+	prefix := fmt.Sprintf("Change #%d described at %s", number, handoverHead(head))
+	if describedAtHandedOverHead(number, head, step) {
+		message := fmt.Sprintf("Change #%d is handed over at %s", number, handoverHead(head))
+		build := ""
+		if current != nil && current.ReviewBuild != nil && current.ReviewBuild.Head == head {
+			for _, label := range describedLabels(*current, now) {
+				switch {
+				case label == "Awaiting Review build":
+					build = " and awaits its Review build"
+				case strings.HasPrefix(label, "Review build "):
+					build = "; " + label
+				}
+			}
+		}
+		return message + build + ". End your turn."
+	}
+	if step.Action == "commit" && step.Copy != "" {
+		return fmt.Sprintf("%s, but %s holds uncommitted work: not handed over.", prefix, step.Copy)
+	}
+	if step.Action == editHandedOver {
+		return prefix + ", but the branch's change or commit has moved: not handed over."
+	}
+	return prefix + ", but not handed over: " + handoverStepWords(step) + "."
 }
 
 // errCannotAttach is a picture HQ will never keep for a change — larger than
@@ -96,10 +263,17 @@ func (e *picturesGoneError) Error() string {
 func handleDescribeChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
+	ssh ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
 	input WorkflowInput,
 ) (*mcp.CallToolResult, any, error) {
+	return describeChange(ctx, httpClient, ssh, rt, stateDir, input, nil, nil)
+}
+
+// describeChange accepts the copy and change already selected by open-change;
+// that copy's head was read before the open reached HQ.
+func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDeployer, rt runtime.Info, stateDir string, input WorkflowInput, openedCopy *descriptionCopy, openedPick *changePick) (*mcp.CallToolResult, any, error) {
 	hqc, linked := openHQ(httpClient, rt)
 	if !linked {
 		return convertError(platform.NewPlatformError(
@@ -120,6 +294,16 @@ func handleDescribeChange(
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
+	var workcopy descriptionCopy
+	if openedCopy != nil {
+		workcopy = *openedCopy
+	} else {
+		workcopy, err = readDescriptionCopy(ctx, ssh, stateDir, hqc.Address(), target, input.Service)
+		if err != nil {
+			return convertError(err, WithRecoveryStatus()), nil, nil
+		}
+	}
+	target.Branch = workcopy.branch
 	service, parts := changeService(stateDir, hqc.Address(), target, input.Service, target.Branch)
 	kept := changesIn(hqChanges(stateDir), target.AppID, target.Repo)
 	// The change the ledger names, when it names one, is checked before HQ
@@ -137,17 +321,22 @@ func handleDescribeChange(
 	var fresh *hq.MateState
 	if stateErr == nil {
 		fresh = &state
-		if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state); learned != "" {
-			return jsonResult(changeDescriptionResult{
-				Service: service, Parts: parts,
-				Message: learned + " The description was not written: the change it was for is no longer open, " +
-					"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open." +
-					stillOpenWords(target, state),
-			}), nil, nil
+		if openedPick == nil {
+			if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state); learned != "" {
+				return jsonResult(changeDescriptionResult{
+					Service: service, Parts: parts,
+					Message: learned + " The description was not written: the change it was for is no longer open, " +
+						"and the next change is another one. If these words are about work no change holds yet, describe the change that holds it once it is open." +
+						stillOpenWords(target, state),
+				}), nil, nil
+			}
 		}
 		kept = changesIn(hqChanges(stateDir), target.AppID, target.Repo)
 	}
 	pick, err := target.pick(fresh, kept, changeVerbDescribe)
+	if openedPick != nil {
+		pick, err = *openedPick, nil
+	}
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
@@ -185,62 +374,33 @@ func handleDescribeChange(
 		}
 	}
 	ref := changeRef{AppID: target.AppID, Repo: target.Repo, Number: number}
-	keepErr := keepChangeDescription(stateDir, ref, pick, text, title)
+	for _, change := range kept {
+		if change.Number == number && keptDescriptionAtAnotherHead(change.Description, text, workcopy.head) {
+			return jsonResult(changeDescriptionResult{Service: service, Parts: parts, PullRequest: number, Kept: true,
+				Message: fmt.Sprintf("The kept description of change #%d was written for commit %s, but %s is at %s. It was not written; review the work and write a description for the current commit.", number, change.Description.Head, workcopy.name, workcopy.head)}), nil, nil
+		}
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return convertError(fmt.Errorf("read the recorded stages for the description: %w", err), WithRecoveryStatus()), nil, nil
+	}
+	stageBacked := target.Repo != hq.RecipeRepo && len(reviewStages(metas, target.AppID, target.Repo)) > 0
+	keepErr := keepChangeDescription(stateDir, ref, pick, text, title, workcopy.head)
 
 	url := hqc.ChangeURL(target.AppID, target.Repo, number)
-	answered, tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title)
+	answered, tries, away, err := putDescriptionRetried(ctx, hqc, stateDir, ref, text, title, workcopy.head, stageBacked, time.Now())
 	if err != nil {
-		var gone *picturesGoneError
-		if errors.As(err, &gone) {
-			forgetChangeDescription(stateDir, ref, text)
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Nothing was written onto change #%d: %v. %s", number, err, keptPicturesSentence(stateDir, ref.pictureTarget())),
-				pictureRetakeSuggestion,
-			), WithRecoveryStatus()), nil, nil
-		}
-		if errors.Is(err, errCannotAttach) {
-			forgetChangeDescription(stateDir, ref, text)
-			return convertError(platform.NewPlatformError(
-				platform.ErrPrerequisiteMissing,
-				fmt.Sprintf("Nothing was written onto change #%d: %v. HQ will not take that picture, so the description is dropped: words that show it could never go on.",
-					number, err),
-				"Describe the change again without that picture, or with another screenshot of the same thing.",
-			), WithRecoveryStatus()), nil, nil
-		}
-		if keepErr != nil {
-			return convertError(fmt.Errorf("HQ did not take the description of change #%d (%w), and it could not be kept either: %w",
-				number, err, keepErr), WithRecoveryStatus()), nil, nil
-		}
-		if refusal := accessRefusal(err); refusal != "" {
-			return jsonResult(changeDescriptionResult{
-				Service: service, Parts: parts, PullRequest: number, PullRequestURL: url, Kept: true,
-				Message: fmt.Sprintf("Nothing was written onto change #%d: %s — this Mate's access, not the words or their pictures. "+
-					"The description is kept; call describe-change again once the access is back, and if it is still refused, tell the person their Mate's access to HQ is refused.",
-					number, refusal),
-			}), nil, nil
-		}
-		if away != describeServed {
-			return jsonResult(changeDescriptionResult{
-				Service: service, Parts: parts, PullRequest: number, PullRequestURL: url, Kept: true,
-				Message: describeNotLanded(hqc.Address(), number, tries, away, err),
-			}), nil, nil
-		}
-		return jsonResult(changeDescriptionResult{
-			Service:        service,
-			Parts:          parts,
-			PullRequest:    number,
-			PullRequestURL: url,
-			Kept:           true,
-			Message: fmt.Sprintf("HQ did not take the description of change #%d (%v). It is kept; call describe-change again to put it on #%d.",
-				number, err, number),
-		}), nil, nil
+		result := changeDescriptionResult{Service: service, Parts: parts, PullRequest: number, PullRequestURL: url, Kept: true}
+		return descriptionWriteFailure(stateDir, ref, result, text, workcopy.head, hqc.Address(), tries, away, err, keepErr), nil, nil
 	}
-	// In an application that limits who merges, a described change is ready
-	// for the people who merge there, and the person asks them for it.
-	described := "asks for the person's review — they review it by these words in the app"
-	if state.MergeLimited {
-		described = "is ready — " + whoMerges(true) + " reviews it by these words in the app"
+	step, current := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
+	message := describedHandover(number, workcopy.head, step, current, time.Now())
+	if extra := applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited); extra != "" {
+		if prefix, found := strings.CutSuffix(message, " End your turn."); found {
+			message = prefix + extra + " End your turn."
+		} else {
+			message += extra
+		}
 	}
 	return jsonResult(changeDescriptionResult{
 		Service:        service,
@@ -249,17 +409,52 @@ func handleDescribeChange(
 		PullRequestURL: url,
 		Described:      true,
 		Labels:         describedLabels(answered, time.Now()),
-		Message: fmt.Sprintf("Change #%d carries this description now and %s. A push that changes its diff makes it a draft again, until you describe it again; HQ keeps it ready when it can tell the diff is unchanged.",
-			number, described) + applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited) + " " + describedIsNotTheReply,
+		Message:        message,
 	}), nil, nil
 }
 
-// describedIsNotTheReply ends a described change's answer. The description
-// is what the person reviews the change by, not the agent's answer to them: an
-// agent that took "they review it by these words" as its reply ended its turn
-// on the describe and said nothing, so a twelve-minute run read as nothing
-// done (2026-11-22, the free Gemini agent, twice in a row).
-const describedIsNotTheReply = "The description is for the review, not your reply: answer the person now, in a few lines of your own — what you did, where they can see it, and what waits on them."
+// descriptionWriteFailure preserves only words that can still be put on this change.
+func descriptionWriteFailure(stateDir string, ref changeRef, result changeDescriptionResult, text, head, address string, tries int, away describeAway, err, keepErr error) *mcp.CallToolResult {
+	number := ref.Number
+	var refused *hq.RefusedError
+	if errors.As(err, &refused) && refused.Reason == "head_moved" && keepErr == nil {
+		result.Message = fmt.Sprintf("HQ refused the description of change #%d because its head moved. The words remain kept for commit %s; review the current work and write its description.", number, head)
+		return jsonResult(result)
+	}
+	var gone *picturesGoneError
+	if errors.As(err, &gone) {
+		forgetChangeDescription(stateDir, ref, text, head)
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Nothing was written onto change #%d: %v. %s", number, err, keptPicturesSentence(stateDir, ref.pictureTarget())),
+			pictureRetakeSuggestion,
+		), WithRecoveryStatus())
+	}
+	if errors.Is(err, errCannotAttach) {
+		forgetChangeDescription(stateDir, ref, text, head)
+		return convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Nothing was written onto change #%d: %v. HQ will not take that picture, so the description is dropped: words that show it could never go on.", number, err),
+			"Describe the change again without that picture, or with another screenshot of the same thing.",
+		), WithRecoveryStatus())
+	}
+	if keepErr != nil {
+		return convertError(fmt.Errorf("HQ did not take the description of change #%d (%w), and it could not be kept either: %w", number, err, keepErr), WithRecoveryStatus())
+	}
+	if refusal := accessRefusal(err); refusal != "" {
+		result.Message = fmt.Sprintf("Nothing was written onto change #%d: %s — this Mate's access, not the words or their pictures. "+
+			"The description is kept; call describe-change again once the access is back, and if it is still refused, tell the person their Mate's access to HQ is refused.", number, refusal)
+	} else if away != describeServed {
+		result.Message = describeNotLanded(address, number, tries, away, err)
+	} else {
+		result.Message = fmt.Sprintf("HQ did not take the description of change #%d (%v). It is kept; call describe-change again to put it on #%d.", number, err, number)
+	}
+	return jsonResult(result)
+}
+
+func keptDescriptionAtAnotherHead(kept *workflow.ChangeDescription, text, head string) bool {
+	return kept != nil && kept.Text == text && kept.Head != head
+}
 
 // describedLabels labels the change HQ answered the describe with, as status
 // labels a change (changeLabels): the write's own answer, so no state read
@@ -418,8 +613,8 @@ const noRepositoryYet = `A pair gets its repository once this Mate is in an appl
 // keepChangeDescription keeps the words — and the title given with them —
 // with the change they were written for in the ledger, recording the change
 // on its branch when the ledger did not keep it yet.
-func keepChangeDescription(stateDir string, ref changeRef, pick changePick, text, title string) error {
-	kept := &workflow.ChangeDescription{Text: text, Title: title, Change: ref.Number}
+func keepChangeDescription(stateDir string, ref changeRef, pick changePick, text, title, head string) error {
+	kept := &workflow.ChangeDescription{Text: text, Title: title, Change: ref.Number, Head: head}
 	if err := workflow.UpsertHQChange(stateDir, ref.AppID, ref.Repo, ref.Number, func(c *workflow.HQChange, existed bool) error {
 		if !existed {
 			c.Branch, c.Title, c.Source = pick.Branch, pick.Title, workflow.HQChangeFromState
@@ -440,15 +635,12 @@ func keepChangeDescription(stateDir string, ref changeRef, pick changePick, text
 // put. Nothing is written when a picture could not be attached: never a
 // description with a broken picture. It answers the change as HQ answered the
 // edit.
-func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title string) (hq.Change, error) {
+func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, ref changeRef, text, title, head string, stageBacked bool, at time.Time) (hq.Change, error) {
 	body, err := changeBody(ctx, hqc, stateDir, ref, text)
 	if err != nil {
 		return hq.Change{}, err
 	}
-	edit := hq.ChangeEdit{Body: &body}
-	if title != "" {
-		edit.Title = &title
-	}
+	edit := descriptionEdit(body, title, head, stageBacked, at)
 	callCtx, cancel := context.WithTimeout(ctx, hqCallTimeout)
 	defer cancel()
 	change, err := hqc.EditChange(callCtx, ref.Repo, ref.Number, edit)
@@ -460,8 +652,21 @@ func putChangeDescription(ctx context.Context, hqc hq.Client, stateDir string, r
 	if err != nil {
 		return hq.Change{}, err
 	}
-	forgetChangeDescription(stateDir, ref, text)
+	forgetChangeDescription(stateDir, ref, text, head)
 	return change, nil
+}
+
+// descriptionEdit binds the words and the optional take to the same head.
+func descriptionEdit(body, title, head string, stageBacked bool, at time.Time) hq.ChangeEdit {
+	edit := hq.ChangeEdit{Body: &body, ExpectedHead: head}
+	if title != "" {
+		edit.Title = &title
+	}
+	if stageBacked {
+		at = at.UTC()
+		edit.ReviewBuild = &hq.ReviewBuildWrite{Head: head, Step: "taken", At: at.Format(time.RFC3339), Until: at.Add(30 * time.Minute).Format(time.RFC3339)}
+	}
+	return edit
 }
 
 // changeBody is text as it is published on change number: every picture it
@@ -615,9 +820,9 @@ func missingPictures(stateDir, text, target string) ([]string, error) {
 // forgetChangeDescription drops the words the ledger keeps for the change —
 // only while they are still text: a describe that kept newer words after
 // these were read keeps them.
-func forgetChangeDescription(stateDir string, ref changeRef, text string) {
+func forgetChangeDescription(stateDir string, ref changeRef, text, head string) {
 	_ = workflow.UpsertHQChange(stateDir, ref.AppID, ref.Repo, ref.Number, func(c *workflow.HQChange, existed bool) error {
-		if !existed || c.Description == nil || c.Description.Text != text {
+		if !existed || c.Description == nil || c.Description.Text != text || c.Description.Head != head {
 			return workflow.ErrSkipWrite
 		}
 		c.Description = nil

@@ -27,7 +27,7 @@ func (l *hqLab) describe(service, words string) (text string, isError bool) {
 // describeTitled is describe-change with a title for the change.
 func (l *hqLab) describeTitled(service, title, words string) (text string, isError bool) {
 	l.t.Helper()
-	res, typed, err := handleDescribeChange(withDescribeWaits(context.Background(), l), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: service, Title: title, Description: words})
+	res, typed, err := handleDescribeChange(withDescribeWaits(context.Background(), l), l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, WorkflowInput{Service: service, Title: title, Description: words})
 	if err != nil {
 		l.t.Fatalf("handleDescribeChange: %v", err)
 	}
@@ -41,7 +41,7 @@ func (l *hqLab) describeTitled(service, title, words string) (text string, isErr
 // describedWords.
 func (l *hqLab) describeOn(branch string) (text string, isError bool) {
 	l.t.Helper()
-	res, typed, err := handleDescribeChange(withDescribeWaits(context.Background(), l), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Branch: branch, Description: describedWords})
+	res, typed, err := handleDescribeChange(withDescribeWaits(context.Background(), l), l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, WorkflowInput{Branch: branch, Description: describedWords})
 	if err != nil {
 		l.t.Fatalf("handleDescribeChange: %v", err)
 	}
@@ -191,26 +191,6 @@ func TestDescribeChange(t *testing.T) {
 	}
 }
 
-// TestDescribeChange_TheAnswerSaysTheDescriptionIsNotTheReply: a described
-// change's answer tells the agent the description is what the person reviews
-// by and that it still answers the person in its own words. An agent that read
-// "they review it by these words" as its reply ended its turn on the describe,
-// twice, so a twelve-minute run showed nothing done (2026-11-22).
-// witness: internal/tools/hq_change_description.go | mergeLimitedNote(state.MergeLimited) + " " + describedIsNotTheReply, → mergeLimitedNote(state.MergeLimited),
-func TestDescribeChange_TheAnswerSaysTheDescriptionIsNotTheReply(t *testing.T) {
-	t.Parallel()
-	lab := openedLab(t)
-	text, isError := lab.describeTitled("", "", "\n"+describedWords+"\n\n")
-	if isError {
-		t.Fatalf("want an answer, got an error:\n%s", text)
-	}
-	for _, want := range []string{"not your reply", "answer the person now", "what you did, where they can see it, and what waits on them"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the described change's answer misses %q:\n%s", want, text)
-		}
-	}
-}
-
 // TestDescribeChange_Refusals: every refusal is said before HQ is asked
 // anything, and keeps nothing.
 func TestDescribeChange_Refusals(t *testing.T) {
@@ -275,7 +255,7 @@ func TestDescribeChange_Refusals(t *testing.T) {
 				}
 			}
 
-			res, _, err := handleDescribeChange(context.Background(), fake.srv.Client(), runtime.Info{HQ: link}, stateDir,
+			res, _, err := handleDescribeChange(context.Background(), fake.srv.Client(), nil, runtime.Info{HQ: link}, stateDir,
 				WorkflowInput{Service: tt.service, Title: tt.title, Description: tt.description})
 			if err != nil {
 				t.Fatalf("handleDescribeChange: %v", err)

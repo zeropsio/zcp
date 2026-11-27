@@ -21,7 +21,7 @@ import (
 // maybe a branch.
 func (l *hqLab) openFrom(service, branch, title string) (changeOpenResult, string, bool) {
 	l.t.Helper()
-	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: service, Branch: branch, Title: title})
+	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, WorkflowInput{Service: service, Branch: branch, Title: title})
 	if err != nil {
 		l.t.Fatalf("handleOpenChange: %v", err)
 	}

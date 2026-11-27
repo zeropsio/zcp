@@ -574,3 +574,46 @@ func TestReviewStage_RBSource_PublicVersion_ProbesBuiltHead(t *testing.T) {
 		})
 	}
 }
+
+// witness: internal/tools/hq_change_description.go | ExpectedHead: head → ExpectedHead: ""
+func TestDescriptionEdit_RBDescribeHead_BindsWordsToCommit(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, head, body, title string
+	}{
+		{"first commit", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "first description", "First"},
+		{"different commit", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "second description", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := descriptionEdit(tc.body, tc.title, tc.head, false, at)
+			if got.ExpectedHead != tc.head || got.Body == nil || *got.Body != tc.body || (tc.title == "" && got.Title != nil) || (tc.title != "" && (got.Title == nil || *got.Title != tc.title)) {
+				t.Fatalf("description edit = %+v, want body, title and expected head for %s", got, tc.head)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | if stageBacked { → if !stageBacked {
+func TestDescriptionEdit_RBDescribeTake_StageControlsTake(t *testing.T) {
+	t.Parallel()
+	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	at := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		stage bool
+		want  *hq.ReviewBuildWrite
+	}{
+		{"stage", true, &hq.ReviewBuildWrite{Head: head, Step: "taken", At: "2026-11-27T12:00:00Z", Until: "2026-11-27T12:30:00Z"}},
+		{"no stage", false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := descriptionEdit("body", "title", head, tc.stage, at)
+			if !reflect.DeepEqual(got.ReviewBuild, tc.want) {
+				t.Fatalf("take = %+v, want %+v", got.ReviewBuild, tc.want)
+			}
+		})
+	}
+}

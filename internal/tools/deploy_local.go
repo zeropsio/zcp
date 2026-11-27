@@ -346,10 +346,7 @@ type WorkSessionState struct {
 // WITHOUT a lazy stamp. The trigger-vs-state asymmetry the old MaybeFireAutoClose
 // papered over is gone — there is no event to fire, the state is recomputed.
 //
-// The annotation is derived only from the local work session. Its change
-// handoff points to Review and needs no remote production fact; whether the
-// application limits who merges, which changes its words (hqHandoffNote), is
-// read from the Mate's last-heard state.
+// The annotation is derived only from the local work session.
 func sessionAnnotations(stateDir string) *WorkSessionState {
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
@@ -359,19 +356,11 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 		}
 	}
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
-		note := closedSessionNote(closedAt, reason)
-		// The person's next step is theirs to know (hq_pair.go) once the
-		// session deployed the stage of a pair whose HQ repository is on
-		// record and a change remains open to hand over. A stand-up, or a
-		// pair with no change open, has none.
-		if sessionHandsOverAChange(stateDir, ws) {
-			note += " " + hqHandoffNote(mergeLimitedHeard(liveHQIdentity()))
-		}
 		return &WorkSessionState{
 			Status:      "auto-closed",
 			ClosedAt:    closedAt,
 			CloseReason: reason,
-			Note:        note,
+			Note:        closedSessionNote(closedAt, reason),
 		}
 	}
 	progress := workflow.AutoCloseProgressOf(stateDir, ws)
@@ -386,30 +375,6 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 	}
 }
 
-// sessionHandsOverAChange reports whether ws deployed a pair's stage half
-// and the change ledger still keeps an open change in that pair's repository
-// for the closing note to hand over.
-func sessionHandsOverAChange(stateDir string, ws *workflow.WorkSession) bool {
-	var changes []workflow.HQChange
-	read := false
-	for _, host := range ws.Services {
-		if !workflow.HasSuccessfulDeployFor(ws, host) {
-			continue
-		}
-		meta, err := workflow.FindServiceMeta(stateDir, host)
-		if err != nil || meta == nil || !isStageOf(meta, host) || !hqPairWired(meta) {
-			continue
-		}
-		if !read {
-			changes, read = hqChanges(stateDir), true
-		}
-		if len(changesIn(changes, meta.HQ.AppID, meta.HQ.Repo)) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 const autoCompleteSessionNote = "All declared services deployed + verified — scope is green. Keep deploying into this session for more changes (nothing is lost). Call zerops_workflow action=\"close\" workflow=\"develop\" when this task is done, or action=\"start\" to begin a different task."
 
 func closedSessionNote(closedAt, reason string) string {
@@ -419,7 +384,17 @@ func closedSessionNote(closedAt, reason string) string {
 	return fmt.Sprintf("Develop session lifecycle marker at %s (reason: %s). Keep deploying into this session for more changes if this task is still active (nothing is lost). Call zerops_workflow action=\"close\" workflow=\"develop\" when this task is done, or action=\"start\" to begin a different task.", closedAt, reason)
 }
 
+const mateStageRule = `In a Mate, build the stage in your own turn only for an app's first pass, to work on a build or infrastructure change, or when the person asks, and say: Building the stage because <reason>.`
+
 const noActiveSessionNote = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."
+
+func sessionAnnotationsForRuntime(stateDir string, rt runtime.Info) *WorkSessionState {
+	state := sessionAnnotations(stateDir)
+	if rt.MateEnabled && state.Status == "none" {
+		state.Note += " " + mateStageRule
+	}
+	return state
+}
 
 // attachWorkSessionState writes the canonical lifecycle annotation into
 // the response body. Used by handlers whose response shape is a

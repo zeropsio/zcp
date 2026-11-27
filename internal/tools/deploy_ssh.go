@@ -330,7 +330,7 @@ func RegisterDeploySSH(
 				}
 				return jsonResult(deploySSHResponse{
 					DeployResult:     result,
-					WorkSessionState: sessionAnnotations(stateDir),
+					WorkSessionState: sessionAnnotationsForRuntime(stateDir, rtInfo),
 					Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 				}), nil, nil
 			}
@@ -340,7 +340,7 @@ func RegisterDeploySSH(
 			}
 			return jsonResult(deploySSHResponse{
 				DeployResult:     result,
-				WorkSessionState: sessionAnnotations(stateDir),
+				WorkSessionState: sessionAnnotationsForRuntime(stateDir, rtInfo),
 				Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 			}), nil, nil
 		}
@@ -676,7 +676,7 @@ func runDeploySSHZCLIPush(
 	// signal inline. Wrap to match.
 	return jsonResult(deploySSHResponse{
 		DeployResult:     result,
-		WorkSessionState: sessionAnnotations(stateDir),
+		WorkSessionState: sessionAnnotationsForRuntime(stateDir, rtInfo),
 		Envelope:         freshEnvelope(ctx, stateDir, client, projectID, rtInfo),
 	})
 }

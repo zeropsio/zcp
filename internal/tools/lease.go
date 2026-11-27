@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -155,6 +156,53 @@ func WithLeaseBackground(spawn func(func())) LeaseOption {
 	}
 }
 
+func leaseHandoverStep(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, stateDir string, leases []ops.LeaseView) string {
+	if !rt.MateEnabled || len(leases) == 0 {
+		return ""
+	}
+	lease := leases[0]
+	target, err := resolveChangeTarget(stateDir, hqAddress(rt), changeAsk{Service: lease.Alias, Verb: changeVerbDescribe})
+	if err != nil || target.Branch == "" || target.Branch == hqBase {
+		return "Step: unknown: the lease's change was not read."
+	}
+	hqc, linked := openHQ(http.DefaultClient, rt)
+	if !linked {
+		return "Step: unknown: HQ was not read."
+	}
+	workcopy := descriptionCopy{name: lease.Alias, root: ops.LeaseWorkDir, branch: target.Branch, lease: true}
+	step, _ := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
+	return "Step: " + handoverStepWords(step) + "."
+}
+
+func acquireLease(ctx context.Context, deps ops.LeaseDeps, rt runtime.Info, input LeaseInput, envelope func(context.Context, ...ops.LeaseView) *workflow.StateEnvelope) (*mcp.CallToolResult, any, error) {
+	pools := input.Pools
+	switch {
+	case input.Pool != "" && pools != nil:
+		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+			"acquire takes pool or pools, not both", "Pass one pool as pool, or every pool of the branch as pools")), nil, nil
+	case input.Pool != "":
+		pools = []string{input.Pool}
+	case len(pools) == 0:
+		return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
+			"acquire needs pool", "Pass the pool service's hostname as pool, or several as pools")), nil, nil
+	}
+	change, err := ops.LeaseAcquireGroupChangeFrom(ctx, deps, pools, input.Repo, input.Branch, input.From)
+	if err != nil {
+		// The refusal names every pool: it does not identify which token failed.
+		return convertError(withLeaseSSHStderr(err), WithMatePoolCredential(rt.MateEnabled, pools...)), nil, nil
+	}
+	if rt.MateEnabled {
+		// A live session sharing a lease can refuse its release (DP-35).
+		recordLeaseSessions(deps.StateDir, change.Leases)
+	}
+	next := joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired), leaseHandoverStep(ctx, deps.SSH, rt, deps.StateDir, change.Leases))
+	return jsonResult(leaseToolResult{
+		Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
+		// Stamp the dev servers this acquire read into the envelope (DP-30).
+		NextActions: next, Envelope: envelope(ctx, change.Leases...),
+	}), nil, nil
+}
+
 // registerLease is RegisterLease over deps leaseDeps wired. The warm policy's
 // creates and clones run in the background and outlive the call that started
 // them (DP-27, DP-32); tests set deps.Warm.Go to wait for them.
@@ -202,34 +250,7 @@ func registerLease(srv *mcp.Server, deps ops.LeaseDeps, rt runtime.Info) {
 		}
 		switch input.Action {
 		case leaseActionAcquire:
-			pools := input.Pools
-			switch {
-			case input.Pool != "" && pools != nil:
-				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-					"acquire takes pool or pools, not both", "Pass one pool as pool, or every pool of the branch as pools")), nil, nil
-			case input.Pool != "":
-				pools = []string{input.Pool}
-			case len(pools) == 0:
-				return convertError(platform.NewPlatformError(platform.ErrInvalidParameter,
-					"acquire needs pool", "Pass the pool service's hostname as pool, or several as pools")), nil, nil
-			}
-			change, err := ops.LeaseAcquireGroupChangeFrom(ctx, deps, pools, input.Repo, input.Branch, input.From)
-			if err != nil {
-				// The refusal does not say which pool's GIT_TOKEN failed: a
-				// Mate's contract names every pool the acquire requested.
-				return convertError(withLeaseSSHStderr(err), WithMatePoolCredential(rt.MateEnabled, pools...)), nil, nil
-			}
-			if rt.MateEnabled {
-				// Which zcp session took or reused each lease: `zcp lease
-				// release` refuses one another live session shares (DP-35).
-				recordLeaseSessions(stateDir, change.Leases)
-			}
-			return jsonResult(leaseToolResult{
-				Action: input.Action, Leases: change.Leases, Rewired: change.Rewired,
-				// The dev servers the acquire read ride its envelope's leases[]
-				// too, stamped: an acquire is a fresh read (DP-30).
-				NextActions: joinNext(leaseAcquireNext(change.Leases), leaseRewireNext(change.Rewired)), Envelope: envelope(ctx, change.Leases...),
-			}), nil, nil
+			return acquireLease(ctx, deps, rt, input, envelope)
 		case leaseActionStatus:
 			status, err := ops.LeaseStatus(ctx, deps, input.Pool)
 			if err != nil {

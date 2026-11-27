@@ -16,7 +16,7 @@ import (
 // openChangeFrom is zerops_workflow action="open-change" in the lab.
 func (l *hqLab) openChangeFrom(branch, title string) (changeOpenResult, string, bool) {
 	l.t.Helper()
-	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: "appdev", Branch: branch, Title: title})
+	res, typed, err := handleOpenChange(context.Background(), l.hq.srv.Client(), l.ssh, l.rt, l.stateDir, WorkflowInput{Service: "appdev", Branch: branch, Title: title})
 	if err != nil {
 		l.t.Fatalf("handleOpenChange: %v", err)
 	}

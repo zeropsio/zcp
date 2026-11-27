@@ -51,6 +51,7 @@ type changeOpenResult struct {
 func handleOpenChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
+	ssh ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
 	input WorkflowInput,
@@ -80,6 +81,17 @@ func handleOpenChange(
 	target, err := resolveChangeTarget(stateDir, hqc.Address(), changeAsk{Service: input.Service, Branch: input.Branch, Verb: changeVerbOpen})
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
+	}
+	var workcopy *descriptionCopy
+	if text := strings.TrimSpace(input.Description); text != "" {
+		if refusal := describeTextRefusal(text); refusal != nil {
+			return convertError(refusal, WithRecoveryStatus()), nil, nil
+		}
+		work, readErr := readDescriptionCopy(ctx, ssh, stateDir, hqc.Address(), target, input.Service)
+		if readErr != nil {
+			return convertError(readErr, WithRecoveryStatus()), nil, nil
+		}
+		workcopy = &work
 	}
 	branch := target.Branch
 	route := changeRoute(stateDir, target)
@@ -134,6 +146,13 @@ func handleOpenChange(
 			result.Message += fmt.Sprintf(` Write what it does and how you checked it with zerops_workflow action="describe-change" description="…" (markdown); %s reviews it by that.`, whoMerges(state.MergeLimited)) +
 				applicationOpenedWords(state) + mergeLimitedNote(state.MergeLimited)
 			learnSettled()
+			if workcopy != nil && held == branch {
+				pick := changePick{Number: h.Number, Branch: held, Title: titleOf(h), InState: true, Handed: true}
+				return describeChange(ctx, httpClient, ssh, rt, stateDir, input, workcopy, &pick)
+			}
+			if workcopy != nil {
+				result.Message += " The description was not written because the open change is on another branch."
+			}
 			return jsonResult(result), nil, nil
 		}
 	} else if target.Pair != nil && target.Pair.HQ.Origin != nil {
@@ -157,7 +176,14 @@ func handleOpenChange(
 			"Restore access to the local state directory and call open-change again; HQ answers the existing change."), WithRecoveryStatus()), nil, nil
 	}
 	learnSettled()
+	if workcopy != nil && result.Branch == branch {
+		pick := changePick{Number: number, Branch: result.Branch, Title: opened.Change.Title}
+		return describeChange(ctx, httpClient, ssh, rt, stateDir, input, workcopy, &pick)
+	}
 	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote, state)
+	if workcopy != nil {
+		result.Message += " The description was not written because the open change is on another branch."
+	}
 	return jsonResult(result), nil, nil
 }
 
