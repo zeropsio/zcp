@@ -9,3 +9,4 @@
 - WD-7 — The edit's next step says to acquire an empty pool or names each selected copy's own step. Breaks: an agent cannot recover where to continue after compaction.
 - WD-8 — The workflow's input and description name the edit's scope and describe how an open change is handed over. Breaks: an agent cannot discover the accepted pool, lease, or description inputs.
 - WD-9 — A copy's checkout path names its mounted directory in the Mate, including a code-volume subdirectory. Breaks: an agent edits the Mate's own files instead of the dev copy.
+- WD-10 — An edit briefing selects service-specific atoms for its scoped dev half or pool, including a pool named by a lease. Breaks: an unrelated pool's edit guidance appears in a classic dev edit.

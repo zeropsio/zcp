@@ -158,6 +158,44 @@ func TestEditBriefing_WD6_ResynthesizesEditAtoms(t *testing.T) {
 	}
 }
 
+// witness: internal/tools/workflow_develop_dev_pool.go | editEnvelope.Services = editAtomServices(envelope, scope) → editEnvelope.Services = envelope.Services
+func TestEditAtoms_WD10_UseTheEditScope(t *testing.T) {
+	t.Parallel()
+	leases := []workflow.LeaseSnapshot{{Alias: "pool-1", Pool: "pool", State: ops.LeaseStateHeld}}
+	env := workflow.StateEnvelope{Services: []workflow.ServiceSnapshot{
+		{Hostname: "dev", RuntimeClass: topology.RuntimeDynamic},
+		{Hostname: "pool", RuntimeClass: topology.RuntimePool, DevIsPool: true},
+	}, Leases: &leases}
+	corpus := []workflow.KnowledgeAtom{
+		{ID: "common", Axes: workflow.AxisVector{Phases: []workflow.Phase{workflow.PhaseDevelopEdit}}, Body: "common guidance"},
+		{ID: "classic", Axes: workflow.AxisVector{Phases: []workflow.Phase{workflow.PhaseDevelopEdit}, Runtimes: []topology.RuntimeClass{topology.RuntimeDynamic}}, Body: "classic guidance"},
+		{ID: "pool", Axes: workflow.AxisVector{Phases: []workflow.Phase{workflow.PhaseDevelopEdit}, Runtimes: []topology.RuntimeClass{topology.RuntimePool}}, Body: "pool guidance"},
+	}
+	tests := []struct {
+		name          string
+		scope         []string
+		classic, pool bool
+	}{
+		{"classic", []string{"dev"}, true, false},
+		{"pool", []string{"pool"}, false, true},
+		{"lease", []string{"pool-1"}, false, true},
+		{"both", []string{"dev", "pool"}, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			guidance, _, err := editBriefing(context.Background(), nil, "", "", runtime.Info{}, nil, env, tt.scope, corpus)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := strings.Join(guidance, "\n")
+			if !strings.Contains(text, "common guidance") || strings.Contains(text, "classic guidance") != tt.classic || strings.Contains(text, "pool guidance") != tt.pool {
+				t.Errorf("guidance = %q, want classic %v and pool %v", text, tt.classic, tt.pool)
+			}
+		})
+	}
+}
+
 // witness: internal/tools/workflow_develop_dev_pool.go | if len(copies) == 0 && len(missing) > 0 { → if false {
 func TestEditNext_WD7_NamesTheCurrentStep(t *testing.T) {
 	t.Parallel()

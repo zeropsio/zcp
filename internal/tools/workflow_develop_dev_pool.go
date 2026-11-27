@@ -50,6 +50,7 @@ func editBriefing(ctx context.Context, client platform.Client, projectID, stateD
 	}
 	editEnvelope := envelope
 	editEnvelope.Phase, editEnvelope.WorkSession = workflow.PhaseDevelopEdit, nil
+	editEnvelope.Services = editAtomServices(envelope, scope)
 	matches, err := workflow.Synthesize(editEnvelope, corpus)
 	if err != nil {
 		return nil, workflow.Plan{}, fmt.Errorf("synthesize edit guidance: %w", err)
@@ -66,6 +67,27 @@ func editBriefing(ctx context.Context, client platform.Client, projectID, stateD
 	}
 	plan := editNext(facts.Copies, missing)
 	return guidance, plan, nil
+}
+
+// editAtomServices binds service-specific edit atoms to the targets named by
+// this call, translating lease aliases to their owning pools.
+func editAtomServices(env workflow.StateEnvelope, scope []string) []workflow.ServiceSnapshot {
+	targets := make(map[string]bool, len(scope))
+	for _, name := range scope {
+		targets[name] = true
+	}
+	for _, lease := range env.LeaseList() {
+		if targets[lease.Alias] {
+			targets[lease.Pool] = true
+		}
+	}
+	services := make([]workflow.ServiceSnapshot, 0, len(env.Services))
+	for _, service := range env.Services {
+		if targets[service.Hostname] {
+			services = append(services, service)
+		}
+	}
+	return services
 }
 
 // selectEditCopies does not guess a caller's lease: a named pool includes
