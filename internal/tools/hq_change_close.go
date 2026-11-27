@@ -28,8 +28,7 @@ type changeCloseResult struct {
 
 // handleCloseChange is zerops_workflow action="close-change": the Mate closes
 // its own open change without merging it — abandoned work, a subagent's
-// change nobody will review, a change folded into another (AGENTS.md's "What
-// one change holds") — named by its branch, or by a lease of it; never
+// change nobody will review — named by its branch, or by a lease of it; never
 // inferred, not even as the only open one. Its branch stays, and so do the
 // leases on it. Only an HQ that keeps an open change per branch lets a Mate
 // close its own; on any other — one that keeps one per repository, or one
@@ -175,6 +174,6 @@ func closeAccessRefusedWords(refusal string) string {
 // personClosesWords is close-change's answer where HQ closes no change for a
 // Mate: a person closes it in its review, by its link; nothing changed here.
 func personClosesWords(number int, branch, url, why string) string {
-	return fmt.Sprintf("Nothing was closed: %s, so a person closes change #%d on %q in its review (%s). Ask them, saying why it closes (abandoned, or folded into another change); its branch stays either way.",
+	return fmt.Sprintf("Nothing was closed: %s, so a person closes change #%d on %q in its review (%s). Ask them, saying why it closes; its branch stays either way.",
 		why, number, branch, url)
 }

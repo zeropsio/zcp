@@ -529,10 +529,8 @@ func TestOpenChangesOf_MarksAHandedChangeAsHanded(t *testing.T) {
 
 // TestChangeUpdatedWords_SaysHowLongAgoHQLastChangedIt: develop's start and
 // status say when HQ last changed each open change — minutes under an hour,
-// hours under two days, days after — so the agent can tell a change updated
-// within about two hours, which unrelated interface work may join, from one
-// that has waited longer; nothing when HQ sent no time (docs/spec-mate.md
-// §10.10, MB-53).
+// hours under two days, days after; nothing when HQ sent no time
+// (docs/spec-mate.md §10.10, MB-53).
 // witness: internal/tools/hq_change_status.go | case age < 48*time.Hour: → case age < 2*time.Hour:
 func TestChangeUpdatedWords_SaysHowLongAgoHQLastChangedIt(t *testing.T) {
 	t.Parallel()

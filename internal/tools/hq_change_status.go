@@ -317,8 +317,7 @@ func changeAge(t *workflow.HQChangeTold, now time.Time) time.Duration {
 }
 
 // handedToYou labels an open change a person handed this Mate from a Mate
-// that is gone: AGENTS.md's "What one change holds" never adds work to it or
-// folds it.
+// that is gone: AGENTS.md's "What one change holds" never adds work to it.
 const handedToYou = "handed to you"
 
 // openChangeLabels is how develop's start and the refusal past five open
