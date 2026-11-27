@@ -17,5 +17,6 @@
 - RB-FAILLOG — A failed public stage reports the last build-log line while retaining its public host in the result, whether the failure was already known or was joined in flight.
 - RB-UNAVAILABLE — A stage lock or build wait that ends without a verdict is unavailable, with the step and its last error line.
 - RB-HEALTH — A public stage's probe uses its setup's declared health path, including an inherited path, or the default when none is declared.
+- RB-SOURCE — A public stage's probe reads its setup from the head built by its version, even when Zerops stores no yaml for that version.
 - RB-DEVWATCH — The dev git observer reads a replacement after its state watch ends and is opened again, or uses its retry wake when reopening fails.
 - RB-WATCH — The Review observer reads a replacement after its state watch ends and is opened again, or uses its stand-up wake when reopening fails.

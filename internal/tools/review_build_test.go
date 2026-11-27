@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -510,5 +512,65 @@ func TestReviewHealth_RBHealth_Setup_UsesDeclaredPath(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Fatalf("%s: path %q, error %v; want %q", tc.setup, got, err, tc.want)
 		}
+	}
+}
+
+type reviewTestSource struct {
+	yaml string
+	err  error
+}
+
+func (s reviewTestSource) Open(_ context.Context, repository, commit string) (ops.CommitSource, error) {
+	if s.err != nil {
+		return ops.CommitSource{}, s.err
+	}
+	if repository != "app/code" || commit != "abcdef" {
+		return ops.CommitSource{}, errors.New("wrong repository or commit")
+	}
+	return ops.CommitSource{ZeropsYaml: s.yaml, Archive: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+// witness: internal/tools/review_build_run.go | source.Open(ctx, repository, head) → source.Open(ctx, repository, "")
+func TestReviewStage_RBSource_PublicVersion_ProbesBuiltHead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, yaml, wantPath, outcome string
+		err                           error
+	}{
+		{"no check", "# repo config\nzerops:\n  - setup: pool\n    run:\n      base: nodejs@20\n  - setup: prod\n    run:\n      base: static\n", "/", "ok", nil},
+		{"inherited check", "zerops:\n  - setup: base\n    run:\n      healthCheck:\n        httpGet:\n          path: /health\n  - setup: prod\n    extends: base\n", "/health", "ok", nil},
+		{"unreadable source", "", "", "unavailable", errors.New("source unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				svc := platform.ServiceStack{ID: "stage", Name: "apistage", SubdomainAccess: true, Ports: []platform.Port{{Port: 80, Scheme: "http"}},
+					ActiveAppVersion: &platform.ActiveAppVersionDigest{ID: "version"}}
+				client := platform.NewMock().WithServices([]platform.ServiceStack{svc}).
+					WithProject(&platform.Project{ID: "project", SubdomainHost: "example.test"}).
+					WithServiceAppVersions("stage", []platform.AppVersionEvent{{ID: "version", Status: "ACTIVE"}}).
+					WithProjectProcesses([]platform.Process{reviewTestProcess("zcp abcdef", "FINISHED")})
+				d := devGitDeps{client: client, stateDir: t.TempDir(), rt: runtime.Info{ProjectID: "project"},
+					httpClient: checkLogDoer(func(req *http.Request) (*http.Response, error) {
+						if req.Method != http.MethodGet || req.URL.String() != "https://apistage-example.test"+tc.wantPath {
+							t.Errorf("probe request: %s %s", req.Method, req.URL)
+						}
+						return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+					})}
+				part := reviewBuildStage(context.Background(), d, reviewTestSource{yaml: tc.yaml, err: tc.err}, "app/code", "abcdef", topology.StageRef{Hostname: "apistage", SetupName: "prod"})
+				if part.Outcome != tc.outcome || part.AppVersionID != "version" {
+					t.Fatalf("got %+v, want outcome %s for version", part, tc.outcome)
+				}
+				if tc.err != nil {
+					if part.Probe != nil || !strings.Contains(part.Reason, "source unavailable") {
+						t.Fatalf("unreadable source: %+v", part)
+					}
+					return
+				}
+				if part.Probe == nil || part.Probe.URL != "https://apistage-example.test"+tc.wantPath || part.Probe.Status == nil || *part.Probe.Status != http.StatusOK || part.Probe.At != "2000-01-01T00:00:00Z" {
+					t.Fatalf("probe: %+v", part.Probe)
+				}
+			})
+		})
 	}
 }

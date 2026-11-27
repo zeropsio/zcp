@@ -166,11 +166,12 @@ func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource
 	}
 	path := ""
 	if public {
-		yaml, readErr := d.client.GetAppVersionZeropsYaml(ctx, found.id)
+		opened, readErr := source.Open(ctx, repository, head)
 		if readErr != nil {
 			return unavailable("read health path", readErr)
 		}
-		path, readErr = reviewHealthPath(yaml, stage.SetupName)
+		_ = opened.Archive.Close()
+		path, readErr = reviewHealthPath(opened.ZeropsYaml, stage.SetupName)
 		if readErr != nil {
 			return unavailable("read health path", readErr)
 		}
