@@ -226,3 +226,28 @@ func publishMateLeaseEvent(d LeaseDeps, rec leaseRecord, event mate.CopyEvent) {
 		fmt.Fprintf(os.Stderr, "[zcp] publish lease copy event: %v\n", err)
 	}
 }
+
+// publishMateLeaseWake marks a lost link while a stopped container wakes.
+// An already-running container loses no link unless its projection was parked.
+func publishMateLeaseWake(d LeaseDeps, rec leaseRecord, restarted bool) {
+	if restarted {
+		publishMateLeaseEvent(d, rec, mate.CopyEvent{Kind: mate.CopyLinkLost})
+		return
+	}
+	if !runtime.DetectFrom(mate.LiveLookup(mate.LiveEnvStorePath)).MateEnabled {
+		return
+	}
+	status, err := mate.ReadStatus(mate.StatusFilePath())
+	if err != nil || status.Copies == nil {
+		return
+	}
+	for _, copy := range status.Copies.Leases {
+		if copy.Alias == rec.alias() && copy.AcquiredAt == rec.AcquiredAt && copy.Branch == rec.Branch && copy.State == mate.CopyParked {
+			target := MateCopyTarget{Hostname: rec.alias(), Pool: rec.PoolHostname, Branch: rec.Branch, AcquiredAt: rec.AcquiredAt}
+			if err := StoreMateCopyEvent(d.StateDir, mate.StatusFilePath(), target, mate.CopyEvent{Kind: mate.CopyLinkLost}, d.now().UTC(), copy.StateAt); err != nil {
+				fmt.Fprintf(os.Stderr, "[zcp] publish lease wake: %v\n", err)
+			}
+			return
+		}
+	}
+}

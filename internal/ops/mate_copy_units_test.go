@@ -14,6 +14,81 @@ import (
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 )
 
+// non-parallel: the lease publisher reads the process environment.
+// witness: internal/ops/lease_mate_status.go | if restarted { → if true {
+func TestDevServer_DSCopyWake_OnlyALostLinkBecomesUnknown(t *testing.T) {
+	base := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		before    mate.CopyState
+		restarted bool
+		want      mate.CopyState
+	}{{"already running", mate.CopyRunning, false, mate.CopyRunning}, {"parked then externally started", mate.CopyParked, false, mate.CopyUnknown}, {"container restarted", mate.CopyRunning, true, mate.CopyUnknown}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "status.json")
+			t.Setenv("ZCP_MATE_ENABLED", "1")
+			t.Setenv(mate.EnvStatusFile, path)
+			rec := leaseRecord{PoolHostname: "webpool", ContainerNumber: 1, Branch: "feature", Lease: "test", AcquiredAt: "2026-11-27T06:00:00Z"}
+			if err := writeLeaseRecord(dir, rec); err != nil {
+				t.Fatal(err)
+			}
+			if err := mate.UpdateStatus(path, func(s *mate.Status) {
+				s.Copies.Leases[0].State, s.Copies.Leases[0].StateAt = tc.before, base.Format(time.RFC3339Nano)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			d := LeaseDeps{StateDir: dir, Now: func() time.Time { return base.Add(time.Minute) }}
+			publishMateLeaseWake(d, rec, tc.restarted)
+			status, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status.Copies.Leases[0].State; got != tc.want {
+				t.Fatalf("wake = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// witness: internal/ops/mate_server_wait.go | if err := StoreMateCopyEvent(d.StateDir, statusPath, target, event, d.now().UTC(), target.StateAt); err != nil { → if err := error(nil); err != nil {
+func TestDevServer_DSCopyWait_StoresTheSupervisorAnswer(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 11, 27, 7, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		before mate.CopyState
+		answer devsup.Status
+		want   mate.CopyState
+	}{{"listened", mate.CopyStarting, devsup.StatusRunning, mate.CopyRunning}, {"stopped", mate.CopyRunning, devsup.StatusStopped, mate.CopyStopped}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "status.json")
+			if err := mate.UpdateStatus(path, func(s *mate.Status) {
+				s.Standup.Error = "kept"
+				s.Copies = &mate.CopyStatus{DevServices: []mate.DevCopyStatus{{Hostname: "appdev", State: tc.before, StateAt: base.Format(time.RFC3339Nano)}}}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			c := devservertest.NewSupervised(`{"version":1,"servers":[{"name":"web","port":3000,"command":"run","preview":true}]}`)
+			c.WaitFinds = map[string]devsup.ServerState{"web": {Status: tc.answer}}
+			d := LeaseDeps{SSH: c, Now: func() time.Time { return base.Add(time.Minute) }}
+			target := MateCopyTarget{Hostname: "appdev", State: tc.before, StateAt: base.Format(time.RFC3339Nano)}
+			next, err := AwaitMateServer(t.Context(), d, path, "", target)
+			if err != nil || next != "" {
+				t.Fatalf("wait = %s, %v", next, err)
+			}
+			status, err := mate.ReadStatus(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status.Copies.DevServices[0].State != tc.want || status.Standup.Error != "kept" {
+				t.Fatalf("stored = %+v, want %s and preserved standup", status, tc.want)
+			}
+		})
+	}
+}
+
 // non-parallel: recording a lease consults the process environment.
 // witness: internal/ops/lease_mate_status.go | v.State, _ = mate.NextCopyState(v.State, mate.CopyEvent{Kind: mate.CopyLinkLost}) → v.State, _ = mate.NextCopyState(v.State, mate.CopyEvent{Kind: mate.CopyStop})
 func TestDevServer_DSCopyBootRecord_NewAndExistingLeasesStartUnknown(t *testing.T) {

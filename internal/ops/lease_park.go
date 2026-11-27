@@ -262,7 +262,7 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 		}
 		return LeaseView{}, leaseOrchestratorError(ctx, d, rp, "unpark "+alias, err)
 	}
-	publishMateLeaseEvent(d, rec, mate.CopyEvent{Kind: mate.CopyLinkLost})
+	publishMateLeaseWake(d, rec, restarted)
 	v := rec.view(LeaseStateHeld)
 	// ssh reaches the container through its alias: put back a stanza another
 	// call or a redeploy lost.
