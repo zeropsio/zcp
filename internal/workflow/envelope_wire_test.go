@@ -260,13 +260,60 @@ func TestAppendEnvelope_BlockSizeBudget(t *testing.T) {
 	}
 	four.Leases = &leases
 	withLeases := len(AppendEnvelope("", four))
-	t.Logf("envelope block bytes: idle=%d fixture(4 services + work session)=%d +8 leases=%d", idle, full, withLeases)
+
+	// One stage's version (docs/spec-mate.md §1.7). It costs the same bytes
+	// on whichever services[] entry carries it.
+	four.Services[0].Version = &StageVersion{ID: "REC0000000000000000032", Commit: "0123456789abcdef0123456789abcdef01234567", At: "2026-01-01T00:00:00Z"}
+	withVersion := len(AppendEnvelope("", four))
+	t.Logf("envelope block bytes: idle=%d fixture(4 services + work session)=%d +8 leases=%d +1 stage version=%d", idle, full, withLeases, withVersion)
 
 	const headroom = 32*1024 - ComposeBodyBudget // 8 KB of scaffold room
-	for name, size := range map[string]int{"fixture": full, "fixture with 8 leases": withLeases} {
+	for name, size := range map[string]int{"fixture": full, "fixture with 8 leases": withLeases, "fixture with 8 leases and a stage version": withVersion} {
 		if size >= headroom {
 			t.Errorf("%s envelope block %d B exceeds the %d B scaffold headroom", name, size, headroom)
 		}
+	}
+}
+
+// VER-WIRE — A stage's version is exactly id, commit and at.
+// witness: internal/workflow/envelope.go | At     string `json:"at"` → At     string `json:"created"`
+func TestStageVersion_VERWire_ExactlyIDCommitAt(t *testing.T) {
+	t.Parallel()
+	const id, commit, at = "REC0000000000000000032", "0123456789abcdef0123456789abcdef01234567", "2026-01-01T00:00:00Z"
+	for _, tc := range []struct {
+		name    string
+		version *StageVersion
+		want    map[string]any // the decoded "version" value; nil: no key
+	}{
+		{"named by a commit", &StageVersion{ID: id, Commit: commit, At: at}, map[string]any{"id": id, "commit": commit, "at": at}},
+		{"another name", &StageVersion{ID: id, At: at}, map[string]any{"id": id, "at": at}},
+		{"no version", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := json.Marshal(ServiceSnapshot{Hostname: "appstage", Version: tc.version})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			value, present := fields["version"]
+			if tc.want == nil {
+				if present {
+					t.Errorf("a snapshot without a version carries version: %s", value)
+				}
+				return
+			}
+			var got map[string]any
+			if err := json.Unmarshal(value, &got); err != nil {
+				t.Fatalf("version %s: %v", value, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("version = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

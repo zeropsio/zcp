@@ -1,0 +1,4 @@
+# The version a stage runs (`compute_envelope.go`, `envelope.go`)
+
+- VER-STATES — On a Mate's envelope a pair's stage carries its ACTIVE version's id and created time, with the commit the version's name holds, or without one when the name holds none; an older ACTIVE version is carried even when a newer one is still building or failed. A stage with no ACTIVE version holding code, a read that fails or does not return that version, and an envelope that is not a Mate's all carry no version, and the rest of the envelope stays as it was. Breaks: the Mate shows a build in flight as running, a version on a stage that runs none, or a version on the envelope of a zcp outside a Mate.
+- VER-WIRE — A stage's version marshals as exactly `id`, `commit` and `at` under `version`, with `commit` left out when the name holds none; a snapshot without a version carries no `version` key. Breaks: the Mate's decoder finds no version under a renamed or extra key.

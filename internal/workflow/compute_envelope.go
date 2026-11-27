@@ -47,15 +47,22 @@ type LeaseRead struct {
 	NotAnswering string
 }
 
+// VersionCommits reads, for one service, the commit each of its app versions
+// is named by: version id → commit, "" for a name that holds none, and no
+// entry for a version the read did not return. It is injected
+// (WithVersionCommits) so workflow does not import ops, which owns the names.
+type VersionCommits func(ctx context.Context, serviceID string) (map[string]string, error)
+
 // EnvelopeOption tunes ComputeEnvelope's inputs beyond the platform client.
 type EnvelopeOption func(*envelopeConfig)
 
 type envelopeConfig struct {
-	leases       LeaseReader
-	leaseReads   map[string]LeaseRead
-	leasesAlways bool
-	preview      func(StateEnvelope, []platform.ServiceStack)
-	edit         bool
+	leases         LeaseReader
+	leaseReads     map[string]LeaseRead
+	leasesAlways   bool
+	versionCommits VersionCommits
+	preview        func(StateEnvelope, []platform.ServiceStack)
+	edit           bool
 }
 
 // WithEditPhase computes an edit briefing without reading a deploy session.
@@ -93,6 +100,12 @@ func WithLeasesAlwaysRead() EnvelopeOption {
 // never reads a checkout, so no other call's envelope pays for one.
 func WithLeaseActivity(reads map[string]LeaseRead) EnvelopeOption {
 	return func(c *envelopeConfig) { c.leaseReads = reads }
+}
+
+// WithVersionCommits injects the reader that names the version each pair's
+// stage runs (ServiceSnapshot.Version). Without it no envelope carries one.
+func WithVersionCommits(r VersionCommits) EnvelopeOption {
+	return func(c *envelopeConfig) { c.versionCommits = r }
 }
 
 // ComputeEnvelope is the single entry point for computing state. Every
@@ -205,6 +218,7 @@ func ComputeEnvelope(
 	if cfg.leases != nil {
 		records = readLeaseRecordSnapshots(stateDir)
 	}
+	withVersions := readStageVersions(ctx, cfg.versionCommits, rt, services, snapshots)
 	if cfg.preview != nil {
 		preview := envelope
 		if cfg.leases != nil {
@@ -214,7 +228,58 @@ func ComputeEnvelope(
 		cfg.preview(preview, services)
 	}
 	envelope.Leases = readLeases(ctx, cfg, records, metas)
+	envelope.Services = withVersions()
 	return envelope, nil
+}
+
+// readStageVersions starts reading the version each pair's stage runs, on a
+// Mate's envelope only (docs/spec-mate.md §1.7). Each stage running deployed
+// code gets one read, and all reads run at once, beside the lease read. The
+// returned func waits for them. It answers the snapshots with each stage's
+// version set on a copy, so a preview already handed out keeps its own. A
+// stage whose read failed, or did not return its ACTIVE version, carries none.
+func readStageVersions(ctx context.Context, read VersionCommits, rt runtime.Info, services []platform.ServiceStack, snapshots []ServiceSnapshot) func() []ServiceSnapshot {
+	if !rt.MateEnabled || read == nil {
+		return func() []ServiceSnapshot { return snapshots }
+	}
+	stages := map[string]bool{}
+	for _, snap := range snapshots {
+		for _, host := range snap.PairStageHostnames() {
+			stages[host] = true
+		}
+	}
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		versions = map[string]*StageVersion{}
+	)
+	for _, svc := range services {
+		if !stages[svc.Name] || !svc.HasDeployedCode() {
+			continue
+		}
+		active := svc.ActiveAppVersion
+		wg.Go(func() {
+			commits, err := read(ctx, svc.ID)
+			commit, named := commits[active.ID]
+			if err != nil || !named {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			versions[svc.Name] = &StageVersion{ID: active.ID, Commit: commit, At: active.Created}
+		})
+	}
+	return func() []ServiceSnapshot {
+		wg.Wait()
+		if len(versions) == 0 {
+			return snapshots
+		}
+		out := slices.Clone(snapshots)
+		for i := range out {
+			out[i].Version = versions[out[i].Hostname]
+		}
+		return out
+	}
 }
 
 // leaseStateHeld is the state of a lease zcp holds — the reader's verbatim

@@ -338,6 +338,11 @@ type ServiceSnapshot struct {
 	// tools layer via ApplyRollbackInfo, never persisted — a fresh read
 	// every envelope computation.
 	Rollback *RollbackInfo `json:"rollback,omitempty"`
+
+	// Version is the version a pair's stage runs, carried on a Mate's
+	// envelope (docs/spec-mate.md §1.7). It is nil on every other snapshot,
+	// on a stage running no deployed code, and when its read did not answer.
+	Version *StageVersion `json:"version,omitempty"`
 }
 
 // PairStageHostnames returns the stage hostnames of the pair whose dev half
@@ -490,6 +495,15 @@ func poolDevServers(leases []LeaseSnapshot, pool string) []topology.DevServerSta
 type RollbackInfo struct {
 	Active string   `json:"active,omitempty"`
 	Backup []string `json:"backup,omitempty"`
+}
+
+// StageVersion is the ACTIVE app version a stage runs (docs/spec-mate.md
+// §1.7). ID and At come from the direct service read. Commit is the commit
+// the version's name holds, "" when the name holds none.
+type StageVersion struct {
+	ID     string `json:"id"`
+	Commit string `json:"commit,omitempty"`
+	At     string `json:"at"`
 }
 
 // RepoStatus is the per-service repository state. Present/Head are read live.

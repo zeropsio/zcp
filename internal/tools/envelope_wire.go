@@ -156,14 +156,40 @@ func freshEnvelope(
 }
 
 // leaseEnvelopeOptions are the options every envelope zcp computes starts
-// from: the default lease reader — the project's leases reconciled against
-// the pool orchestrators within timeout, a held lease's alias and mount
-// checked on this host (envelopeLeaseHost) — then extra, a later reader
-// replacing it. A stage whose pair's dev half is a pool deploys from a held
-// lease of it, so an envelope without the leases plans a lease that is
-// already held (docs/spec-workflows.md §13 PM-10).
+// from. The first is the default lease reader: the project's leases
+// reconciled against the pool orchestrators within timeout, with a held
+// lease's alias and mount checked on this host (envelopeLeaseHost). The
+// second is the stage version reader, within the same timeout. Then come
+// extra, where a later reader replaces an earlier one. A stage whose pair's
+// dev half is a pool deploys from a held lease of it, so an envelope without
+// the leases plans a lease that is already held (docs/spec-workflows.md §13
+// PM-10).
 func leaseEnvelopeOptions(client platform.Client, projectID, stateDir string, rt runtime.Info, timeout time.Duration, extra ...workflow.EnvelopeOption) []workflow.EnvelopeOption {
-	return append([]workflow.EnvelopeOption{workflow.WithLeaseReader(leaseReader(client, projectID, stateDir, envelopeLeaseHost(rt), timeout))}, extra...)
+	return append([]workflow.EnvelopeOption{
+		workflow.WithLeaseReader(leaseReader(client, projectID, stateDir, envelopeLeaseHost(rt), timeout)),
+		workflow.WithVersionCommits(stageVersionCommits(client, projectID, timeout)),
+	}, extra...)
+}
+
+// stageVersionCommits reads a stage's version names from the Zerops search,
+// because the direct service read names no version. It turns each name into
+// the commit it holds (ops.AppVersionCommit). The read is bounded by timeout
+// and never retried: a stage's version is never worth more wait than its
+// leases (docs/spec-mate.md §1.7).
+func stageVersionCommits(client platform.Client, projectID string, timeout time.Duration) workflow.VersionCommits {
+	return func(ctx context.Context, serviceID string) (map[string]string, error) {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		names, err := client.ListServiceAppVersionNames(ctx, projectID, serviceID)
+		if err != nil {
+			return nil, fmt.Errorf("read stage version names: %w", err)
+		}
+		commits := make(map[string]string, len(names))
+		for id, name := range names {
+			commits[id] = ops.AppVersionCommit(name)
+		}
+		return commits, nil
+	}
 }
 
 // envelopeLeaseHost is the host side an envelope's lease reader checks a held

@@ -119,6 +119,15 @@ func AppVersionName(commit string) string {
 	return commitVersionPrefix + commit
 }
 
+// AppVersionCommit reads the commit back out of an AppVersionName name. Any
+// other name holds no commit and gives "".
+func AppVersionCommit(name string) string {
+	if commit, ok := strings.CutPrefix(name, commitVersionPrefix); ok {
+		return commit
+	}
+	return ""
+}
+
 // commitVersionPrefix starts the name of every version a commit deploy
 // creates, and only theirs.
 const commitVersionPrefix = "zcp "

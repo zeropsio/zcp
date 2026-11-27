@@ -398,7 +398,7 @@ func (d standupDeps) builtCommit(ctx context.Context, versionID string) string {
 	}
 	for _, p := range processes {
 		if p.AppVersion != nil && p.AppVersion.ID == versionID {
-			if commit, ok := strings.CutPrefix(p.AppVersion.Name, ops.AppVersionName("")); ok {
+			if commit := ops.AppVersionCommit(p.AppVersion.Name); commit != "" {
 				return commit
 			}
 		}
