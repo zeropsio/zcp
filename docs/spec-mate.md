@@ -136,23 +136,36 @@ stream. It never reads `.zcp/state` and never calls the Zerops API for lifecycle
 work the envelope has to survive the trip from the MCP handler, through the provider CLI, to
 the mate server's reducer.
 
-### 1.0a Mate copy observations
+### 1.0a Mate copy state
 
-The file named by `ZCP_STATUS_FILE` carries a `copies` section independent of tool results. It is
-replaced whole under the file lock; other sections survive. The section is absent until read, and
-contains `leases` and `devServices`: null means that list is unread, an empty array means read and
-none. A lease entry carries
-`alias`, `pool`, `containerHostname`, `branch`, `repo` and `acquiredAt` from zcp's lease record.
-A classic dev-half entry carries `hostname`, its checked-out `branch` and `branchReadAt` when
-read. Each entry may carry `devServers` and `devServersReadAt`: the same server entries as the
-envelope, with the time of that observation; an absent array means unread, an empty one means
-read and none. Lease credentials never enter the file.
+The file named by `ZCP_STATUS_FILE` carries a `copies` section independent of tool results. zcp
+replaces the whole file under its lock, preserving other sections; replacement is the event to the
+Mate. The section contains `leases` and `devServices`: null means unread and an empty array means
+read and none. A lease entry carries `alias`, `pool`, `containerHostname`, `branch`, `repo` and
+`acquiredAt` from the lease record. A classic dev-half entry carries `hostname`, its checked-out
+`branch` and `branchReadAt` when read. Lease credentials never enter the file.
 
-The section records the last observation, not current liveness or authority to reach a copy.
-The Mate opens a Draft with `zcp preview` (§2.8), never by treating this observation as current.
-A reader replaces each set when
-its array is present, keeps its prior set for null, and ignores an absent section. The additive
-section does not change the envelope or require a version gate.
+Each held copy carries `state` and `stateAt`, the time zcp emitted that state. State is of the
+copy's declared preview server (§2.8a.1): `parked`, `starting`, `running`, `stopped`, `failed` or
+`unknown`. A copy declaring no preview server is `stopped`. `unknown` means the link to its writer
+was lost, including when the supervisor lacks the state-wait capability. On zcp's own boot every
+held copy first becomes `unknown`, then the supervisor's snapshot reports its state; a failed read
+leaves it `unknown`. `gone` is terminal: release or replacement removes the entry, with no stored
+tombstone. The lease owner records, parks, wakes and releases the lease; the supervisor reports
+starts, listening, stops and exits. An identity-checked park is authoritative even from `starting`
+or `unknown`, and release is authoritative from every state. A report, including `zcp preview`,
+restores a state after a lost link. zcp applies these events through one transition function and
+drops an answer for an earlier lease or older report. The Mate projects the latest state: events
+superseded before it reads the file need not be replayed.
+
+Each entry may also carry `devServers` and `devServersReadAt`: the envelope's per-server details
+and their read time; an absent array means unread and an empty one means read and none. The Mate
+shows `state` as written and derives nothing from `stateAt`, `devServersReadAt` or a server's
+`status`. `running` means the process listened at its last transition; a listener that goes away
+while its leader lives emits no event and is not chased here. The Mate opens a Draft with
+`zcp preview` (§2.8), never by treating this state as authority to reach it. A reader replaces each
+set when its array is present, keeps its prior set for null, and ignores an absent section. The
+additive fields do not change the envelope or require a version gate.
 
 ### 1.0 Two carriers, one reducer
 
@@ -778,7 +791,7 @@ Every launch adds six more on top (`mate.LaunchEnvLines`), whatever init wrote:
 | `T3CODE_BASE_PATH` | `mate.BasePath` (§2.7) |
 | `ZCP_MATE_UPDATE_STATE_FILE` | the automatic-update coordinator state (`mate.UpdateStatePath`) |
 | `ZCP_MATE_BOOT_FILE` | the file a booting server reports its progress in until it accepts commands (`mate.BootFilePath`, §2.1d) |
-| `ZCP_STATUS_FILE` | zcp's status file, carrying setup and copy observations (§1.0a) |
+| `ZCP_STATUS_FILE` | zcp's status file, carrying setup and copy state (§1.0a) |
 | `ZCP_MATE_STATE_FILE` | the file the server keeps the Mate's state in (`hq.MateStatePath`) |
 
 ### 2.4 nginx — locations outside the cookie gate, behind the Mate gate
@@ -1427,8 +1440,8 @@ a classic dev half. The identity is the one in `copies` (§1.0a). zcp ensures th
 preview server runs and waits for its start within the existing start bound. It answers one JSON
 document: `{"status":"running","url":"<address>"}` or `{"status":"failed","reason":"<one line>"}`;
 the exit code is 0 or 1 respectively. A lease or branch that is no longer that copy answers failed
-with reason `draft ended`. This is an on-demand answer, not stored liveness; while it is pending the
-Mate says the Draft is opening.
+with reason `draft ended`. Its supervisor answer is also a writer report applied to the copy state (§1.0a); while it is
+pending the Mate says the Draft is opening.
 
 A project without a Mate uses the plain-project door (§6.7); it does not change this Mate
 contract. Once the project has a Mate, zcp uses the
@@ -1774,13 +1787,14 @@ verb is idempotent, so the caller asks `status` again.
 | Verb | Effect |
 |---|---|
 | `status [name]` | the `servers` map above (all or one) plus `supervisor` and `declaration` |
+| `copy-state [--after <state>]` | read the declared preview server's transition state, or wait without a deadline until it differs from `--after`; a snapshot and its change receipt are compared without a gap. The answer is read-only, and the capability `copy-state` must be listed before it is sent. An ended link is not retried by the observer (§1.0a) |
 | `wait <name> --timeout <seconds>` | the same answer as `status <name>`, when the supervisor is no longer bringing the server up or the required timeout (1–600 s) passes, whichever comes first. A start in progress, an awaited port or a crashed server with a retry pending is awaited; a running, stopped, stalled, listened or finally crashed server answers at once. It changes nothing (capability `wait`; `TestStartPhase_STAwaited_OnlyWhileTheSupervisorBringsItUp`) |
 | `start <name>` / `stop <name>` / `restart <name>` | sets `desired` and acts; never writes the declaration. `start` and `restart` first re-read it as `reload` does, so an edited entry runs as edited; a server that re-read already restarted is not restarted again (`TestSupervisor_StartAndRestartRunTheDeclarationAsEditedWithoutAReload`) |
 | `reload` | same as `SIGHUP` |
 | `logs <name> [--lines N] [--since <cursor>]` | the tail of `logs/<name>.log`. With `--since` (capability `logs-since`): `{name, lines, cursor, dropped}`, the complete lines the log gained after an earlier `--since` answer's `cursor`, the newest `N` of them, `dropped` counting the others among its last 256 KiB; the next read starts at `cursor`, past the last complete line, so a line still being written comes whole later. A cursor of another file — empty, a log rotated away, a new `$HOME` behind the same alias — reads the log from its start (`TestLogSince_LGSince_OnlyCompleteLinesAfterTheCursor`, `TestLogSince_LGOtherFile_ReadFromItsStart`) |
 | `run --name <n> --cwd <d> [--port <p>] -- <command>` / `rm <name>` | add / remove a `runtime` entry |
 | `env (--set NAME=VALUE)…` / `env --clear` | replaces the env overlay with exactly the `--set` pairs (`--clear` alone: none) — it never merges, so a full set also drops whatever a previous holder left; neither flag is refused (`status` shows the overlay). A name breaking the `siblingEnv` name rule (§2.8a.1) is refused and changes nothing. The answer — the state, `env` included — comes as soon as the overlay is stored in `state.json`; every server started from then on (boot, `start`, `restart`, `reload`, `run`, a watched change, a retry) gets the service's environment plus the overlay. The live servers whose group started under another overlay are then restarted by the supervisor itself, one at a time a stagger apart, each with `lastRestartReason: "env changed"` — a stop's grace of up to 10 s per server could outlast `ctl`'s 60 s wait. A stopped or crashed server is not started by it, and an identical overlay restarts nothing (`TestCtl_Env_AnswersBeforeTheRestarts`, `TestCtl_Env_ReplacesTheOverlay`, `TestCtl_Env_RejectsReservedAndMalformedKeys`, `TestSupervisor_EnvOverlay_AppliedAtEveryStart`, `TestSupervisor_EnvOverlay_ChangeRestartsRunningServersOnce`, `TestSupervisor_EnvOverlay_SameOverlay_NoRestart`) |
-| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env","activity","hold","logs-since","start-phase","wait"]}`; `capabilities` names the verbs, flags and answer fields an older supervisor lacks, and the behaviours a client reads off it: `env` the verb, `activity` the preview server's `previewLastConnAt`/`previewOpenConns` in `status`, `hold` the preview port of *Preview port* above, `logs-since` the `logs --since` flag, `start-phase` a starting server's `startPhase` in `status`, `wait` the read-only wait verb. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it, and reads such a field only then (`TestCtl_VersionNamesCapabilities`, `TestCapabilities_IncludeActivity`) |
+| `version` | `{"version":"vX.Y.Z","formats":[1],"capabilities":["env","activity","hold","logs-since","start-phase","wait","copy-state"]}`; `capabilities` names the verbs, flags and answer fields an older supervisor lacks, and the behaviours a client reads off it: `env` the verb, `activity` the preview server's `previewLastConnAt`/`previewOpenConns` in `status`, `hold` the preview port of *Preview port* above, `logs-since` the `logs --since` flag, `start-phase` a starting server's `startPhase` in `status`, `wait` the bounded start wait, `copy-state` the copy state snapshot and transition wait. An older `ctl` fails on a verb or flag it does not know, so a caller sends one only when `version` lists it, and reads such a field only then (`TestCtl_VersionNamesCapabilities`, `TestCapabilities_IncludeActivity`) |
 
 Exit codes: `0` done, `2` no supervisor (socket absent or refused), `3` unknown name, `4` invalid
 declaration, `5` supervisor not answering (the dial timed out or found the backlog full, or no answer
