@@ -108,7 +108,7 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 				}
 				parts[i].Part, parts[i].Setup, parts[i].Stage = binding.stage.Part, binding.stage.Setup, binding.stage.Stage
 			}()
-			parts[i] = reviewBuildStageWithLock(ctx, d, source, app+"/"+change.Repo, version, binding.ref)
+			parts[i] = reviewBuildStageWithLock(ctx, d, source, app+"/"+change.Repo, version, binding.ref, nil)
 		})
 	}
 	wg.Wait()
@@ -125,7 +125,7 @@ func executeReviewBuild(ctx context.Context, d devGitDeps, hqc hq.Client, app st
 }
 
 // A caller holding all stage locks keeps them past this function, through HQ's decision.
-func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef) hq.ReviewBuildPart {
+func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.DeploySource, repository, head string, stage topology.StageRef, held func(id, name string) bool) hq.ReviewBuildPart {
 	part := hq.ReviewBuildPart{Part: stage.Hostname, Setup: stage.SetupName, Stage: stage.Hostname}
 	unavailable := func(step string, err error) hq.ReviewBuildPart {
 		return reviewUnavailablePart(part, step, err)
@@ -161,7 +161,7 @@ func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.Depl
 	if parsed, parseErr := url.Parse(publicURL); parseErr == nil && parsed.Hostname() != "" {
 		part.Stage = parsed.Hostname()
 	}
-	svc, found, err := reviewReadStageVersion(ctx, d, svc.ID, head)
+	svc, found, err := reviewReadStageVersion(ctx, d, svc.ID, head, held)
 	if err != nil {
 		return unavailable("read stage version", err)
 	}
@@ -170,7 +170,7 @@ func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.Depl
 		if err := ops.WaitStageVersions(ctx, d.client, d.rt.ProjectID, svc.ID); err != nil {
 			return unavailable("wait for stage", err)
 		}
-		svc, found, err = reviewReadStageVersion(ctx, d, svc.ID, head)
+		svc, found, err = reviewReadStageVersion(ctx, d, svc.ID, head, held)
 		if err != nil {
 			return unavailable("read stage version", err)
 		}
@@ -262,7 +262,7 @@ func reviewBuildStageWithLock(ctx context.Context, d devGitDeps, source ops.Depl
 	return part
 }
 
-func reviewReadStageVersion(ctx context.Context, d devGitDeps, serviceID, head string) (*platform.ServiceStack, reviewVersion, error) {
+func reviewReadStageVersion(ctx context.Context, d devGitDeps, serviceID, head string, held func(id, name string) bool) (*platform.ServiceStack, reviewVersion, error) {
 	svc, err := d.client.GetService(ctx, serviceID)
 	if err != nil {
 		return nil, reviewVersion{}, fmt.Errorf("read stage: %w", err)
@@ -296,7 +296,7 @@ func reviewReadStageVersion(ctx context.Context, d devGitDeps, serviceID, head s
 	if svc.ActiveAppVersion != nil {
 		active = svc.ActiveAppVersion.ID
 	}
-	found := reviewVersionOf(head, serviceID, active, versions, processes)
+	found := reviewVersionOf(head, serviceID, active, versions, processes, held)
 	if found.action != reviewBuild || !missing {
 		return svc, found, nil
 	}
@@ -312,7 +312,7 @@ func reviewReadStageVersion(ctx context.Context, d devGitDeps, serviceID, head s
 	for i := range versions {
 		versions[i].Name = names[versions[i].ID]
 	}
-	found = reviewVersionOf(head, serviceID, active, versions, processes)
+	found = reviewVersionOf(head, serviceID, active, versions, processes, held)
 	if found.action != reviewBuild {
 		return svc, found, nil
 	}

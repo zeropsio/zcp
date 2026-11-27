@@ -166,7 +166,7 @@ func reviewAwaitDecision(ctx context.Context, changed <-chan struct{}, read func
 			if change.State == hq.ChangeMerging {
 				alreadyMerging = true
 			}
-			if change.State != hq.ChangeMerging && (alreadyMerging || change.State == hq.ChangeMerged || change.State == hq.ChangeClosed || change.State == hq.ChangeOpen || change.ReviewBuild != nil && change.ReviewBuild.Take == take && change.ReviewBuild.State == "passing") {
+			if change.State != hq.ChangeMerging && (alreadyMerging || change.State == hq.ChangeMerged || change.State == hq.ChangeClosed || change.State == hq.ChangeOpen || change.ReviewBuild != nil && change.ReviewBuild.Take == take && change.ReviewBuild.State == hq.ReviewBuildPassing) {
 				return nil
 			}
 		}
@@ -221,9 +221,10 @@ func executeReviewMain(ctx context.Context, d devGitDeps, hqc hq.Client, app, re
 		return false, nil
 	}
 	source := ops.NewHQDeploySource(d.httpClient, hqIdentity(d.rt))
+	atMain := func(id, name string) bool { return reviewAtMain(main, id, name, *current, doc.Mate.Changes) }
 	startedStages = true
 	for _, binding := range bindings {
-		part := reviewBuildStageWithLock(ctx, d, source, app+"/"+repo, main, binding.ref)
+		part := reviewBuildStageWithLock(ctx, d, source, app+"/"+repo, main, binding.ref, atMain)
 		if err := recordReviewMain(statusPath, repo, main, part); err != nil {
 			unavailable = true
 			runErr = errors.Join(runErr, err)

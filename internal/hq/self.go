@@ -170,6 +170,9 @@ type ChecksGivenUp struct {
 	Reason string `json:"reason"`
 }
 
+// ReviewBuildPassing is a Review build's state once every part passed.
+const ReviewBuildPassing = "passing"
+
 // ReviewBuild is HQ's read of the Mate's Review build at a change's head.
 type ReviewBuild struct {
 	State  string            `json:"state"`

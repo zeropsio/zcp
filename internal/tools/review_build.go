@@ -104,8 +104,34 @@ type reviewVersion struct {
 	id, process, status, reason string
 }
 
+// reviewAtMain says a stage's active version already holds main, so following
+// main builds nothing: a version named by main's commit, or a part of the
+// Review build HQ merged as main where HQ merges itself; a GitHub merge may
+// carry a main move after the build, so there only main's name counts.
+func reviewAtMain(main, id, name string, repo hq.MateRepo, changes []hq.MateChange) bool {
+	if ops.VersionNameHolds(name, main) {
+		return true
+	}
+	if id == "" || repo.Origin != nil && repo.Origin.Mode != hq.OriginFollowed {
+		return false
+	}
+	for _, c := range changes {
+		if c.Repo != repo.Name || c.State != hq.ChangeMerged || c.MergedSha == nil || *c.MergedSha != main || c.ReviewBuild == nil || c.ReviewBuild.State != hq.ReviewBuildPassing {
+			continue
+		}
+		for _, part := range c.ReviewBuild.Parts {
+			if part.Outcome == "ok" && part.AppVersionID == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // reviewVersionOf projects the named, direct stage versions and their builds.
-func reviewVersionOf(head, service, active string, versions []platform.AppVersionEvent, processes []platform.Process) reviewVersion {
+// held, when set, also accepts an active version that holds head under
+// another name (reviewAtMain).
+func reviewVersionOf(head, service, active string, versions []platform.AppVersionEvent, processes []platform.Process, held func(id, name string) bool) reviewVersion {
 	for _, p := range processes {
 		if p.ActionName != "stack.build" || p.AppVersion == nil || p.AppVersion.ID == "" || p.AppVersion.Name != ops.AppVersionName(head) || !reviewTouches(p, service) {
 			continue
@@ -115,7 +141,7 @@ func reviewVersionOf(head, service, active string, versions []platform.AppVersio
 		}
 	}
 	for _, v := range versions {
-		if v.Name == ops.AppVersionName(head) && v.ID == active {
+		if v.ID == active && (v.Name == ops.AppVersionName(head) || held != nil && held(v.ID, v.Name)) {
 			return reviewVersion{action: reviewProbe, id: v.ID, status: v.Status}
 		}
 	}

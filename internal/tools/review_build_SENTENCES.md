@@ -23,6 +23,7 @@
 - RB-NEEDED — A stage builds the selected source when it is not the active version and no build is running.
 - RB-CURRENT — An active stage version at the selected source is probed without another build.
 - RB-MAIN — A stage behind main follows it only while no change is adding and no follow build is running.
+- RB-ATMAIN — A stage whose active version already holds main is probed without a main-follow build: a version named by main's commit, or the Review build HQ merged as main in a repository HQ merges itself.
 - RB-MAINRESULT — A stage's last main-follow result survives in its Mate's status and reaches the agent beside that stage, without treating a failed build as unavailable.
 - RB-CANDIDATE — A change's candidate identity includes both its main and its change head, so a main move makes another build.
 - RB-WORKER — A worker stage keeps its own readiness check and relies on its deployment result without an added HTTP check.

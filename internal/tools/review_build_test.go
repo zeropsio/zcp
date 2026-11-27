@@ -24,7 +24,7 @@ import (
 )
 
 func reviewBuildStage(ctx context.Context, d devGitDeps, source ops.DeploySource, stage topology.StageRef) hq.ReviewBuildPart {
-	return reviewBuildStageWithLock(ctx, d, source, "app/code", "abcdef", stage)
+	return reviewBuildStageWithLock(ctx, d, source, "app/code", "abcdef", stage, nil)
 }
 
 // witness: internal/tools/review_build.go | c.State == hq.ChangeAdding → c.State != hq.ChangeAdding
@@ -62,7 +62,7 @@ func reviewTestProcess(name, status string) platform.Process {
 func TestReviewVersion_RBFlight_Restart_JoinsHead(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"PENDING", "RUNNING"} {
-		got := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp abcdef", status)})
+		got := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp abcdef", status)}, nil)
 		if got.action != reviewJoin || got.id != "version" || got.process != "process" {
 			t.Fatalf("%s: got %+v", status, got)
 		}
@@ -73,7 +73,7 @@ func TestReviewVersion_RBFlight_Restart_JoinsHead(t *testing.T) {
 func TestReviewVersion_RBActive_ActiveHead_Probes(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"FINISHED", "FAILED"} {
-		got := reviewVersionOf("abcdef", "stage", "version", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "ACTIVE"}}, []platform.Process{reviewTestProcess("zcp abcdef", status)})
+		got := reviewVersionOf("abcdef", "stage", "version", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "ACTIVE"}}, []platform.Process{reviewTestProcess("zcp abcdef", status)}, nil)
 		if got.action != reviewProbe || got.id != "version" {
 			t.Fatalf("%s: got %+v", status, got)
 		}
@@ -84,7 +84,7 @@ func TestReviewVersion_RBActive_ActiveHead_Probes(t *testing.T) {
 func TestReviewVersion_RBFailed_EndedHead_ReportsFailure(t *testing.T) {
 	t.Parallel()
 	for _, status := range []string{"BUILD_FAILED", "DEPLOY_FAILED", "PREPARING_RUNTIME_FAILED", "BUILDING"} {
-		got := reviewVersionOf("abcdef", "stage", "", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: status}}, []platform.Process{reviewTestProcess("zcp abcdef", "FAILED")})
+		got := reviewVersionOf("abcdef", "stage", "", []platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: status}}, []platform.Process{reviewTestProcess("zcp abcdef", "FAILED")}, nil)
 		if got.action != reviewFailed || got.id != "version" || got.status != status {
 			t.Fatalf("%s: got %+v", status, got)
 		}
@@ -102,12 +102,12 @@ func TestReviewVersion_RBNeeded_InactiveVersion_BuildsAgain(t *testing.T) {
 		{[]platform.AppVersionEvent{{ID: "other", Name: "zcp another", Status: "BACKUP"}}, reviewBuild},
 		{[]platform.AppVersionEvent{{ID: "version", Name: "zcp abcdef", Status: "BACKUP"}}, reviewBuild},
 	} {
-		got := reviewVersionOf("abcdef", "stage", "", tc.versions, nil)
+		got := reviewVersionOf("abcdef", "stage", "", tc.versions, nil, nil)
 		if got.action != tc.want {
 			t.Fatalf("versions %+v: got %+v, want %v", tc.versions, got, tc.want)
 		}
 	}
-	other := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp another", "FINISHED")})
+	other := reviewVersionOf("abcdef", "stage", "", nil, []platform.Process{reviewTestProcess("zcp another", "FINISHED")}, nil)
 	if other.action != reviewBuild {
 		t.Fatalf("another head's build: got %+v", other)
 	}
@@ -157,7 +157,7 @@ func TestReviewStage_RBCut_InterruptedUpload_CleansBeforeBuild(t *testing.T) {
 		{"DEPLOYING", reviewUnknown},
 	} {
 		versions := []platform.AppVersionEvent{cut, {ID: "built", Name: "zcp abcdef", Status: tc.status}}
-		if got := reviewVersionOf("abcdef", "stage", "", versions, nil); got.action != tc.want || got.id != "built" {
+		if got := reviewVersionOf("abcdef", "stage", "", versions, nil, nil); got.action != tc.want || got.id != "built" {
 			t.Fatalf("cut beside %s: got %+v, want %v for built", tc.status, got, tc.want)
 		}
 	}
@@ -780,6 +780,43 @@ func TestDescriptionEdit_RBDescribeHead_BindsWordsToCommit(t *testing.T) {
 	}
 }
 
+// witness: internal/tools/review_build.go | if v.ID == active && (v.Name == ops.AppVersionName(head) || held != nil && held(v.ID, v.Name)) { → if v.ID == active && v.Name == ops.AppVersionName(head) {
+func TestReviewAtMain_RBAtMain_ActiveHoldsMain_ProbesWithoutBuild(t *testing.T) {
+	t.Parallel()
+	main, other := "1a2b3c4d5e6f", "9f8e7d6c5b4a"
+	merged := func(sha string) hq.MateChange {
+		return hq.MateChange{Repo: "code", State: hq.ChangeMerged, MergedSha: &sha, ReviewBuild: &hq.ReviewBuild{
+			State: "passing", Parts: []hq.ReviewBuildPart{{Outcome: "ok", AppVersionID: "active"}},
+		}}
+	}
+	github := &hq.RepoOrigin{Mode: hq.OriginOnGitHub}
+	for _, tc := range []struct {
+		name    string
+		active  string
+		origin  *hq.RepoOrigin
+		changes []hq.MateChange
+		want    reviewVersionAction
+	}{
+		{"zcp build of main", ops.AppVersionName(main), nil, nil, reviewProbe},
+		{"deploy named by main", "main 1a2b3c4", nil, nil, reviewProbe},
+		{"dirty deploy", "main 1a2b3c4-dirty", nil, nil, reviewBuild},
+		{"older main", ops.AppVersionName(other), nil, nil, reviewBuild},
+		{"Review build merged as main", "zcp candidate", nil, []hq.MateChange{merged(main)}, reviewProbe},
+		{"Review build merged on GitHub", "zcp candidate", github, []hq.MateChange{merged(main)}, reviewBuild},
+		{"Review build merged earlier", "zcp candidate", nil, []hq.MateChange{merged(other)}, reviewBuild},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := hq.MateRepo{Name: "code", MainHead: &main, Origin: tc.origin}
+			held := func(id, name string) bool { return reviewAtMain(main, id, name, repo, tc.changes) }
+			versions := []platform.AppVersionEvent{{ID: "active", Name: tc.active, Status: "ACTIVE"}}
+			if got := reviewVersionOf(main, "stage", "active", versions, nil, held); got.action != tc.want {
+				t.Fatalf("action = %d, want %d", got.action, tc.want)
+			}
+		})
+	}
+}
+
 // witness: internal/tools/review_build_watch.go | if a.running || a.stopped || a.completed && a.next.IsZero() { → if a.stopped || a.completed && a.next.IsZero() {
 func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
 	t.Parallel()
@@ -800,7 +837,7 @@ func TestReviewMain_RBMain_NoAdd_FollowsLaggingMain(t *testing.T) {
 			}
 		})
 	}
-	found := reviewVersionOf(main, "stage", "older", []platform.AppVersionEvent{{ID: "older", Name: ops.AppVersionName("old"), Status: "ACTIVE"}}, nil)
+	found := reviewVersionOf(main, "stage", "older", []platform.AppVersionEvent{{ID: "older", Name: ops.AppVersionName("old"), Status: "ACTIVE"}}, nil, nil)
 	if found.action != reviewBuild {
 		t.Fatalf("lagging stage: %+v", found)
 	}
