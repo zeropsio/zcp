@@ -23,7 +23,7 @@
 - RB-BASE — A changed main starts a new attempt even if the change head stayed the same.
 - RB-NEEDED — A stage builds the selected source when it is not the active version and no build is running.
 - RB-CURRENT — An active stage version at the selected source is probed without another build.
-- RB-CANDIDATE — A change's candidate identity includes both its main and its change head, so a main move makes another build.
+- RB-CANDIDATE — A change's candidate identity includes both its main and its change head, so a main move makes another build, and the version it names is never a commit deploy's, so a stage running the candidate shows no commit.
 - RB-WORKER — A worker stage keeps its own readiness check and relies on its deployment result without an added HTTP check.
 - RB-READINESS — A public stage's readiness check uses the same path as its probe and keeps the old version serving.
 - RB-SETUPFAIL — A change whose stage setup is invalid fails its build for its Mate to fix.

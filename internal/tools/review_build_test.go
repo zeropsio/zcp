@@ -959,6 +959,9 @@ func TestReviewCandidate_RBCandidate_MainAndHead_IdentifyTheSource(t *testing.T)
 	if a == "feature" || a != again || a == moved {
 		t.Fatalf("candidate identities: %q, %q, %q", a, again, moved)
 	}
+	if commit := topology.AppVersionCommit(ops.AppVersionName(a)); commit != "" {
+		t.Errorf("the candidate's version %q reads as commit %q", ops.AppVersionName(a), commit)
+	}
 }
 
 // witness: internal/ops/review_readiness.go | if !public { → if public {

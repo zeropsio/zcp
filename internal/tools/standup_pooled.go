@@ -390,7 +390,8 @@ func (d standupDeps) keepBuilt(ctx context.Context, s pooledService, svc *platfo
 // names its version by the commit (ops.AppVersionName),
 // and the build's process in the project's list carries that name — the
 // active version's own read has none. "" when no listed process names it: a
-// version zcp did not commit-deploy, or one older than the list.
+// version zcp did not commit-deploy (a Review build's candidate among them),
+// or one older than the list.
 func (d standupDeps) builtCommit(ctx context.Context, versionID string) string {
 	processes, err := d.batch.client.GetProjectProcessesDirect(ctx, d.batch.projectID)
 	if err != nil {
@@ -398,7 +399,7 @@ func (d standupDeps) builtCommit(ctx context.Context, versionID string) string {
 	}
 	for _, p := range processes {
 		if p.AppVersion != nil && p.AppVersion.ID == versionID {
-			if commit := ops.AppVersionCommit(p.AppVersion.Name); commit != "" {
+			if commit := topology.AppVersionCommit(p.AppVersion.Name); commit != "" {
 				return commit
 			}
 		}

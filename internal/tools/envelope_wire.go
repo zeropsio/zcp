@@ -167,16 +167,15 @@ func freshEnvelope(
 func leaseEnvelopeOptions(client platform.Client, projectID, stateDir string, rt runtime.Info, timeout time.Duration, extra ...workflow.EnvelopeOption) []workflow.EnvelopeOption {
 	return append([]workflow.EnvelopeOption{
 		workflow.WithLeaseReader(leaseReader(client, projectID, stateDir, envelopeLeaseHost(rt), timeout)),
-		workflow.WithVersionCommits(stageVersionCommits(client, projectID, timeout)),
+		workflow.WithVersionNames(stageVersionNames(client, projectID, timeout)),
 	}, extra...)
 }
 
-// stageVersionCommits reads a stage's version names from the Zerops search,
-// because the direct service read names no version. It turns each name into
-// the commit it holds (ops.AppVersionCommit). The read is bounded by timeout
-// and never retried: a stage's version is never worth more wait than its
-// leases (docs/spec-mate.md §1.7).
-func stageVersionCommits(client platform.Client, projectID string, timeout time.Duration) workflow.VersionCommits {
+// stageVersionNames reads a stage's version names from the Zerops search,
+// because the direct service read names no version. The read is bounded by
+// timeout and never retried: a stage's version is never worth more wait than
+// its leases (docs/spec-mate.md §1.7).
+func stageVersionNames(client platform.Client, projectID string, timeout time.Duration) workflow.VersionNames {
 	return func(ctx context.Context, serviceID string) (map[string]string, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -184,11 +183,7 @@ func stageVersionCommits(client platform.Client, projectID string, timeout time.
 		if err != nil {
 			return nil, fmt.Errorf("read stage version names: %w", err)
 		}
-		commits := make(map[string]string, len(names))
-		for id, name := range names {
-			commits[id] = ops.AppVersionCommit(name)
-		}
-		return commits, nil
+		return names, nil
 	}
 }
 

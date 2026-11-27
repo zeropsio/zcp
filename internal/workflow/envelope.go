@@ -498,8 +498,9 @@ type RollbackInfo struct {
 }
 
 // StageVersion is the ACTIVE app version a stage runs (docs/spec-mate.md
-// §1.7). ID and At come from the direct service read. Commit is the commit
-// the version's name holds, "" when the name holds none.
+// §1.7). ID and At come from the direct service read. Commit is the commit a
+// commit deploy named the version by (topology.AppVersionCommit), "" for every
+// other version, a Review build's candidate among them.
 type StageVersion struct {
 	ID     string `json:"id"`
 	Commit string `json:"commit,omitempty"`

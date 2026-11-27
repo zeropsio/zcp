@@ -78,7 +78,7 @@ func TestStageBuilds_SLPending_LiveBuilds_IdentifyTargets(t *testing.T) {
 }
 
 // SV-COMMIT-NAME — The whole commit names its build.
-// witness: internal/ops/commit_deploy.go | return commitVersionPrefix + commit → return commitVersionPrefix + commit[:12]
+// witness: internal/ops/commit_deploy.go | return topology.AppVersionPrefix + commit → return topology.AppVersionPrefix + commit[:12]
 func TestCommitName_SVCommitName_WholeCommit_DistinguishesHeads(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ commit, want string }{

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // CommitDeployRequest names one commit deploy: the service it builds into,
@@ -16,7 +17,8 @@ type CommitDeployRequest struct {
 	Hostname   string
 	Setup      string
 	Repository string
-	// Commit is the full commit id; the app version is named by it.
+	// Commit is the full commit id, or a Review build's candidate key, which
+	// is never a commit id; the app version is named by it.
 	Commit string
 }
 
@@ -114,23 +116,10 @@ submit:
 
 // AppVersionName is the name of the app version a commit deploy creates:
 // the commit in it, so a version shows which head it builds (F13) and a
-// later run finds it.
+// later run finds it. topology.AppVersionCommit reads the commit back.
 func AppVersionName(commit string) string {
-	return commitVersionPrefix + commit
+	return topology.AppVersionPrefix + commit
 }
-
-// AppVersionCommit reads the commit back out of an AppVersionName name. Any
-// other name holds no commit and gives "".
-func AppVersionCommit(name string) string {
-	if commit, ok := strings.CutPrefix(name, commitVersionPrefix); ok {
-		return commit
-	}
-	return ""
-}
-
-// commitVersionPrefix starts the name of every version a commit deploy
-// creates, and only theirs.
-const commitVersionPrefix = "zcp "
 
 // commitRun is one commit deploy's reads and writes on one service.
 type commitRun struct {
@@ -203,7 +192,7 @@ func (r commitRun) removeCutUploads(ctx context.Context, keep string) error {
 		return err
 	}
 	for _, v := range uploading {
-		if v.ID == keep || !strings.HasPrefix(v.Name, commitVersionPrefix) {
+		if v.ID == keep || !strings.HasPrefix(v.Name, topology.AppVersionPrefix) {
 			continue
 		}
 		if _, err := zeropsTries(ctx, func() (struct{}, error) {

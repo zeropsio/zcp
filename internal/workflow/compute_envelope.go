@@ -47,22 +47,22 @@ type LeaseRead struct {
 	NotAnswering string
 }
 
-// VersionCommits reads, for one service, the commit each of its app versions
-// is named by: version id → commit, "" for a name that holds none, and no
-// entry for a version the read did not return. It is injected
-// (WithVersionCommits) so workflow does not import ops, which owns the names.
-type VersionCommits func(ctx context.Context, serviceID string) (map[string]string, error)
+// VersionNames reads, for one service, the name of each of its app versions:
+// version id → name, and no entry for a version the read did not return. It
+// is injected (WithVersionNames) by the carrier, which bounds each read by
+// the same wait as its leases.
+type VersionNames func(ctx context.Context, serviceID string) (map[string]string, error)
 
 // EnvelopeOption tunes ComputeEnvelope's inputs beyond the platform client.
 type EnvelopeOption func(*envelopeConfig)
 
 type envelopeConfig struct {
-	leases         LeaseReader
-	leaseReads     map[string]LeaseRead
-	leasesAlways   bool
-	versionCommits VersionCommits
-	preview        func(StateEnvelope, []platform.ServiceStack)
-	edit           bool
+	leases       LeaseReader
+	leaseReads   map[string]LeaseRead
+	leasesAlways bool
+	versionNames VersionNames
+	preview      func(StateEnvelope, []platform.ServiceStack)
+	edit         bool
 }
 
 // WithEditPhase computes an edit briefing without reading a deploy session.
@@ -102,10 +102,10 @@ func WithLeaseActivity(reads map[string]LeaseRead) EnvelopeOption {
 	return func(c *envelopeConfig) { c.leaseReads = reads }
 }
 
-// WithVersionCommits injects the reader that names the version each pair's
+// WithVersionNames injects the reader that names the version each pair's
 // stage runs (ServiceSnapshot.Version). Without it no envelope carries one.
-func WithVersionCommits(r VersionCommits) EnvelopeOption {
-	return func(c *envelopeConfig) { c.versionCommits = r }
+func WithVersionNames(r VersionNames) EnvelopeOption {
+	return func(c *envelopeConfig) { c.versionNames = r }
 }
 
 // ComputeEnvelope is the single entry point for computing state. Every
@@ -218,7 +218,7 @@ func ComputeEnvelope(
 	if cfg.leases != nil {
 		records = readLeaseRecordSnapshots(stateDir)
 	}
-	withVersions := readStageVersions(ctx, cfg.versionCommits, rt, services, snapshots)
+	withVersions := readStageVersions(ctx, cfg.versionNames, rt, services, snapshots)
 	if cfg.preview != nil {
 		preview := envelope
 		if cfg.leases != nil {
@@ -238,7 +238,8 @@ func ComputeEnvelope(
 // returned func waits for them. It answers the snapshots with each stage's
 // version set on a copy, so a preview already handed out keeps its own. A
 // stage whose read failed, or did not return its ACTIVE version, carries none.
-func readStageVersions(ctx context.Context, read VersionCommits, rt runtime.Info, services []platform.ServiceStack, snapshots []ServiceSnapshot) func() []ServiceSnapshot {
+// The version's commit is what topology.AppVersionCommit reads from its name.
+func readStageVersions(ctx context.Context, read VersionNames, rt runtime.Info, services []platform.ServiceStack, snapshots []ServiceSnapshot) func() []ServiceSnapshot {
 	if !rt.MateEnabled || read == nil {
 		return func() []ServiceSnapshot { return snapshots }
 	}
@@ -259,14 +260,14 @@ func readStageVersions(ctx context.Context, read VersionCommits, rt runtime.Info
 		}
 		active := svc.ActiveAppVersion
 		wg.Go(func() {
-			commits, err := read(ctx, svc.ID)
-			commit, named := commits[active.ID]
+			names, err := read(ctx, svc.ID)
+			name, named := names[active.ID]
 			if err != nil || !named {
 				return
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			versions[svc.Name] = &StageVersion{ID: active.ID, Commit: commit, At: active.Created}
+			versions[svc.Name] = &StageVersion{ID: active.ID, Commit: topology.AppVersionCommit(name), At: active.Created}
 		})
 	}
 	return func() []ServiceSnapshot {
