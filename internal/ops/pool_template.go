@@ -19,7 +19,7 @@ import (
 // The one pool template's repository half (docs/spec-mate.md §2.8b B-10):
 // what a pooled part needs on the repository's main — a pool setup named
 // after its pool, a stage setup named after the part, and the dev-server
-// declaration's previewPortBase. SeedFiles writes it on HQ's empty first
+// declaration's previewPortBase and static-part servers. SeedFiles writes it on HQ's empty first
 // commit, onto a change SeedOnto admits; CheckPoolSetups says what a main holding code lacks of it,
 // through pool-migrate's own predicates, so a setup pool-migrate's image step
 // accepts is accepted here. The pool's import half is bundle.PoolStanza: the
@@ -140,6 +140,7 @@ func seedBases(typ string, catalog *schema.Schemas) (seedPartBases, error) {
 // SeedFiles composes the pool and stage setups and the dev-server declaration.
 func SeedFiles(parts []PoolPart, catalog *schema.Schemas) (map[string]string, error) {
 	doc := seedDoc{Zerops: make([]seedSetup, 0, 2*len(parts))}
+	servers := []devsup.Server{}
 	for _, p := range parts {
 		bases, err := seedBases(p.Type, catalog)
 		if err != nil {
@@ -167,6 +168,14 @@ func SeedFiles(parts []PoolPart, catalog *schema.Schemas) (map[string]string, er
 		if topology.RuntimeClassFor(p.Type) == topology.RuntimeDynamic {
 			stage.Run.Start = seedIdleStart
 		}
+		if topology.RuntimeClassFor(p.Type) == topology.RuntimeStatic {
+			// Each declaration's ports must be distinct, even across pools.
+			port := SeedPreviewPortBase - 1 - len(servers)
+			servers = append(servers, devsup.Server{
+				Name: p.Pool, Service: p.Pool, Port: port, Preview: true,
+				Command: "npx --yes node-http-server@9.0.2 --port " + strconv.Itoa(port),
+			})
+		}
 		doc.Zerops = append(doc.Zerops, stage)
 	}
 	var yamlBuf strings.Builder
@@ -178,7 +187,7 @@ func SeedFiles(parts []PoolPart, catalog *schema.Schemas) (map[string]string, er
 	if err := enc.Close(); err != nil {
 		return nil, fmt.Errorf("encode the seed's %s: %w", zeropsYmlPrimary, err)
 	}
-	decl, err := json.MarshalIndent(devsup.Declaration{Version: 1, PreviewPortBase: SeedPreviewPortBase, Servers: []devsup.Server{}}, "", "  ")
+	decl, err := json.MarshalIndent(devsup.Declaration{Version: 1, PreviewPortBase: SeedPreviewPortBase, Servers: servers}, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode the seed's %s: %w", devsup.DeclarationPath, err)
 	}

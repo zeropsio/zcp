@@ -4,6 +4,7 @@
 - PT-SEED-WEB — Every web-server type Zerops' catalog offers for import gets a seed whose every base the catalog lists. Breaks: a web-server type or version Zerops adds is seeded with a base it refuses, or refused though a person asked for it.
 - PT-SEED-POOL — A seed gives each part a pool setup named after its pool that builds and runs on the part's toolchain, never the pool's `swarm@1`, installs zcp-devsup and starts `zcp-devsup run`, so a lease's container has the part's toolchain under the supervisor.
 - PT-SEED-PORTS — A seed's pool setup declares exactly the ports previewPortBase + 1 … previewPortBase + maxContainers, each with httpSupport, so every lease's preview has its port and no port beside them is opened.
+- PT-SEED-PREVIEW — A seed declares one automatic preview server per static or nginx part, scoped to its pool and with a distinct port, while leaving other parts' servers unchanged, so a static lease serves the checkout without an agent starting a server.
 - PT-SEED-STAGE — A seed gives each part a stage setup named after the part that deploys `./`, with the idle start for a runtime that takes a start command and none for a static one, so the stage builds before the part has code.
 - PT-CHECK-MISSING — A main holding code without the parts' setups is refused naming each part's missing pool setup, each missing stage setup and the missing dev-server declaration, so the person knows what to add.
 - PT-CHECK-SEED — The seed's own two files pass the setup check, so a plan sent again on a seeded main writes nothing and is never refused.

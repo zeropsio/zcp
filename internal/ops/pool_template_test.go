@@ -166,6 +166,50 @@ func TestPoolTemplate_PTSeedPorts_ExactlyOnePreviewPortPerContainer(t *testing.T
 	}
 }
 
+// witness: internal/ops/pool_template.go | if topology.RuntimeClassFor(p.Type) == topology.RuntimeStatic { → if topology.RuntimeClassFor(p.Type) != topology.RuntimeStatic {
+func TestPoolTemplate_PTSeedPreview_StaticPoolsGetPreviewServers(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		parts []PoolPart
+		want  []devsup.Server
+	}{
+		{
+			name:  "static",
+			parts: []PoolPart{{Part: "web", Pool: "webpool", Type: "static"}},
+			want:  []devsup.Server{{Name: "webpool", Service: "webpool", Port: 3999, Cwd: ".", Preview: true, Command: "npx --yes node-http-server@9.0.2 --port 3999"}},
+		},
+		{
+			name:  "node unchanged",
+			parts: []PoolPart{{Part: "api", Pool: "apipool", Type: "nodejs@22"}},
+			want:  []devsup.Server{},
+		},
+		{
+			name:  "mixed parts",
+			parts: []PoolPart{{Part: "web", Pool: "webpool", Type: "static"}, {Part: "api", Pool: "apipool", Type: "nodejs@22"}, {Part: "docs", Pool: "docspool", Type: "alpine/nginx@1.22"}},
+			want: []devsup.Server{
+				{Name: "webpool", Service: "webpool", Port: 3999, Cwd: ".", Preview: true, Command: "npx --yes node-http-server@9.0.2 --port 3999"},
+				{Name: "docspool", Service: "docspool", Port: 3998, Cwd: ".", Preview: true, Command: "npx --yes node-http-server@9.0.2 --port 3998"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files, err := SeedFiles(tc.parts, seedCatalog())
+			if err != nil {
+				t.Fatalf("SeedFiles: %v", err)
+			}
+			decl, err := devsup.ParseDeclaration([]byte(files[devsup.DeclarationPath]))
+			if err != nil {
+				t.Fatalf("parse seed declaration: %v", err)
+			}
+			if !slices.Equal(decl.Servers, tc.want) {
+				t.Errorf("servers = %+v, want %+v", decl.Servers, tc.want)
+			}
+		})
+	}
+}
+
 // PT-SEED-STAGE — A seed gives each part a stage setup named after the part
 // that deploys ./, with the idle start for a runtime that takes a start
 // command and none for a static one.
