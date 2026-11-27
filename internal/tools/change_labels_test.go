@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 	"time"
@@ -106,13 +107,26 @@ func TestChangeLabels_CL4_HQStateReachesEveryLabel(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			s := hq.MateChange{Repo: "app", Number: 7, State: hq.ChangeOpen, Head: &head, Ready: &ready, Mergeability: hq.MergeClean, ReviewBuild: tt.build, ChecksGivenUp: tt.givenUp}
+			s := hq.MateChange{Repo: "app", Number: 7, State: hq.ChangeOpen, Head: &head, Ready: &ready, Mergeability: hq.MergeClean, ReviewBuild: tt.build}
+			readChange := hq.Change{State: hq.ChangeOpen, Ready: &ready, Mergeability: hq.MergeClean, ReviewBuild: tt.build}
+			if tt.givenUp {
+				wire := []byte(`{"checksGivenUp":{"reason":"no-agent"}}`)
+				if err := json.Unmarshal(wire, &s); err != nil {
+					t.Fatalf("decode Mate change: %v", err)
+				}
+				if err := json.Unmarshal(wire, &readChange); err != nil {
+					t.Fatalf("decode change: %v", err)
+				}
+			}
 			standing := standingOf(s)
 			change := workflow.HQChange{AppID: app, Repo: "app", Number: 7, Told: &standing}
 			state := &hq.MateState{AppID: &app, Changes: []hq.MateChange{s}}
 			current, _ := changeLineNow(change, state, at)
 			lastTold, _ := changeLineNow(change, nil, at)
-			described := describedLabels(hq.Change{State: hq.ChangeOpen, Ready: &ready, Mergeability: hq.MergeClean, ReviewBuild: tt.build, ChecksGivenUp: tt.givenUp}, at)
+			described := describedLabels(readChange, at)
+			if got := editChange(&readChange, "app").ChecksGivenUp; got != tt.givenUp {
+				t.Errorf("edit checks given up = %v, want %v", got, tt.givenUp)
+			}
 			for name, got := range map[string][]string{"current": current.Labels, "last told": lastTold.Labels, "description": described} {
 				if !slices.Equal(got, tt.labels) {
 					t.Errorf("%s labels = %q, want %q", name, got, tt.labels)

@@ -219,7 +219,7 @@ func editChange(current *hq.Change, repo string) *workflow.EditChange {
 	if current.Head != nil {
 		head = *current.Head
 	}
-	return &workflow.EditChange{Number: current.Number, Repo: repo, Head: head, Ready: current.Ready, ReviewBuild: current.ReviewBuild, Behind: current.Behind, ChecksGivenUp: current.ChecksGivenUp}
+	return &workflow.EditChange{Number: current.Number, Repo: repo, Head: head, Ready: current.Ready, ReviewBuild: current.ReviewBuild, Behind: current.Behind, ChecksGivenUp: current.ChecksGivenUp != nil}
 }
 
 func describedAtHandedOverHead(number int, head string, step workflow.EditStep) bool {
@@ -477,7 +477,7 @@ func describedLabels(c hq.Change, now time.Time) []string {
 		ready = *c.Ready
 	}
 	standing := workflow.HQChangeTold{State: c.State, Ready: &ready, Mergeability: c.Mergeability, Behind: c.Behind}
-	reviewBuildAsTold(&standing, c.ReviewBuild, c.ChecksGivenUp)
+	reviewBuildAsTold(&standing, c.ReviewBuild, c.ChecksGivenUp != nil)
 	return changeLabels(&standing, now)
 }
 

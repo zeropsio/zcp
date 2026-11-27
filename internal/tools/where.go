@@ -550,7 +550,7 @@ func planWhereEdits(facts *workflow.WhereFacts, repos map[string]string, branche
 			if current.PullRequest != nil {
 				told.Checks = current.PullRequest.Checks
 			}
-			reviewBuildAsTold(&told, current.ReviewBuild, current.ChecksGivenUp)
+			reviewBuildAsTold(&told, current.ReviewBuild, current.ChecksGivenUp != nil)
 			workcopy.Change = &workflow.HQChangeLine{Number: current.Number, Branch: current.Branch, Labels: changeLabels(&told, now), Open: true}
 		} else if !fresh {
 			workcopy.HasHQ = false // The last-heard state cannot establish absence.

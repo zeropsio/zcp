@@ -335,7 +335,7 @@ func standingLabel(t workflow.HQChangeTold) string {
 // (s), in the ledger's terms (workflow.HQChangeTold).
 func standingOf(s hq.MateChange) workflow.HQChangeTold {
 	now := workflow.HQChangeTold{State: s.State, Ready: s.Ready, Mergeability: s.Mergeability, Checks: s.Checks, UpdatedAt: s.UpdatedAt}
-	reviewBuildAsTold(&now, s.ReviewBuild, s.ChecksGivenUp)
+	reviewBuildAsTold(&now, s.ReviewBuild, s.ChecksGivenUp != nil)
 	if s.Behind != nil {
 		now.Behind = *s.Behind
 	}

@@ -189,9 +189,9 @@ type Change struct {
 	Behind       bool    `json:"behind"`
 	// Ready is whether the change asks for review (HqChange.ready); nil from
 	// an older HQ, which sends none, and is read as ready.
-	Ready         *bool        `json:"ready"`
-	ReviewBuild   *ReviewBuild `json:"reviewBuild,omitempty"`
-	ChecksGivenUp bool         `json:"checksGivenUp,omitempty"`
+	Ready         *bool          `json:"ready"`
+	ReviewBuild   *ReviewBuild   `json:"reviewBuild,omitempty"`
+	ChecksGivenUp *ChecksGivenUp `json:"checksGivenUp,omitempty"`
 	PullRequest   *struct {
 		Checks string `json:"checks,omitempty"`
 	} `json:"pullRequest,omitempty"`
