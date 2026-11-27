@@ -1,6 +1,7 @@
 package mate_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -112,23 +113,184 @@ func TestKeepSettle_KDUnknown_ReleaseListUnread_KeepsDeferral(t *testing.T) {
 	}
 }
 
+// recordLog is a keep run on literals that keeps its record: the drain says
+// yes, or not now with notNow as why; readiness answers the next of reads;
+// the clock reads 07:38:50 an hour east of UTC; each write keeps the record's
+// JSON and fails with writeErr.
+type recordLog struct {
+	notNow   string
+	reads    [][]string
+	writeErr error
+	rec      mate.KeepRecord
+	written  []string
+}
+
+func (l *recordLog) question() mate.KeepQuestion {
+	return mate.KeepQuestion{
+		Drain: func(string, bool) (mate.UpdateReadiness, error) {
+			if l.notNow != "" {
+				return mate.UpdateReadiness{Protocol: 1, BootID: "b1", Why: l.notNow}, errNotIdle
+			}
+			return mate.UpdateReadiness{Protocol: 1, Drained: true, BootID: "b1"}, nil
+		},
+		Readiness: func() (mate.UpdateReadiness, error) {
+			blockers := l.reads[0]
+			l.reads = l.reads[1:]
+			return mate.UpdateReadiness{Protocol: 1, BootID: "b1", Blockers: blockers}, nil
+		},
+		Close:  func(string) (<-chan struct{}, error) { return make(chan struct{}), nil },
+		Cancel: func() {},
+		Now:    func() time.Time { return time.Date(2026, 11, 27, 7, 38, 50, 0, time.FixedZone("UTC+1", 3600)) },
+	}.WithRecord(&l.rec, func(r mate.KeepRecord) error {
+		body, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		l.written = append(l.written, string(body))
+		return l.writeErr
+	})
+}
+
+// record is the record's JSON as last written, "" when nothing was.
+func (l *recordLog) record() string {
+	if len(l.written) == 0 {
+		return ""
+	}
+	return l.written[len(l.written)-1]
+}
+
 // KD-UNWRITABLE — A yes whose record cannot be written still restarts.
 // witness: internal/mate/deferral.go | return true, nil, saveErr → return saveErr == nil, err, saveErr
 func TestKeepAsk_KDUnwritable_YesWithUnwritableRecord_StillYes(t *testing.T) {
 	t.Parallel()
-	var l keepLog
-	d := &mate.Deferral{Since: "2026-11-16T08:00:00Z", From: "0.16.239", For: "0.16.240"}
-	yes, _, saveErr := l.question(mate.UpdateReadiness{Protocol: 1, Drained: true, BootID: "b1"}, nil, errors.New("read-only file system")).Ask(d, "0.16.240", "0.16.239", "0.16.240", true)
-	if !yes {
+	l := recordLog{writeErr: errors.New("read-only file system")}
+	l.rec.Deferred = &mate.Deferral{Since: "2026-11-16T08:00:00Z", From: "0.16.239", For: "0.16.240"}
+	a := l.question().Decide(l.rec.Deferred, mate.Restart{Step: mate.StepMate, For: "0.16.240", From: "0.16.239", Way: mate.WayAutomatic}, "0.16.240", "0.16.239")
+	if !a.Yes {
 		t.Fatal("a yes turned into a no because the record could not be written")
 	}
-	if saveErr == nil {
+	if a.SaveErr == nil {
 		t.Fatal("the failed write is not reported")
 	}
 }
 
+// KD-LAST — Every restart the keep job causes is recorded as the last one
+// before it is asked for, with the run's time in UTC, its step, what it is
+// for, what it restarts from, the way it asked and the blockers a forced
+// update went past; a not now is no restart and records none.
+// witness: internal/mate/deferral.go | r.Overridden = f.Overridden →
+func TestKeepDecide_KDLast_EachRestartStep_RecordsLastRestart(t *testing.T) {
+	t.Parallel()
+	const zcpFrom = "0.16.239, zcp v9.265.0"
+	tests := []struct {
+		name    string
+		log     recordLog
+		restart mate.Restart
+		version string
+		yes     bool
+		want    string
+	}{
+		{
+			name:    "the server is not there",
+			restart: mate.Restart{Step: mate.StepNotThere, From: "0.16.239", Way: mate.WayAutomatic},
+			yes:     true,
+			want:    `{"lastRestart":{"at":"2026-11-27T06:38:50Z","step":"not_there","from":"0.16.239","way":"automatic"}}`,
+		},
+		{
+			name:    "another Mate version",
+			restart: mate.Restart{Step: mate.StepMate, For: "0.16.240", From: "0.16.239", Way: mate.WayAutomatic},
+			version: "0.16.240",
+			yes:     true,
+			want:    `{"lastRestart":{"at":"2026-11-27T06:38:50Z","step":"mate","for":"0.16.240","from":"0.16.239","way":"automatic"}}`,
+		},
+		{
+			name:    "a newer zcp",
+			restart: mate.Restart{Step: mate.StepZCP, For: "zcp v9.267.0", From: zcpFrom, Way: mate.WayAttended},
+			version: "0.16.239",
+			yes:     true,
+			want:    `{"lastRestart":{"at":"2026-11-27T06:38:50Z","step":"zcp","for":"zcp v9.267.0","from":"0.16.239, zcp v9.265.0","way":"attended"}}`,
+		},
+		{
+			name:    "a newer zcp forced past a resume blocker",
+			log:     recordLog{reads: [][]string{{resumeBlocker}, {resumeBlocker}}},
+			restart: mate.Restart{Step: mate.StepZCP, For: "zcp v9.267.0", From: zcpFrom, Way: mate.WayForced},
+			version: "0.16.239",
+			yes:     true,
+			want:    `{"lastRestart":{"at":"2026-11-27T06:38:50Z","step":"zcp","for":"zcp v9.267.0","from":"0.16.239, zcp v9.265.0","way":"forced","overridden":["c1: native resume cursor is missing or disagrees"]}}`,
+		},
+		{
+			name:    "a newer zcp the Mate answers not now",
+			log:     recordLog{notNow: "c2: active run"},
+			restart: mate.Restart{Step: mate.StepZCP, For: "zcp v9.267.0", From: zcpFrom, Way: mate.WayAutomatic},
+			version: "0.16.239",
+			want:    `{"deferred":{"since":"2026-11-27T06:38:50Z","from":"0.16.239","for":"zcp v9.267.0","why":"c2: active run"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			l := tt.log
+			a := l.question().Decide(nil, tt.restart, tt.version, "0.16.239")
+			if a.Yes != tt.yes {
+				t.Fatalf("yes = %v, want %v (not now: %v)", a.Yes, tt.yes, a.NotNow)
+			}
+			if got := l.record(); got != tt.want {
+				t.Fatalf("record = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// KD-LAST-KEPT — The last restart is its own fact: forgetting a zcp restart
+// attempt, clearing a deferral, and a run that finds another zcp build
+// installed after a restart for zcp each keep it; only the next restart
+// replaces it.
+// witness: internal/mate/deferral.go | return KeepRecord{Deferred: r.Deferred, LastRestart: r.LastRestart} → return KeepRecord{Deferred: r.Deferred}
+func TestKeepRecord_KDLastKept_AttemptOrDeferralGone_KeepsLastRestart(t *testing.T) {
+	t.Parallel()
+	last := &mate.Restart{At: "2026-11-27T06:38:50Z", Step: mate.StepZCP, For: "zcp v9.267.0", From: "0.16.239, zcp v9.265.0", Way: mate.WayAutomatic}
+	attempt := mate.KeepRecord{ZCPRestartedFor: "v9.267.0", ZCPRestartedFrom: "v9.265.0", ZCPRestartedFromBuilt: "2026-11-25T10:00:00Z", LastRestart: last}
+	deferral := &mate.Deferral{Since: "2026-11-27T07:00:00Z", From: "0.16.239", For: "0.16.240", Why: "c2: active run"}
+	const want = `{"lastRestart":{"at":"2026-11-27T06:38:50Z","step":"zcp","for":"zcp v9.267.0","from":"0.16.239, zcp v9.265.0","way":"automatic"}}`
+	tests := []struct {
+		name   string
+		record func(t *testing.T) string
+	}{
+		{"a forgotten attempt", func(t *testing.T) string {
+			t.Helper()
+			body, err := json.Marshal(attempt.WithoutAttempt())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return string(body)
+		}},
+		{"a cleared deferral", func(t *testing.T) string {
+			t.Helper()
+			l := recordLog{rec: mate.KeepRecord{Deferred: deferral, LastRestart: last}}
+			_ = l.question().Settle(l.rec.Deferred, mate.KeepRun{Running: "0.16.240"})
+			return l.record()
+		}},
+		{"a run that finds another zcp build installed", func(t *testing.T) string {
+			t.Helper()
+			l := recordLog{rec: attempt}
+			l.rec.Deferred = deferral
+			l.rec = l.rec.WithoutAttempt()
+			_ = l.question().Settle(l.rec.Deferred, mate.KeepRun{Running: "0.16.239", ReleaseRead: true, ZCPLatest: "v9.267.0"})
+			return l.record()
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.record(t); got != want {
+				t.Fatalf("record = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
 // KD-RESET — Forgetting a zcp restart attempt keeps the deferral.
-// witness: internal/mate/deferral.go | return KeepRecord{Deferred: r.Deferred} → return KeepRecord{}
+// witness: internal/mate/deferral.go | return KeepRecord{Deferred: r.Deferred, LastRestart: r.LastRestart} → return KeepRecord{LastRestart: r.LastRestart}
 func TestKeepRecordWithoutAttempt_KDReset_KeepsDeferral(t *testing.T) {
 	t.Parallel()
 	d := &mate.Deferral{Since: "2026-11-16T08:00:00Z", From: "0.16.239", For: "zcp v9.267.0"}

@@ -1,6 +1,7 @@
 package mate
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -79,12 +80,14 @@ func (d *Deferral) Over(run KeepRun) bool {
 // KeepRecord is the keep job's own memory in ~/.zcp/mate/fuse.json: the zcp
 // release it already restarted the container for and the zcp build installed
 // then, its version and build time (one attempt per installed build and
-// release), and the running Mate's not now to the last question.
+// release), the running Mate's not now to the last question, and the last
+// restart it caused.
 type KeepRecord struct {
 	ZCPRestartedFor       string    `json:"zcpRestartedFor,omitempty"`
 	ZCPRestartedFrom      string    `json:"zcpRestartedFrom,omitempty"`
 	ZCPRestartedFromBuilt string    `json:"zcpRestartedFromBuilt,omitempty"`
 	Deferred              *Deferral `json:"deferred,omitempty"`
+	LastRestart           *Restart  `json:"lastRestart,omitempty"`
 }
 
 // Attempted says the record holds a container restart for a zcp release.
@@ -93,22 +96,115 @@ func (r KeepRecord) Attempted() bool {
 }
 
 // WithoutAttempt is the record with its zcp restart attempt forgotten; the
-// deferral is another fact and stays.
+// deferral and the last restart are other facts and stay.
 func (r KeepRecord) WithoutAttempt() KeepRecord {
-	return KeepRecord{Deferred: r.Deferred}
+	return KeepRecord{Deferred: r.Deferred, LastRestart: r.LastRestart}
+}
+
+// KeepWay is how a keep run asks: the instance of the keep job's systemd
+// template that runs it.
+type KeepWay string
+
+const (
+	// WayAutomatic asks with the organization's policy.
+	WayAutomatic KeepWay = "automatic"
+	// WayAttended asks without it: a person's or an operator's update.
+	WayAttended KeepWay = "attended"
+	// WayForced is an operator's forced update (KeepQuestion.Force).
+	WayForced KeepWay = "forced"
+)
+
+// KeepStep is the step of a keep run that restarts (docs/spec-mate.md §2.1d).
+type KeepStep string
+
+const (
+	// StepNotThere restarts the unit of a server that is not there.
+	StepNotThere KeepStep = "not_there"
+	// StepMate restarts the unit for another Mate version to run.
+	StepMate KeepStep = "mate"
+	// StepZCP restarts the container for a newer zcp.
+	StepZCP KeepStep = "zcp"
+)
+
+// Restart is a restart a keep run causes, kept as the record's last restart
+// until the next one: the run's time, its step, what it is for (the Mate
+// version to run, or ZCPAsked; nothing for StepNotThere), what it restarts
+// from (the Mate version running, or the one installed for StepNotThere,
+// and for StepZCP the installed zcp too), the way it asked, and the
+// blockers a forced update went past.
+type Restart struct {
+	At         string   `json:"at"`
+	Step       KeepStep `json:"step"`
+	For        string   `json:"for,omitempty"`
+	From       string   `json:"from,omitempty"`
+	Way        KeepWay  `json:"way"`
+	Overridden []string `json:"overridden,omitempty"`
 }
 
 // KeepQuestion is the keep job's "may I restart you now?" to the running
 // Mate and what it keeps of the answer. The keep job wires the loopback
-// updater and its record; each field is one effect. Close is an operator's
-// forced update's own close of intake (CloseForUpdate).
+// updater and its record (WithRecord); each field is one effect. Close is an
+// operator's forced update's own close of intake (CloseForUpdate); Record
+// keeps a restart as the last one.
 type KeepQuestion struct {
 	Drain     func(version string, automatic bool) (UpdateReadiness, error)
 	Readiness func() (UpdateReadiness, error)
 	Close     func(version string) (ended <-chan struct{}, err error)
 	Save      func(*Deferral) error
+	Record    func(Restart) error
 	Cancel    func()
 	Now       func() time.Time
+}
+
+// WithRecord is q keeping what it learns in rec, written whole by write after
+// each change: saving or clearing the deferral changes only rec's deferral,
+// and recording a restart only its last restart.
+func (q KeepQuestion) WithRecord(rec *KeepRecord, write func(KeepRecord) error) KeepQuestion {
+	q.Save = func(d *Deferral) error {
+		rec.Deferred = d
+		return write(*rec)
+	}
+	q.Record = func(r Restart) error {
+		rec.LastRestart = &r
+		return write(*rec)
+	}
+	return q
+}
+
+// KeepAnswer is the keep job's answer to a restart it wants
+// (KeepQuestion.Decide): yes, Ended when a forced yes holds the Mate's intake
+// closed by a drain request still open (nil otherwise), the not now's
+// reason, and a record that could not be written.
+type KeepAnswer struct {
+	Yes     bool
+	Ended   <-chan struct{}
+	NotNow  error
+	SaveErr error
+}
+
+// Decide answers r, a restart of the Mate running running, before that
+// restart is asked for: StepNotThere asks nothing, a server that is not
+// there holding no work to ask about; every other step asks, naming version,
+// for r.For, the way r.Way says (Force, or Ask). A yes records r at the
+// run's time, with the blockers a forced yes went past, as the last restart;
+// a record that cannot be written never turns it into a no.
+func (q KeepQuestion) Decide(prev *Deferral, r Restart, version, running string) KeepAnswer {
+	var a KeepAnswer
+	switch {
+	case r.Step == StepNotThere:
+		a.Yes = true
+	case r.Way == WayForced:
+		f := q.Force(prev, version, running, r.For)
+		a = KeepAnswer{Yes: f.Yes, Ended: f.Ended, NotNow: f.NotNow, SaveErr: f.SaveErr}
+		r.Overridden = f.Overridden
+	default:
+		a.Yes, a.NotNow, a.SaveErr = q.Ask(prev, version, running, r.For, r.Way == WayAutomatic)
+	}
+	if a.Yes {
+		r.At = q.Now().UTC().Format(time.RFC3339)
+		a.SaveErr = errors.Join(a.SaveErr, q.Record(r))
+	}
+	return a
 }
 
 // overridablePrefix starts the Mate's words for a blocker that is no live

@@ -665,6 +665,15 @@ another keep run asks, it does nothing. Then the first that applies:
    release is newer than its base.
 4. Otherwise nothing: no question, no restart.
 
+Every restart a run causes (steps 1 to 3, by any way of asking) is recorded before it is asked for
+as `lastRestart: {at, step, for, from, way, overridden}` in `~/.zcp/mate/fuse.json`, which only the
+next restart replaces: `at` the run's time (RFC 3339, UTC); `step` `not_there`, `mate` or `zcp`;
+`for` what the question asked for (as the deferral's `for` below), absent for `not_there`; `from`
+the Mate version running (for `not_there` the one installed), for `zcp` followed by
+`, zcp <installed version>`; `way` `automatic`, `attended` or `forced`; `overridden` the blockers a
+forced update went past, absent otherwise; a `lastRestart` that cannot be written never holds up
+the restart.
+
 **The deferral.** Every not now the Mate answers (a drain answered `drained: false`, at once or at its
 deadline, whatever the reason: not idle, not quiet, or the organization's automatic updates off), by
 either way of asking, is recorded as `deferred: {since, from, for, why}` in `~/.zcp/mate/fuse.json`:

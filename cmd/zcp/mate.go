@@ -320,12 +320,12 @@ func runMateUpdate(args []string) int {
 	}
 	unlock()
 
-	way := wayAttended
+	way := mate.WayAttended
 	switch {
 	case flags["--automatic"]:
-		way = wayAutomatic
+		way = mate.WayAutomatic
 	case flags["--force"]:
-		way = wayForced
+		way = mate.WayForced
 	}
 	unit := mate.KeepUnitName + "@" + string(way) + ".service"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

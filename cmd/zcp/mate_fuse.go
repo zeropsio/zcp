@@ -39,16 +39,8 @@ import (
 // an HQ link; --attended (a person's or an operator's update) asks without it;
 // --forced (an operator's forced update, `zcp mate update --force`) asks as
 // --attended does, but restarts past blockers that are no live work
-// (mate.KeepQuestion.Force).
-
-// keepWay is how a keep run asks: the unit instance its systemd template names.
-type keepWay string
-
-const (
-	wayAutomatic keepWay = "automatic"
-	wayAttended  keepWay = "attended"
-	wayForced    keepWay = "forced"
-)
+// (mate.KeepQuestion.Force). Every restart a run causes is recorded as the
+// last one before it is asked for (mate.KeepQuestion.Decide).
 
 // mateFuseRestartGrace is how long the keep job waits, after the platform
 // accepted the container restart, for the restart to end this process. It
@@ -82,13 +74,9 @@ func keepQuestion(rec *mate.KeepRecord) mate.KeepQuestion {
 		Drain:     mate.DrainUpdate,
 		Readiness: readMateReadiness,
 		Close:     mate.CloseForUpdate,
-		Save: func(d *mate.Deferral) error {
-			rec.Deferred = d
-			return writeMateFuseRecord(*rec)
-		},
-		Cancel: func() { _ = mate.PostUpdate("cancel") },
-		Now:    time.Now,
-	}
+		Cancel:    func() { _ = mate.PostUpdate("cancel") },
+		Now:       time.Now,
+	}.WithRecord(rec, writeMateFuseRecord)
 }
 
 // readMateReadiness is one loopback readiness read, bounded to 5 s.
@@ -120,20 +108,20 @@ func runMateFuse(args []string) int {
 	defer unlock()
 
 	rec := readMateFuseRecord()
-	way := wayAutomatic
+	way := mate.WayAutomatic
 	switch {
 	case flags["--forced"]:
-		way = wayForced
+		way = mate.WayForced
 	case flags["--attended"]:
-		way = wayAttended
+		way = mate.WayAttended
 	}
 
 	if !mateUnitRunning() {
-		return restartAbsentMate(unlock, "the unit is not running")
+		return restartAbsentMate(unlock, &rec, way, "the unit is not running")
 	}
 	running, there := mate.ServerThere(mate.BootWindow)
 	if !there {
-		return restartAbsentMate(unlock, fmt.Sprintf("no answer and no boot progress for %s", mate.BootWindow))
+		return restartAbsentMate(unlock, &rec, way, fmt.Sprintf("no answer and no boot progress for %s", mate.BootWindow))
 	}
 	if running == "" {
 		fmt.Fprintln(os.Stderr, "mate keep: the Mate is booting; nothing now")
@@ -238,9 +226,12 @@ func mateUnitRunning() bool {
 
 // restartAbsentMate restarts a unit whose server is not there; its start job
 // reads the release list and starts the newest version that works. A server
-// that is not there holds no work to ask about.
-func restartAbsentMate(unlock func(), why string) int {
+// that is not there holds no work to ask about, so the run only records the
+// restart, from the Mate version installed.
+func restartAbsentMate(unlock func(), rec *mate.KeepRecord, way mate.KeepWay, why string) int {
 	fmt.Fprintf(os.Stderr, "mate keep: the Mate is not there (%s); restarting it\n", why)
+	installed, _ := mate.InstalledVersion()
+	_ = keepQuestion(rec).Decide(rec.Deferred, mate.Restart{Step: mate.StepNotThere, From: installed, Way: way}, "", "")
 	unlock()
 	if err := restartMateUnit(); err != nil {
 		fmt.Fprintf(os.Stderr, "mate keep: %v\n", err)
@@ -261,8 +252,8 @@ func stageMate(run string, release mate.Manifest) error {
 
 // restartForMate restarts the unit for the staged run once the running server
 // agrees; its start job then starts run.
-func restartForMate(unlock func(), rec *mate.KeepRecord, running, run string, way keepWay) int {
-	yes, ended, code := askRestart(rec, run, running, run, way)
+func restartForMate(unlock func(), rec *mate.KeepRecord, running, run string, way mate.KeepWay) int {
+	yes, ended, code := askRestart(rec, mate.Restart{Step: mate.StepMate, For: run, From: running, Way: way}, run, running)
 	if !yes {
 		return code
 	}
@@ -283,28 +274,21 @@ func restartForMate(unlock func(), rec *mate.KeepRecord, running, run string, wa
 	return 0
 }
 
-// askRestart asks the running server "may I restart you now?" through its
-// drain route (mate.KeepQuestion.Ask), or forced (mate.KeepQuestion.Force).
+// askRestart asks the running server "may I restart you now?" for restart r
+// (mate.KeepQuestion.Decide), version naming the Mate the question is for.
 // Not now prints why and is 1 only when the deferral could not be recorded; a
 // yes goes on whatever the record. ended, non-nil only after a forced yes that
 // closed intake itself, is closed when that drain request ends.
-func askRestart(rec *mate.KeepRecord, version, running, asked string, way keepWay) (yes bool, ended <-chan struct{}, code int) {
-	q := keepQuestion(rec)
-	var notNow, saveErr error
-	if way == wayForced {
-		f := q.Force(rec.Deferred, version, running, asked)
-		yes, ended, notNow, saveErr = f.Yes, f.Ended, f.NotNow, f.SaveErr
-		if yes && len(f.Overridden) > 0 {
-			fmt.Fprintf(os.Stderr, "mate keep: forced past blockers that are no live work: %s\n", strings.Join(f.Overridden, "; "))
+func askRestart(rec *mate.KeepRecord, r mate.Restart, version, running string) (yes bool, ended <-chan struct{}, code int) {
+	a := keepQuestion(rec).Decide(rec.Deferred, r, version, running)
+	if a.Yes {
+		if last := rec.LastRestart; last != nil && len(last.Overridden) > 0 {
+			fmt.Fprintf(os.Stderr, "mate keep: forced past blockers that are no live work: %s\n", strings.Join(last.Overridden, "; "))
 		}
-	} else {
-		yes, notNow, saveErr = q.Ask(rec.Deferred, version, running, asked, way == wayAutomatic)
+		return true, a.Ended, 0
 	}
-	if yes {
-		return true, ended, 0
-	}
-	fmt.Fprintf(os.Stderr, "mate keep: not now: %v\n", notNow)
-	if saveErr != nil {
+	fmt.Fprintf(os.Stderr, "mate keep: not now: %v\n", a.NotNow)
+	if a.SaveErr != nil {
 		return false, nil, 1
 	}
 	return false, nil, 0
@@ -325,15 +309,16 @@ func restartMateUnit() error {
 // restartForZCP brings a newer zcp in the way a container boot does: the
 // restart's initCommands install it, then the Mate's start job starts the
 // newest Mate. The running Mate first agrees, as for its own restart.
-func restartForZCP(unlock func(), rec mate.KeepRecord, zcp zcpReleaseStatus, running string, way keepWay, lookup func(string) string) int {
+func restartForZCP(unlock func(), rec mate.KeepRecord, zcp zcpReleaseStatus, running string, way mate.KeepWay, lookup func(string) string) int {
 	installed := zcp.Installed
 	if !update.IsRelease(installed) {
 		installed += ", a dev build with no pin"
 	}
 	fmt.Fprintf(os.Stderr, "mate keep: zcp %s is out (installed %s); asking to restart the container\n", zcp.Latest, installed)
+	last := mate.Restart{Step: mate.StepZCP, For: mate.ZCPAsked(zcp.Latest), From: running + ", zcp " + zcp.Installed, Way: way}
 	// A forced yes's drain request stays open with this process through the
 	// grace below, holding intake closed for the container restart.
-	if yes, _, code := askRestart(&rec, running, running, mate.ZCPAsked(zcp.Latest), way); !yes {
+	if yes, _, code := askRestart(&rec, last, running, running); !yes {
 		return code
 	}
 	unlock()
