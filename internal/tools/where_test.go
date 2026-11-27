@@ -402,3 +402,59 @@ func TestDescription_WGDescribeCopy_OnlyOneAddressedCheckout(t *testing.T) {
 		})
 	}
 }
+
+// witness: internal/tools/hq_change_open.go | Landed string `json:"landed,omitempty"` → Landed string `json:"-"`
+func TestOpenChange_WGOpenReply_KeepsOpenAndDescription(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, description string
+		created, failed   bool
+	}{
+		{"created and described", `{"described":true,"message":"handed over"}`, true, false},
+		{"existing and kept", `{"described":false,"kept":true}`, false, false},
+		{"description refused", `{"error":"description refused"}`, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			opened := changeOpenResult{Created: tc.created, Landed: "Change #2 merged.", Message: "HQ's open answer was lost."}
+			described := textResult(tc.description)
+			described.IsError = tc.failed
+			answer := openDescriptionResult(opened, described)
+			var got struct {
+				Created     bool            `json:"created"`
+				Landed      string          `json:"landed"`
+				Message     string          `json:"message"`
+				Description json.RawMessage `json:"description"`
+			}
+			if err := json.Unmarshal([]byte(resultText(t, answer)), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Created != tc.created || got.Landed != opened.Landed || got.Message != opened.Message || string(got.Description) != tc.description || answer.IsError != tc.failed {
+				t.Fatalf("open and description = %+v, isError %v; want open %+v, description %s, isError %v", got, answer.IsError, opened, tc.description, tc.failed)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_open.go | if describing { → if !describing {
+func TestOpenChange_WGOpenStep_AsksOnlyForMissingDescription(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                      string
+		created, describing, want bool
+	}{
+		{"new with description", true, true, false},
+		{"new without description", true, false, true},
+		{"existing with description", false, true, false},
+		{"existing without description", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			opened := hq.OpenedChange{Created: tc.created, Change: hq.Change{Number: 7, Branch: "feature"}}
+			words := openChangeWords(hq.Client{}, changeTarget{Repo: "app"}, "feature", "", repoRoute{}, nil, opened, changeOpenResult{Branch: "feature"}, "", hq.MateState{}, tc.describing)
+			if got := strings.Contains(words, `action="describe-change"`); got != tc.want {
+				t.Fatalf("open reply asks for a description = %v; want %v: %s", got, tc.want, words)
+			}
+		})
+	}
+}

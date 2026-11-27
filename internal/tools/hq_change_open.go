@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -143,12 +144,16 @@ func handleOpenChange(
 			} else {
 				result.Message += " Nothing else was opened: a Mate has one open change per repository."
 			}
-			result.Message += fmt.Sprintf(` Write what it does and how you checked it with zerops_workflow action="describe-change" description="…" (markdown); %s reviews it by that.`, whoMerges(state.MergeLimited)) +
-				applicationOpenedWords(state) + mergeLimitedNote(state.MergeLimited)
+			describeNow := workcopy != nil && held == branch
+			if !describeNow {
+				result.Message += fmt.Sprintf(` Write what it does and how you checked it with zerops_workflow action="describe-change" description="…" (markdown); %s reviews it by that.`, whoMerges(state.MergeLimited))
+			}
+			result.Message += applicationOpenedWords(state) + mergeLimitedNote(state.MergeLimited)
 			learnSettled()
-			if workcopy != nil && held == branch {
+			if describeNow {
 				pick := changePick{Number: h.Number, Branch: held, Title: titleOf(h), InState: true, Handed: true}
-				return describeChange(ctx, httpClient, ssh, rt, stateDir, input, workcopy, &pick)
+				described, _, err := describeChange(ctx, httpClient, ssh, rt, stateDir, input, workcopy, &pick)
+				return openDescriptionResult(result, described), nil, err
 			}
 			if workcopy != nil {
 				result.Message += " The description was not written because the open change is on another branch."
@@ -176,15 +181,37 @@ func handleOpenChange(
 			"Restore access to the local state directory and call open-change again; HQ answers the existing change."), WithRecoveryStatus()), nil, nil
 	}
 	learnSettled()
-	if workcopy != nil && result.Branch == branch {
+	describeNow := workcopy != nil && result.Branch == branch
+	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote, state, describeNow)
+	if describeNow {
 		pick := changePick{Number: number, Branch: result.Branch, Title: opened.Change.Title}
-		return describeChange(ctx, httpClient, ssh, rt, stateDir, input, workcopy, &pick)
+		described, _, err := describeChange(ctx, httpClient, ssh, rt, stateDir, input, workcopy, &pick)
+		return openDescriptionResult(result, described), nil, err
 	}
-	result.Message = openChangeWords(hqc, target, branch, origin, route, handed, opened, result, lostNote, state)
 	if workcopy != nil {
 		result.Message += " The description was not written because the open change is on another branch."
 	}
 	return jsonResult(result), nil, nil
+}
+
+// openDescriptionResult keeps the open's facts before the description's
+// answer, including an error answer, in the same model-facing JSON result.
+func openDescriptionResult(opened changeOpenResult, described *mcp.CallToolResult) *mcp.CallToolResult {
+	var description any = described.Content
+	if len(described.Content) == 1 {
+		if content, ok := described.Content[0].(*mcp.TextContent); ok {
+			description = content.Text
+			if json.Valid([]byte(content.Text)) {
+				description = json.RawMessage(content.Text)
+			}
+		}
+	}
+	answer := jsonResult(struct {
+		changeOpenResult
+		Description any `json:"description"`
+	}{changeOpenResult: opened, Description: description})
+	answer.IsError = answer.IsError || described.IsError
+	return answer
 }
 
 // openChangeAtHQ sends the write and resolves its answer against the state
@@ -240,11 +267,14 @@ func openChangeAtHQ(ctx context.Context, hqc hq.Client, stateDir string, target 
 // not be read: in an application that limits who merges it names who reviews
 // and merges the change as that and adds the rule (mergeLimitedRule), and
 // with a production it says what the description owes (applicationOpenedWords).
-func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, route repoRoute, handed []hq.MateChange, opened hq.OpenedChange, result changeOpenResult, lostNote string, state hq.MateState) string {
+func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, route repoRoute, handed []hq.MateChange, opened hq.OpenedChange, result changeOpenResult, lostNote string, state hq.MateState, describing bool) string {
 	limited := state.MergeLimited
 	number := opened.Change.Number
 	held := strings.TrimPrefix(opened.Change.Branch, "refs/heads/")
 	if !opened.Created {
+		if describing && held == branch {
+			return lostNote + fmt.Sprintf("Change #%d on %q is already open: it stays.", number, branch)
+		}
 		return lostNote + answeredOpenChange(route, hqc, target.Repo, branch, held, number)
 	}
 	handedNote := handedElsewhere(handed, target.Repo)
@@ -259,8 +289,13 @@ func openChangeWords(hqc hq.Client, target changeTarget, branch, origin string, 
 	if origin == hq.OriginOnGitHub {
 		mirrored = " Its code is on GitHub too, where HQ alone pushes: HQ puts this branch there and opens its pull request once the change is described — unless GitHub already holds a branch of that name HQ did not put there, when the work goes under a new branch name, as a new change — so open none of your own and never push to GitHub, and " + whoMerges(limited) + " merges it in Mate."
 	}
-	return lostNote + fmt.Sprintf("Change #%d is open in %q for the branch %q%s: push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\" description=\"…\" (markdown); %s reviews it by that.",
-		number, target.Repo, result.Branch, bound, route.git("push origin "+push), whoMerges(limited)) + mirrored + handedNote + applicationOpenedWords(state) + mergeLimitedNote(limited)
+	words := fmt.Sprintf("Change #%d is open in %q for the branch %q%s", number, target.Repo, result.Branch, bound)
+	if describing {
+		words += "."
+	} else {
+		words += fmt.Sprintf(": push the work there (%s) — never force-push — and write what it does and how you checked it with zerops_workflow action=\"describe-change\" description=\"…\" (markdown); %s reviews it by that.", route.git("push origin "+push), whoMerges(limited))
+	}
+	return lostNote + words + mirrored + handedNote + applicationOpenedWords(state) + mergeLimitedNote(limited)
 }
 
 // openUnanswered decides an open HQ did not answer. HQ's own refusal, and a
