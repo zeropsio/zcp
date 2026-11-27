@@ -242,3 +242,100 @@ func TestBoard_BD5_AMateInNoApplicationHasNoBoard(t *testing.T) {
 		}
 	}
 }
+
+// witness: internal/tools/board.go | if strings.TrimSpace(in.Title) != "" || strings.TrimSpace(in.Brief) != "" { → if false {
+func TestBoardPropose_BD6_AnswersThePlanInOrderAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	plan := []any{
+		map[string]any{"key": "schema", "title": " Add the discount column ", "brief": "Add a discount column to orders."},
+		map[string]any{"key": "api", "title": "Serve the discount", "brief": "Serve the order's discount.", "needs": []any{"schema"}},
+		map[string]any{"key": "page", "title": "Show the discount", "brief": "Show it on the order page.", "needs": []any{"api", "schema"}},
+	}
+	h := &boardHQ{status: http.StatusOK, body: `{}`}
+	result := callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_propose", map[string]any{"tasks": plan})
+	var answer struct {
+		Proposed struct {
+			Board map[string]json.RawMessage `json:"board"`
+		} `json:"proposed"`
+		NextActions string `json:"nextActions"`
+	}
+	if result.IsError || json.Unmarshal([]byte(extractText(result)), &answer) != nil {
+		t.Fatalf("answer: %s", extractText(result))
+	}
+	want := `[{"key":"schema","title":"Add the discount column","brief":"Add a discount column to orders.","needs":[]},` +
+		`{"key":"api","title":"Serve the discount","brief":"Serve the order's discount.","needs":["schema"]},` +
+		`{"key":"page","title":"Show the discount","brief":"Show it on the order page.","needs":["api","schema"]}]`
+	if got := string(answer.Proposed.Board["plan"]); got != want || len(answer.Proposed.Board) != 1 || !strings.Contains(answer.NextActions, "Nothing was written") {
+		t.Errorf("board = %s, %q; want only plan %s", extractText(result), answer.NextActions, want)
+	}
+	if n := len(h.seen()); n != 0 {
+		t.Errorf("the plan asked HQ %d times, want none", n)
+	}
+	for _, args := range []map[string]any{
+		{"tasks": plan, "title": "Discounts"},
+		{"tasks": plan, "brief": "Discounts on orders."},
+	} {
+		if result := callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_propose", args); !result.IsError || !strings.Contains(extractText(result), "never both") {
+			t.Errorf("a plan with a title or brief: %s", extractText(result))
+		}
+	}
+}
+
+// witness: internal/tools/board.go | if !mate.CarriesBoardPlan(version) { → if mate.CarriesBoardPlan(version) {
+func TestBoardPropose_BD7_APlanRefusedBelowTheMateThatDrawsIt(t *testing.T) {
+	t.Parallel()
+	for installed, want := range map[string]bool{
+		mate.BoardPlanMateVersion:                 true,
+		mate.BoardPlanMateVersion + "-dev.a1b2c3": true,
+		mate.BoardMateVersion:                     false,
+		"":                                        false,
+	} {
+		if got := mate.CarriesBoardPlan(installed); got != want {
+			t.Errorf("CarriesBoardPlan(%q) = %v, want %v", installed, got, want)
+		}
+	}
+	plan := map[string]any{"tasks": []any{
+		map[string]any{"key": "schema", "title": "Add the column", "brief": "Add it."},
+		map[string]any{"key": "api", "title": "Serve it", "brief": "Serve it.", "needs": []any{"schema"}},
+	}}
+	one := map[string]any{"title": "Rounding", "brief": "The invoice total rounds each line first."}
+	for _, installed := range []string{mate.BoardPlanMateVersion, mate.BoardMateVersion} {
+		carries := installed == mate.BoardPlanMateVersion
+		h := &boardHQ{status: http.StatusOK}
+		result := callBoard(t, boardRuntime(t, true), h, installed, "zerops_board_propose", plan)
+		if refused := result.IsError && strings.Contains(extractText(result), "nothing was proposed") && strings.Contains(extractText(result), "one by one"); refused == carries {
+			t.Errorf("a Mate that draws the plan card = %v: refused = %v: %s", carries, refused, extractText(result))
+		}
+		if result := callBoard(t, boardRuntime(t, true), h, installed, "zerops_board_propose", one); result.IsError {
+			t.Errorf("one task refused on %s: %s", installed, extractText(result))
+		}
+		if n := len(h.seen()); n != 0 {
+			t.Errorf("the proposal asked HQ %d times, want none", n)
+		}
+	}
+}
+
+// witness: internal/tools/board.go | title = titles[need.TaskID] → title = ""
+func TestBoardList_BD8_TellsEachTasksNeedsAndTheHeldState(t *testing.T) {
+	t.Parallel()
+	h := &boardHQ{status: http.StatusOK, body: `{"tasks":[
+		{"id":"t1","title":"Add the column","state":"working","mate":{"projectId":"mate-3","name":"Pool One"},"taker":{"kind":"pool","mateProjectId":"mate-3"}},
+		{"id":"t2","title":"Serve it","state":"held","needs":[{"taskId":"t1","state":"waiting"}]},
+		{"id":"t3","title":"Show it","state":"held","needs":[{"taskId":"t0","state":"met","title":"Plan the discount"},{"taskId":"t2","state":"waiting"},{"taskId":"t9","state":"broken"}]}
+	]}`}
+	var answer boardListAnswer
+	result := callBoard(t, boardRuntime(t, true), h, mate.BoardPlanMateVersion, "zerops_board_list", map[string]any{})
+	if result.IsError || json.Unmarshal([]byte(extractText(result)), &answer) != nil {
+		t.Fatalf("answer: %s", extractText(result))
+	}
+	want := []boardTask{
+		{ID: "t1", Title: "Add the column", State: "working", With: "Pool One, an automated Mate"},
+		{ID: "t2", Title: "Serve it", State: "held", Needs: []boardNeed{{ID: "t1", Title: "Add the column", State: "waiting"}}},
+		{ID: "t3", Title: "Show it", State: "held", Needs: []boardNeed{
+			{ID: "t0", Title: "Plan the discount", State: "met"}, {ID: "t2", Title: "Serve it", State: "waiting"}, {ID: "t9", State: "broken"},
+		}},
+	}
+	if fmt.Sprint(answer.Tasks) != fmt.Sprint(want) {
+		t.Errorf("tasks = %+v, want %+v", answer.Tasks, want)
+	}
+}
