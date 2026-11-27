@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"sort"
@@ -68,6 +69,9 @@ func blockedManualHosts(stateDir string, scope []string) []string {
 // Synthesize → BuildPlan → RenderStatus): runtime, strategy, mode and
 // environment axes of the envelope drive which atoms match.
 func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput, rt runtime.Info, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
+	if envelope, edit := editScopeEnvelope(ctx, client, engine.StateDir(), projectID, rt, input.Scope); edit {
+		return renderEditBriefing(ctx, engine, client, projectID, rt, sshDeployer, envelope, input.Scope), nil, nil
+	}
 	metas, err := workflow.ListServiceMetas(engine.StateDir())
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -259,6 +263,61 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 
 	result := renderDevelopBriefing(ctx, engine, client, projectID, rt, sshDeployer)
 	return withLeadNote(result, poolScope.note), nil, nil
+}
+
+// editScopeEnvelope reads the topology without consulting a work session.
+func editScopeEnvelope(ctx context.Context, client platform.Client, stateDir, projectID string, rt runtime.Info, scope []string) (workflow.StateEnvelope, bool) {
+	if !rt.MateEnabled || len(scope) == 0 {
+		return workflow.StateEnvelope{}, false
+	}
+	if _, linked := openHQ(http.DefaultClient, rt); !linked {
+		return workflow.StateEnvelope{}, false
+	}
+	options := leaseEnvelopeOptions(client, projectID, stateDir, rt, leaseStatusTimeout, workflow.WithEditPhase())
+	envelope, err := workflow.ComputeEnvelope(ctx, client, stateDir, projectID, rt, time.Now(), options...)
+	return envelope, err == nil && developEditScope(scope, envelope)
+}
+
+// developEditScope chooses an edit only when every named target is a wired
+// pool, its held lease, or its running, deployed classic dev half.
+func developEditScope(scope []string, env workflow.StateEnvelope) bool {
+	if len(scope) == 0 {
+		return false
+	}
+	eligible := make(map[string]bool)
+	pools := make(map[string]bool)
+	for _, service := range env.Services {
+		stages := service.PairStageHostnames()
+		if service.HQRepo == "" || len(stages) == 0 {
+			continue
+		}
+		complete := true
+		for _, stage := range stages {
+			if !slices.ContainsFunc(env.Services, func(s workflow.ServiceSnapshot) bool { return s.Hostname == stage }) {
+				complete = false
+				break
+			}
+		}
+		if !complete {
+			continue
+		}
+		if service.DevIsPool {
+			eligible[service.Hostname], pools[service.Hostname] = true, true
+		} else if (service.Mode == topology.ModeStandard || service.Mode == topology.ModeDev) && service.HasLiveCode && (service.Status == platform.ServiceStatusRunning || service.Status == platform.ServiceStatusActive) {
+			eligible[service.Hostname] = true
+		}
+	}
+	for _, lease := range env.LeaseList() {
+		if pools[lease.Pool] && lease.State == ops.LeaseStateHeld && !lease.Unverified {
+			eligible[lease.Alias] = true
+		}
+	}
+	for _, target := range scope {
+		if !eligible[target] {
+			return false
+		}
+	}
+	return true
 }
 
 // developRuntimeList is develop's runtime list: the services a scope may

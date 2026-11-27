@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -17,6 +19,147 @@ import (
 // developDevPoolAtomID is the atom carrying a part's dev-pool loop: lease a
 // container, work in it, push, sync, release.
 const developDevPoolAtomID = "develop-dev-pool"
+
+// editBriefing derives the same copy and change facts as where, but renders
+// every selected copy and the edit atoms rather than the turn's short line.
+func editBriefing(ctx context.Context, client platform.Client, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, scope []string, corpus []workflow.KnowledgeAtom) ([]string, workflow.Plan, error) {
+	deps := ops.LeaseDeps{Client: client, ProjectID: projectID, StateDir: stateDir, SSH: ssh,
+		Swarm: ops.NewSwarmFactory(&http.Client{Timeout: leaseStatusTimeout}), Host: envelopeLeaseHost(rt)}
+	g := newWhereGatherer(deps, rt, "", time.Now(), nil)
+	var facts workflow.WhereFacts
+	read := false
+	if g != nil {
+		g.edit = true
+		err := g.gather(ctx)
+		if err == nil {
+			envelope, facts = g.env, g.facts()
+			read = g.haveEnvelope
+			for i := range facts.Copies {
+				if facts.Copies[i].WorkUnread == whereNoAnswer {
+					facts.Copies[i].WorkUnread = "no answer"
+				}
+				if facts.Copies[i].ServersUnread == whereNoAnswer {
+					facts.Copies[i].ServersUnread = "no answer"
+				}
+			}
+		}
+	}
+	facts, missing := selectEditCopies(facts, envelope, scope)
+	if !read {
+		missing = nil
+	}
+	editEnvelope := envelope
+	editEnvelope.Phase, editEnvelope.WorkSession = workflow.PhaseDevelopEdit, nil
+	matches, err := workflow.Synthesize(editEnvelope, corpus)
+	if err != nil {
+		return nil, workflow.Plan{}, fmt.Errorf("synthesize edit guidance: %w", err)
+	}
+	guidance := workflow.BodiesOf(matches)
+	if !read {
+		guidance = append(guidance, "Working copies were not fully read; their next step is unknown.")
+	}
+	if copies := workflow.RenderEditCopies(facts); copies != "" {
+		guidance = append(guidance, copies)
+	}
+	for _, pool := range missing {
+		guidance = append(guidance, fmt.Sprintf("%s: step: acquire a lease of this pool for the branch.", pool))
+	}
+	plan := editNext(facts.Copies, missing)
+	return guidance, plan, nil
+}
+
+// selectEditCopies does not guess a caller's lease: a named pool includes
+// every held lease, while a named lease or classic dev half selects itself.
+func selectEditCopies(facts workflow.WhereFacts, env workflow.StateEnvelope, scope []string) (workflow.WhereFacts, []string) {
+	wanted := make(map[string]bool, len(scope))
+	for _, name := range scope {
+		wanted[name] = true
+	}
+	pools := map[string]bool{}
+	for _, service := range env.Services {
+		if wanted[service.Hostname] && service.DevIsPool {
+			pools[service.Hostname] = true
+		}
+	}
+	selected := facts
+	selected.Copies = nil
+	selected.Stages, selected.Changes = nil, nil
+	seen := map[string]bool{}
+	for _, copy := range facts.Copies {
+		if copy.Lease && copy.State != ops.LeaseStateHeld {
+			continue
+		}
+		if !wanted[copy.Name] && (!copy.Lease || !pools[copy.Pool]) {
+			continue
+		}
+		if copy.Step == nil && copy.Branch != hqBase {
+			copy.Step = &workflow.EditStep{Action: workflow.EditUnknown, Reason: "checkout or HQ was not read"}
+		}
+		selected.Copies = append(selected.Copies, copy)
+		seen[copy.Pool] = true
+	}
+	missing := make([]string, 0, len(pools))
+	for pool := range pools {
+		if !seen[pool] {
+			missing = append(missing, pool)
+		}
+	}
+	slices.Sort(missing)
+	return selected, missing
+}
+
+func editNext(copies []workflow.WhereCopy, missing []string) workflow.Plan {
+	if len(copies) == 0 && len(missing) > 0 {
+		return workflow.Plan{Primary: workflow.LeaseAcquireAction(missing)}
+	}
+	var steps []string
+	for _, copy := range copies {
+		step := "work on a branch"
+		if copy.Step != nil {
+			step = workflow.EditStepWords(*copy.Step)
+		}
+		steps = append(steps, copy.Name+": "+step)
+	}
+	for _, pool := range missing {
+		steps = append(steps, pool+": acquire a lease")
+	}
+	if len(steps) == 0 {
+		steps = append(steps, "unknown: working copies were not read")
+	}
+	return workflow.Plan{Primary: workflow.NextAction{Label: strings.Join(steps, "; ")}}
+}
+
+func renderEditBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, scope []string) *mcp.CallToolResult {
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus())
+	}
+	guidance, plan, err := editBriefing(ctx, client, projectID, engine.StateDir(), rt, ssh, envelope, scope, corpus)
+	if err != nil {
+		return convertError(wrapStageErr("Edit briefing", err), WithRecoveryStatus())
+	}
+	return briefingResult(workflow.Response{Envelope: envelope, Guidance: guidance, Plan: &plan})
+}
+
+func statusEditBriefing(ctx context.Context, client platform.Client, projectID, stateDir string, rt runtime.Info, ssh ops.SSHDeployer, envelope workflow.StateEnvelope, corpus []workflow.KnowledgeAtom) ([]string, workflow.Plan, bool, error) {
+	if !rt.MateEnabled {
+		return nil, workflow.Plan{}, false, nil
+	}
+	if _, linked := openHQ(http.DefaultClient, rt); !linked {
+		return nil, workflow.Plan{}, false, nil
+	}
+	var scope []string
+	for _, service := range envelope.Services {
+		if developEditScope([]string{service.Hostname}, envelope) {
+			scope = append(scope, service.Hostname)
+		}
+	}
+	if len(scope) == 0 {
+		return nil, workflow.Plan{}, false, nil
+	}
+	guidance, plan, err := editBriefing(ctx, client, projectID, stateDir, rt, ssh, envelope, scope, corpus)
+	return guidance, plan, true, err
+}
 
 // devPoolStart is what a develop start makes of the project's Swarm pools
 // (docs/spec-workflows.md §8 DP-29): the pools it answers with the dev-pool

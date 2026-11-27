@@ -47,8 +47,9 @@ Four load-bearing principles follow from that:
 
 ## 1. Executive Summary
 
-The **Work Session** is a per-PID artifact at `.zcp/state/work/{pid}.json`
-with three responsibilities:
+The deploy variant of develop uses a **Work Session**, a per-PID artifact at `.zcp/state/work/{pid}.json`. A Mate edit has no work session; Git, leases and HQ own its facts.
+
+A Work Session has three responsibilities:
 
 - Record the LLM's stated intent and the services in scope for the
   current task.

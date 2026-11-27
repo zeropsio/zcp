@@ -43,6 +43,32 @@ func RenderStatus(resp Response) string {
 	return b.String()
 }
 
+// RenderEditCopies names every copy and its own step without the turn's
+// short where-line budget. A tool call has no conversation-bound lease.
+func RenderEditCopies(facts WhereFacts) string {
+	if len(facts.Copies) == 0 {
+		return ""
+	}
+	copies := append([]WhereCopy(nil), facts.Copies...)
+	sort.Slice(copies, func(i, j int) bool { return copies[i].Name < copies[j].Name })
+	var b strings.Builder
+	b.WriteString("### Edit copies\n")
+	for _, copy := range copies {
+		fmt.Fprintf(&b, "- %s", whereCopyLine(copy, false, 0))
+		if copy.Path != "" {
+			fmt.Fprintf(&b, "; checkout %s", copy.Path)
+		}
+		if copy.Step == nil && copy.Branch == "main" {
+			b.WriteString("; nothing to hand over on main")
+		}
+		if copy.Step != nil && copy.Step.Action == "handed over" {
+			b.WriteString("; to change more, edit here: the block reopens with your first edit")
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // RenderHQProblems renders HQ's structured findings unchanged in tool text,
 // shared by status and develop's existing repository report. It adds no verdict.
 func RenderHQProblems(problems []hq.Problem) string {
@@ -394,7 +420,7 @@ func renderPhase(b *strings.Builder, env StateEnvelope) {
 			return
 		}
 		fmt.Fprintln(b, "Phase: develop-closed-auto")
-	case PhaseIdle, PhaseBootstrapActive, PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive, PhasePoolMigrateActive:
+	case PhaseIdle, PhaseBootstrapActive, PhaseDevelopEdit, PhaseStrategySetup, PhaseExportActive, PhaseLaunchProductionActive, PhasePoolMigrateActive:
 		fmt.Fprintf(b, "Phase: %s\n", env.Phase)
 	}
 }

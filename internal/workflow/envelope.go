@@ -172,6 +172,7 @@ type Phase string
 const (
 	PhaseIdle            Phase = "idle"
 	PhaseBootstrapActive Phase = "bootstrap-active"
+	PhaseDevelopEdit     Phase = "develop-edit"
 	PhaseDevelopActive   Phase = "develop-active"
 	PhaseDevelopClosed   Phase = "develop-closed-auto"
 	PhaseStrategySetup   Phase = "strategy-setup"
@@ -219,11 +220,13 @@ type ServiceSnapshot struct {
 	// READY_TO_DEPLOY/FAILED; empty is the safe default (treated as "ok" by
 	// effectiveDeployHistory in synthesize.go) until a caller populates it
 	// from ops.ComputeRecoveryState.
-	DeployHistory string        `json:"deployHistory,omitempty"`
-	Bootstrapped  bool          `json:"bootstrapped"`
-	Deployed      bool          `json:"deployed,omitempty"`
-	Resumable     bool          `json:"resumable,omitempty"`
-	Mode          topology.Mode `json:"mode,omitempty"`
+	DeployHistory string `json:"deployHistory,omitempty"`
+	Bootstrapped  bool   `json:"bootstrapped"`
+	Deployed      bool   `json:"deployed,omitempty"`
+	// HasLiveCode comes from the direct platform read, not deployment history.
+	HasLiveCode bool          `json:"-"`
+	Resumable   bool          `json:"resumable,omitempty"`
+	Mode        topology.Mode `json:"mode,omitempty"`
 
 	CloseDeployMode  topology.CloseDeployMode  `json:"closeDeployMode,omitempty"`
 	GitPushState     topology.GitPushState     `json:"gitPushState,omitempty"`

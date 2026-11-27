@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -41,50 +42,65 @@ type whereEvent struct {
 // whereGatherer owns this call's coordinator. Its maps and pending count are
 // changed only by the receiving goroutine; readers deliver independent events.
 type whereGatherer struct {
-	deps        ops.LeaseDeps
-	rt          runtime.Info
-	alias       string
-	now         time.Time
-	active      ActiveVersionReader
-	events      chan whereEvent
-	pending     int
-	env         workflow.StateEnvelope
-	havePreview bool
-	versions    map[string]whereEvent
-	branches    map[string]whereEvent
-	servers     map[string]ops.DevServerRead
-	work        map[string]ops.DevServerRead
-	changes     []workflow.HQRepoChanges
-	refs        map[string]whereEvent
-	hqReads     map[string]whereEvent
+	deps         ops.LeaseDeps
+	rt           runtime.Info
+	edit         bool
+	alias        string
+	now          time.Time
+	active       ActiveVersionReader
+	events       chan whereEvent
+	pending      int
+	env          workflow.StateEnvelope
+	havePreview  bool
+	haveEnvelope bool
+	versions     map[string]whereEvent
+	branches     map[string]whereEvent
+	servers      map[string]ops.DevServerRead
+	work         map[string]ops.DevServerRead
+	changes      []workflow.HQRepoChanges
+	refs         map[string]whereEvent
+	hqReads      map[string]whereEvent
 }
 
 // WhereAnswer reads the facts for a turn without changing a checkout or a
 // supervisor. The caller supplies the shared deadline and the read time.
 func WhereAnswer(ctx context.Context, deps ops.LeaseDeps, rt runtime.Info, alias string, now time.Time, active ActiveVersionReader) (string, error) {
-	if deps.Client == nil || deps.ProjectID == "" {
-		return "", fmt.Errorf("where: no project key or project")
+	g := newWhereGatherer(deps, rt, alias, now, active)
+	if err := g.gather(ctx); err != nil {
+		return "", err
 	}
-	g := &whereGatherer{
+	return g.render(), nil
+}
+
+func newWhereGatherer(deps ops.LeaseDeps, rt runtime.Info, alias string, now time.Time, active ActiveVersionReader) *whereGatherer {
+	if deps.Client == nil || deps.ProjectID == "" {
+		return nil
+	}
+	return &whereGatherer{
 		deps: deps, rt: rt, alias: alias, now: now, active: active,
 		events: make(chan whereEvent, 256), pending: 2,
 		versions: map[string]whereEvent{}, branches: map[string]whereEvent{},
 		servers: map[string]ops.DevServerRead{}, work: map[string]ops.DevServerRead{},
 		refs: map[string]whereEvent{}, hqReads: map[string]whereEvent{},
 	}
+}
+
+func (g *whereGatherer) gather(ctx context.Context) error {
+	if g == nil {
+		return fmt.Errorf("where: no project key or project")
+	}
 	g.start(ctx)
 	for g.pending > 0 {
 		select {
 		case event := <-g.events:
 			if err := g.process(ctx, event); err != nil {
-				return "", err
+				return err
 			}
 		case <-ctx.Done():
 			return g.atDeadline(ctx)
 		}
 	}
-	answer := g.render()
-	return answer, nil
+	return nil
 }
 
 func (g *whereGatherer) start(ctx context.Context) {
@@ -98,6 +114,9 @@ func (g *whereGatherer) start(ctx context.Context) {
 	deps := g.deps
 	options := leaseEnvelopeOptions(deps.Client, deps.ProjectID, deps.StateDir, g.rt, 3*time.Second,
 		workflow.WithLeaseReader(leaseReaderWith(deps.Client, deps.ProjectID, deps.StateDir, deps.Swarm, deps.Host, 3*time.Second)), preview)
+	if g.edit {
+		options = append(options, workflow.WithEditPhase())
+	}
 	go func() {
 		env, err := workflow.ComputeEnvelope(ctx, deps.Client, deps.StateDir, deps.ProjectID, g.rt, g.now, options...)
 		g.send(ctx, whereEvent{kind: "envelope", envelope: env, err: err})
@@ -120,21 +139,25 @@ func (g *whereGatherer) send(ctx context.Context, event whereEvent) {
 	}
 }
 
-func (g *whereGatherer) atDeadline(ctx context.Context) (string, error) {
+func (g *whereGatherer) atDeadline(ctx context.Context) error {
 	// Keep every receipt already delivered before the deadline.
 	for len(g.events) > 0 {
 		if err := g.process(ctx, <-g.events); err != nil {
-			return "", err
+			return err
 		}
 	}
 	if !g.havePreview {
-		return "", fmt.Errorf("where: project not read: %w", ctx.Err())
+		return fmt.Errorf("where: project not read: %w", ctx.Err())
 	}
-	return g.render(), nil
+	return nil
 }
 
 func (g *whereGatherer) render() string {
 	return renderWhereAnswer(g.env, g.versions, g.branches, g.servers, g.work, g.changes, g.rt, g.alias, g.now, g.refs, g.hqReads)
+}
+
+func (g *whereGatherer) facts() workflow.WhereFacts {
+	return whereFacts(g.env, g.versions, g.branches, g.servers, g.work, g.changes, g.rt, g.alias, g.now, g.refs, g.hqReads)
 }
 
 func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
@@ -157,7 +180,7 @@ func (g *whereGatherer) process(ctx context.Context, event whereEvent) error {
 		if event.err != nil {
 			return fmt.Errorf("where: platform or local project state could not be read")
 		}
-		g.env = event.envelope
+		g.haveEnvelope, g.env = true, event.envelope
 		for _, lease := range g.env.LeaseList() {
 			if ctx.Err() == nil && lease.State == ops.LeaseStateHeld && !lease.Unverified {
 				g.startStatus(ctx, lease.Alias, true)
@@ -309,6 +332,10 @@ func (g *whereGatherer) waitRead(ctx context.Context, kind, host string, receipt
 }
 
 func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string]whereEvent, servers, work map[string]ops.DevServerRead, changes []workflow.HQRepoChanges, rt runtime.Info, alias string, now time.Time, refs, hqReads map[string]whereEvent) string {
+	return workflow.RenderWhere(whereFacts(env, versions, branches, servers, work, changes, rt, alias, now, refs, hqReads))
+}
+
+func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereEvent, servers, work map[string]ops.DevServerRead, changes []workflow.HQRepoChanges, rt runtime.Info, alias string, now time.Time, refs, hqReads map[string]whereEvent) workflow.WhereFacts {
 	serverStates := make(map[string][]topology.DevServerState, len(servers))
 	for host, read := range servers {
 		serverStates[host] = read.Servers
@@ -344,6 +371,7 @@ func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string
 		}
 		workingCopy := workflow.WhereCopy{Name: service.Hostname, Part: service.WireStages[0].Part, Branch: "not read", HasHQ: service.HQRepo != ""}
 		if got, ok := branches[service.Hostname]; ok {
+			workingCopy.Path = editCheckoutPath(service.Hostname, got.root)
 			if got.err != nil {
 				workingCopy.WorkUnread = "checkout did not answer"
 				if errors.Is(got.err, context.DeadlineExceeded) || errors.Is(got.err, context.Canceled) {
@@ -363,7 +391,7 @@ func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string
 			continue
 		}
 		_, repo, _ := hq.RepoOfURL(hqAddress(rt), lease.Repo)
-		workingCopy := workflow.WhereCopy{Name: lease.Alias, Part: lease.Part, Branch: lease.Branch, Lease: true, State: lease.State, Unverified: lease.Unverified, HasHQ: repo != ""}
+		workingCopy := workflow.WhereCopy{Name: lease.Alias, Pool: lease.Pool, Path: editCheckoutPath(lease.Alias, ops.LeaseWorkDir), Part: lease.Part, Branch: lease.Branch, Lease: true, State: lease.State, Unverified: lease.Unverified, HasHQ: repo != ""}
 		repos[lease.Alias] = repo
 		if lease.State == ops.LeaseStateHeld && !lease.Unverified {
 			if got, ok := work[lease.Alias]; ok {
@@ -400,7 +428,16 @@ func renderWhereAnswer(env workflow.StateEnvelope, versions, branches map[string
 	if rt.MateEnabled {
 		planWhereEdits(&facts, repos, branches, refs, hqReads, now)
 	}
-	return workflow.RenderWhere(facts)
+	return facts
+}
+
+// editCheckoutPath translates a remote checkout root to its service mount.
+func editCheckoutPath(host, root string) string {
+	if root != ops.DevRepoRoot && !strings.HasPrefix(root, ops.DevRepoRoot+"/") {
+		return ""
+	}
+	rel := strings.TrimPrefix(strings.TrimPrefix(root, ops.DevRepoRoot), "/")
+	return path.Join(ops.DevRepoRoot, host, rel)
 }
 
 // planWhereEdits keeps each copy's own reads separate; no last-heard HQ

@@ -55,6 +55,12 @@ type envelopeConfig struct {
 	leaseReads   map[string]LeaseRead
 	leasesAlways bool
 	preview      func(StateEnvelope, []platform.ServiceStack)
+	edit         bool
+}
+
+// WithEditPhase computes an edit briefing without reading a deploy session.
+func WithEditPhase() EnvelopeOption {
+	return func(c *envelopeConfig) { c.edit = true }
 }
 
 // WithEnvelopePreview exposes the service snapshot and last-known leases as
@@ -136,9 +142,10 @@ func ComputeEnvelope(
 		go func() { defer wg.Done(); services, servicesErr = client.ListServicesDirect(ctx, projectID) }()
 		go func() { defer wg.Done(); project, projectErr = client.GetProject(ctx, projectID) }()
 	}
-	wg.Add(2)
-	go func() { defer wg.Done(); metas, metasErr = ListServiceMetas(stateDir) }()
-	go func() { defer wg.Done(); ws, wsErr = CurrentWorkSession(stateDir) }()
+	wg.Go(func() { metas, metasErr = ListServiceMetas(stateDir) })
+	if !cfg.edit {
+		wg.Go(func() { ws, wsErr = CurrentWorkSession(stateDir) })
+	}
 	wg.Wait()
 
 	if servicesErr != nil {
@@ -170,7 +177,10 @@ func ComputeEnvelope(
 		wsSummary = buildWorkSessionSummary(stateDir, ws)
 	}
 
-	phase := derivePhase(ws, stateDir)
+	phase := PhaseDevelopEdit
+	if !cfg.edit {
+		phase = derivePhase(ws, stateDir)
+	}
 
 	projectSummary := ProjectSummary{ID: projectID}
 	if project != nil {
@@ -482,6 +492,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		TypeVersion:  typeVersion,
 		Status:       svc.Status,
 		RuntimeClass: topology.RuntimeClassFor(typeVersion),
+		HasLiveCode:  svc.HasDeployedCode(),
 	}
 	if snap.RuntimeClass != topology.RuntimeManaged {
 		// Untracked runtime: zcp has no record of its own, so the platform

@@ -30,6 +30,7 @@ type WhereFacts struct {
 // WhereCopy is one lease or non-pool dev half and what its readers found.
 type WhereCopy struct {
 	Name, Part, Branch string
+	Pool, Path         string
 	Lease              bool
 	State              string
 	Unverified         bool
@@ -137,6 +138,9 @@ func (step EditStep) words() string {
 	}
 	return step.Action
 }
+
+// EditStepWords is the same step wording used by the turn's where line.
+func EditStepWords(step EditStep) string { return step.words() }
 
 // WhereStage is a stage's active version, or the reason it was not read.
 type WhereStage struct {

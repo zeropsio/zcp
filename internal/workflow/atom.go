@@ -353,6 +353,7 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 	"phases": {
 		"idle":                {},
 		"bootstrap-active":    {},
+		"develop-edit":        {},
 		"develop-active":      {},
 		"develop-closed-auto": {},
 		"recipe-active":       {},

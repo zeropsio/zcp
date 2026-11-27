@@ -47,7 +47,7 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_mount",
-		Description: "Mount/unmount service filesystems via SSHFS. Actions: mount (requires active workflow — bootstrap or develop), unmount, status.",
+		Description: "Mount/unmount service filesystems via SSHFS. Actions: mount (requires a bootstrap or deploy session, or a Mate edit's dev half or lease), unmount, status.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Mount/unmount service filesystems",
 			IdempotentHint:  true,
@@ -91,8 +91,11 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 			case isLease && lease.Parked:
 				return convertError(ops.LeaseParkedError(lease, "zerops_mount"), WithRecoveryStatus()), nil, nil
 			}
-			if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
-				return blocked, nil, nil
+			envelope, edit := editScopeEnvelope(ctx, client, stateDir, projectID, rtInfo, []string{input.ServiceHostname})
+			if !editMountTarget(edit, isLease, envelope.Services, input.ServiceHostname) {
+				if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
+					return blocked, nil, nil
+				}
 			}
 			// A lease is decided by zcp's record of it, never by the name's
 			// shape: any other name is looked up as a service.
@@ -134,6 +137,22 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 				"Use mount, unmount, or status"), WithRecoveryStatus()), nil, nil
 		}
 	})
+}
+
+// A pool is a pair's key, not a filesystem to mount; a lease is mountable.
+func editMountTarget(edit, lease bool, services []workflow.ServiceSnapshot, host string) bool {
+	if !edit {
+		return false
+	}
+	if lease {
+		return true
+	}
+	for _, service := range services {
+		if service.Hostname == host && service.DevIsPool {
+			return false
+		}
+	}
+	return true
 }
 
 // mountResponse carries the mount/unmount result verbatim (embedded, so

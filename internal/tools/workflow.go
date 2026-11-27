@@ -73,7 +73,7 @@ type WorkflowInput struct {
 	TrackedRef  string                     `json:"trackedRef,omitempty"  jsonschema:"Optional tracked ref for action=git-push-setup confirm (the branch stage/prod builds from). Overrides auto-detection; omit to let ZCP detect it. Recorded once."`
 	Scaling     string                     `json:"scaling,omitempty"     jsonschema:"For action=group-recipe: propose this service hostname's scale into the group recipe's tiers."`
 	MateOnly    map[string]bool            `json:"mateOnly,omitempty"    jsonschema:"For action=group-recipe: the person's answer to what serves only this Mate — {\"<host>\": true} keeps a utility or stage (and a volume only it uses) on the AI Agent tier, false carries it in Stage and Small Production. Never without the person."`
-	Description string                     `json:"description,omitempty" jsonschema:"Markdown for action=describe-change: what the change does and why, how you checked it, and ![what it shows](shot-N) for a zerops_browser screenshot — the person reviews it by this. Describing asks for their review; a push that moves the change makes it a draft until described again."`
+	Description string                     `json:"description,omitempty" jsonschema:"Markdown for action=open-change or describe-change: what the change does and why, how you checked it, and ![what it shows](shot-N) for a zerops_browser screenshot — the person reviews it by this. Describing asks for their review; a push that moves the change makes it a draft until described again."`
 	Title       string                     `json:"title,omitempty"       jsonschema:"For action=open-change and describe-change: what this repository's change does, one line of a few words (max 120) — its own title, not the whole task."`
 	Branch      string                     `json:"branch,omitempty"      jsonschema:"For action=open-change, describe-change and close-change: the change's branch, as pushed. group-recipe: your branch for a tier edit."`
 	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D). action=retire: leave the unsaved work wouldDestroy names, once the person agreed by name."`
@@ -102,7 +102,7 @@ type WorkflowInput struct {
 	// hostnames this task works on. For bootstrap route=adopt complete
 	// step=discover with an omitted plan, the runtime service hostnames to
 	// adopt; empty scope lists candidates and commits nothing.
-	Scope []string `json:"scope,omitempty" jsonschema:"Runtime service hostnames in scope. Required for action='start' workflow='develop' and for action='complete' step='discover' route=adopt when plan is omitted. Develop: fixed at start; auto-close requires every REQUIRED hostname in scope to have a successful deploy and passed verify. Adopt: derive from exactly these live adoptable hostnames; empty scope lists candidates and commits nothing. Example: [\"appdev\",\"appstage\"]. Reject managed services — only deployable runtime hostnames."`
+	Scope []string `json:"scope,omitempty" jsonschema:"Targets in scope. Required for action='start' workflow='develop' and for action='complete' step='discover' route=adopt when plan is omitted. In a linked Mate an edit may name a pair's dev pool, a lease alias, or a running dev half. A deploy scopes runtime services and its tracked session auto-closes when each required service is deployed and verified. Adopt derives from exactly these live adoptable hostnames; empty scope lists candidates and commits nothing."`
 
 	// OutOfScope marks declared services that must NOT block this session's
 	// auto-close (RC-B). Use when the user scoped the task to part of a
@@ -456,7 +456,7 @@ func workflowDescription(rt runtime.Info) string {
 		config = `Deploy configuration is action="close-mode" closeMode={hostname:value}, which sets the per-pair CloseDeployMode (auto/manual).`
 		afterStart = "|close-mode|group-recipe"
 	}
-	return first + " Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), " + workflowLaunchClause(rt) + ", pool-migrate (workflow=\"pool-migrate\" service=<dev> moves one part's dev service onto a dev pool: each call names the part's current step and the next call). " + config + " Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as the Mate's recipe change; action=\"group-recipe\" service=<hostname> proposes a managed service this project gained (database, cache, storage…) into each tier main carries without it, or a part of the app added or removed, as the Mate's recipe change; action=\"mac-pair\" says the next step to pair the user's Mac for macOS/iOS app work, or to fix a pairing that stopped working — call it again after the user does each step. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route" + afterStart + "\"."
+	return first + " Call with action=\"start\" workflow=\"name\" for guidance; develop opens a tracked session for a deploy and answers an edit without one. Workflows: bootstrap (entry point for ANY new or adopted project, INCLUDING projects starting from a Zerops recipe — pass intent describing your stack and the recipe match surfaces as a route option), develop (all development, deployment, fixing, investigating), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit), " + workflowLaunchClause(rt) + ", pool-migrate (workflow=\"pool-migrate\" service=<dev> moves one part's dev service onto a dev pool: each call names the part's current step and the next call). " + config + " Inside a Zerops Mate, action=\"group-recipe\" proposes the recipe tiers the recipe repository's main in HQ lacks, composed from this project (tier directories with a whole-project import.yaml each), and returns the change — or says main already carries every tier; action=\"group-recipe\" scaling=<hostname> proposes that service's current scale into the tiers main already carries, as the Mate's recipe change; action=\"group-recipe\" service=<hostname> proposes a managed service this project gained (database, cache, storage…) into each tier main carries without it, or a part of the app added or removed, as the Mate's recipe change; action=\"mac-pair\" says the next step to pair the user's Mac for macOS/iOS app work, or to fix a pairing that stopped working — call it again after the user does each step. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route" + afterStart + "\"."
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
@@ -1216,6 +1216,10 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	if err != nil {
 		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus()), nil, nil
 	}
+	editGuidance, editPlan, hasEdit, err := statusEditBriefing(ctx, client, projectID, engine.StateDir(), rt, sshDeployer, envelope, corpus)
+	if err != nil {
+		return convertError(wrapStageErr("Edit briefing", err), WithRecoveryStatus()), nil, nil
+	}
 	matches, err := workflow.Synthesize(envelope, corpus)
 	if err != nil {
 		return convertError(wrapStageErr("Synthesize guidance", err), WithRecoveryStatus()), nil, nil
@@ -1228,6 +1232,7 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	matches = workflow.ComposeUnderBudget(matches, corpus, workflow.GuidanceBudget(envelope))
 	plan := workflow.BuildPlan(envelope)
 	guidance := workflow.BodiesOf(matches)
+	guidance, plan = addEditStatus(envelope.Phase, guidance, plan, editGuidance, editPlan, hasEdit)
 	if !rt.InContainer && projectID != "" {
 		if extra := localDotenvGuidanceAddendum(ctx, client, projectID); extra != "" {
 			guidance = append(guidance, extra)
@@ -1250,6 +1255,16 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 		Guidance: guidance,
 		Plan:     &plan,
 	}), nil, nil
+}
+
+func addEditStatus(phase workflow.Phase, guidance []string, plan workflow.Plan, editGuidance []string, editPlan workflow.Plan, hasEdit bool) ([]string, workflow.Plan) {
+	if hasEdit {
+		if phase == workflow.PhaseIdle {
+			guidance, plan = nil, editPlan
+		}
+		guidance = append(guidance, editGuidance...)
+	}
+	return guidance, plan
 }
 
 // localDotenvGuidanceAddendum runs checkLocalDotenvFresh against the
@@ -1333,12 +1348,6 @@ func handleWorkSessionClose(ctx context.Context, engine *workflow.Engine, client
 	// against the actual envelope.
 	// Carry a fresh envelope: closing is a lifecycle transition the mate
 	// client's strip must see without waiting for the next status call.
-	// In a Mate, a lease branch no change proposes yet is work no person
-	// was asked to review: name it with the call that proposes it.
-	closed := "Work session closed."
-	if note := unproposedNote(unproposedLeaseBranches(stateDir, rt, nil, true)); note != "" {
-		closed += " " + note
-	}
-	return withFreshEnvelope(ctx, textResult(closed),
+	return withFreshEnvelope(ctx, textResult("Work session closed."),
 		stateDir, client, projectID, rt), nil, nil
 }
