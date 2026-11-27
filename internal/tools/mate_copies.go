@@ -338,6 +338,7 @@ func (o *mateCopyObserver) run(ctx context.Context, watcher *fsnotify.Watcher, c
 				return
 			}
 			o.log("copy observer service metadata watch lost events")
+			o.refresh(ctx)
 		case result := <-o.done:
 			o.finishWait(ctx, result)
 		case <-o.scanDone:

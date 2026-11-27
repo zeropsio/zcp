@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
@@ -17,6 +19,58 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// witness: internal/tools/mate_copies.go | case _, ok := <-watcher.Errors: → case _, ok := <-watcher.Events:
+func TestMateCopies_MCWatchLoss_RefreshesCreatedAndRemovedServices(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		present bool
+		before  []mate.DevCopyStatus
+		want    []string
+	}{
+		{name: "created", present: true, want: []string{"appdev"}},
+		{name: "removed", before: []mate.DevCopyStatus{{Hostname: "appdev"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				dir := t.TempDir()
+				path := filepath.Join(dir, "status.json")
+				if tc.present {
+					if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := mate.UpdateStatus(path, func(s *mate.Status) { s.Copies = &mate.CopyStatus{DevServices: tc.before} }); err != nil {
+					t.Fatal(err)
+				}
+				ssh := &leaseStubSSH{fn: func(string) ([]byte, error) { return nil, errors.New("link unavailable") }}
+				o := &mateCopyObserver{stateDir: dir, statusPath: path, log: func(string) {}, ssh: ssh,
+					deps: func(context.Context) (devGitDeps, bool) { return devGitDeps{}, false },
+					done: make(chan mateCopyWaited, 1), scanDone: make(chan struct{}, 1),
+					active: map[mateCopyWaitKey]mateCopyActive{}, seen: map[mateCopyWaitKey]string{}}
+				watcher := &fsnotify.Watcher{Events: make(chan fsnotify.Event), Errors: make(chan error, 1)}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				go o.run(ctx, watcher, make(chan struct{}))
+				watcher.Errors <- errors.New("events lost")
+				synctest.Wait()
+				status, err := mate.ReadStatus(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				hosts := make([]string, 0, len(status.Copies.DevServices))
+				for _, dev := range status.Copies.DevServices {
+					hosts = append(hosts, dev.Hostname)
+				}
+				if !slices.Equal(hosts, tc.want) {
+					t.Fatalf("dev services = %v, want %v", hosts, tc.want)
+				}
+			})
+		})
+	}
+}
 
 // witness: internal/tools/mate_copies.go | dev.State, _ = mate.NextCopyState(dev.State, mate.CopyEvent{Kind: mate.CopyLinkLost}) → dev.State, _ = mate.NextCopyState(dev.State, mate.CopyEvent{Kind: mate.CopyStop})
 func TestMateCopies_MCBoot_ClassicCopiesStartUnknown(t *testing.T) {
