@@ -4315,12 +4315,15 @@ names no application has no board.
   3 s to connect and 10 s to answer. It answers
   `{"tasks":[{"id","title","state","with"?,"from"?,"needs"?}],"more"?,"nextActions":"…"}`, the open
   tasks in HQ's order, at most 100, `more` counting the rest. `state` is HQ's, `held` among them for a
-  task waiting on tasks it needs.
+  task on the board that waits on the tasks it needs; when one is listed, `nextActions` adds that a
+  held task covers its work like any other.
   `with` is who has the task: "your person, in this Mate" for a task this Mate's person took into
   it, "a person, in <Mate>" for another Mate's person, "<Mate>, an automated Mate" for the pool's,
-  the Mate a task is with where HQ names no taker, absent for nobody. `from` is where the task came
-  from: "a conversation in this Mate" or "in another Mate" for a conversation's, else HQ's label of
-  its source, absent when HQ has none. `needs` is what the task waits on, when HQ's answer carries
+  the Mate a task is with where HQ names no taker and the task is neither `queued` nor `held`,
+  absent for nobody. `from` is where the task came
+  from: "a conversation in this Mate" or "in another Mate" for a conversation's, "a person, on the
+  Board" for one a person put on the Board directly, else HQ's label of its source, absent when HQ
+  has none. `needs` is what the task waits on, when HQ's answer carries
   it: `[{"id","title"?,"state"}]`, `title` HQ's or else that of the open task of that id, `state`
   HQ's (`waiting`, `met` or `broken`). `nextActions` tells the agent to propose only work no open
   task covers, and, when one does, to say so in one sentence and propose nothing. Its annotations
@@ -4331,12 +4334,15 @@ names no application has no board.
   board before they put a task there.
 
 **The route,** under `Authorization: Project <ZCP_API_KEY>`: `GET /api/mate/tasks` →
-`200 {"tasks":[task]}`, the open tasks (`queued`, `assigned`, `working`, `waiting`, `taken`, and
-`held` from an HQ that keeps needs) of the application HQ holds the Mate in. zcp reads of each task
-`id`, `title`, `state`, `label`, `mate` (`{projectId, name}`, nullable), `taker` (`null`,
-`{kind: "pool", mateProjectId}` or `{kind: "person", userId, mateProjectId}`), `source.kind` with,
-for `conversation`, its `mateProjectId`, and, when present, `needs` (`[{taskId, state, title?}]`);
-the task's other fields are HQ's (`zeropsio/mate-hq:spec/protocol.md`).
+`200 {"tasks":[task]}`, the open tasks (`queued`, `held`, `assigned`, `working`, `waiting`,
+`taken`) of the application HQ holds the Mate in, each with its `needs`
+(`[{taskId, state: "waiting" | "met" | "broken", title}]`, empty for a task that needs none). zcp
+reads of each task `id`, `title`, `state`, `label`, `mate` (`{projectId, name}`, nullable), `taker`
+(`null`, `{kind: "pool", mateProjectId}` or `{kind: "person", userId, mateProjectId}`), `source.kind`
+(`conversation` with its `mateProjectId`, or `board`, `{kind, title, putBy}`, a task a person put on
+the Board directly) and `needs`. It reads them leniently: a missing `needs` or need `title` is
+none, a state it does not know is told as HQ names it, a source kind it does not know is told by
+`label`. The task's other fields are HQ's (`zeropsio/mate-hq:spec/protocol.md`).
 
 **mate.** The engine opens a board ask from a `proposed.board` answer and draws its card in that
 conversation: the brief, editable, and **Put on board**, which posts the task from the person's own
