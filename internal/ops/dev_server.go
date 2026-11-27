@@ -1075,9 +1075,9 @@ func probeStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *
 	return result, nil
 }
 
-// waitDevServer reads the supervisor's answer once, falling back to status
-// only if the wait's answer was lost.
-func waitDevServer(ctx context.Context, ssh SSHDeployer, ds *DevServers, name string, seconds int) error {
+// WaitDevServer reads a wait-capable supervisor's answer once, falling back
+// to status only if the wait's answer was lost.
+func WaitDevServer(ctx context.Context, ssh SSHDeployer, ds *DevServers, name string, seconds int) error {
 	st, err := supervisorWait(ctx, ssh, ds.Hostname, name, seconds)
 	if err != nil {
 		st, err = supervisorCtl(ctx, ssh, ds.Hostname, devServerActionStatus, name)
@@ -1097,7 +1097,7 @@ func waitDevServer(ctx context.Context, ssh SSHDeployer, ds *DevServers, name st
 // probeSupervisorStarted judges the state returned by the wait and makes one
 // health request only when that state calls for a probe.
 func probeSupervisorStarted(ctx context.Context, ssh SSHDeployer, ds *DevServers, result *DevServerResult, p DevServerParams, name string, port int, begun time.Time, wait int) (*DevServerResult, error) {
-	if err := waitDevServer(ctx, ssh, ds, name, wait); err != nil {
+	if err := WaitDevServer(ctx, ssh, ds, name, wait); err != nil {
 		return nil, err
 	}
 	server := ds.State.Servers[name]
@@ -1347,7 +1347,7 @@ func statusDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams, ds
 	wait, bySupervisor := devServerWait(devServerActionStatus, p.WaitSeconds, ds.Supervisor)
 	if bySupervisor {
 		begun := time.Now()
-		if err := waitDevServer(ctx, ssh, ds, name, wait); err != nil {
+		if err := WaitDevServer(ctx, ssh, ds, name, wait); err != nil {
 			return nil, err
 		}
 		server = ds.State.Servers[name]

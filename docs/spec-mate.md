@@ -149,7 +149,8 @@ envelope, with the time of that observation; an absent array means unread, an em
 read and none. Lease credentials never enter the file.
 
 The section records the last observation, not current liveness or authority to reach a copy.
-The Mate reads current liveness with `zcp where` when it draws. A reader replaces each set when
+The Mate opens a Draft with `zcp preview` (§2.8), never by treating this observation as current.
+A reader replaces each set when
 its array is present, keeps its prior set for null, and ignores an absent section. The additive
 section does not change the envelope or require a version gate.
 
@@ -1416,6 +1417,15 @@ _Release on archive and on completion_ (zcp `internal/hq/mate_state.go`,
 `internal/tools/hq_dev_git.go`, `internal/hq/file_watch.go`).
 
 The monorepo facts C-8…C-12 continue this table in §2.8a.
+
+To open a Draft, the Mate runs `zcp preview --lease <alias> --acquired-at <acquiredAt> --branch
+<branch> --json` for a lease, or `zcp preview --service <hostname> --branch <branch> --json` for
+a classic dev half. The identity is the one in `copies` (§1.0a). zcp ensures the copy's declared
+preview server runs and waits for its start within the existing start bound. It answers one JSON
+document: `{"status":"running","url":"<address>"}` or `{"status":"failed","reason":"<one line>"}`;
+the exit code is 0 or 1 respectively. A lease or branch that is no longer that copy answers failed
+with reason `draft ended`. This is an on-demand answer, not stored liveness; while it is pending the
+Mate says the Draft is opening.
 
 A project without a Mate uses the plain-project door (§6.7); it does not change this Mate
 contract. Once the project has a Mate, zcp uses the

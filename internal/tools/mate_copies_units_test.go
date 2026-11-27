@@ -7,13 +7,120 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// witness: internal/tools/mate_copies.go | if state.Status == devsup.StatusStarting && ds.Supervisor.Supports(devsup.CapabilityWait) { → if true {
+func TestMateCopies_MCPreview_EnsuresTheSelectedServerAndReportsItsAddress(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, initial string
+		legacy        bool
+		wantStatus    string
+		wantReason    string
+	}{
+		{"already running", "running", false, "running", ""},
+		{"already starting", "starting", false, "running", ""},
+		{"stopped", "stopped", false, "running", ""},
+		{"older supervisor", "stopped", true, "running", ""},
+		{"start fails", "crashed", false, "failed", "preview server: crashed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				dir := t.TempDir()
+				writeDevpoolLeaseFile(t, dir)
+				pool := platform.ServiceStack{ID: "svc-pool", Name: "devpool", ProjectID: "proj-1", Status: "ACTIVE", SubdomainAccess: true,
+					Ports:                []platform.Port{{Port: 9003, Protocol: "tcp", HTTPSupport: true}},
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "swarm@1"}}
+				client := platform.NewMock().WithServices([]platform.ServiceStack{pool}).WithService(&pool).
+					WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "abc1.prg1.zerops.app"}).
+					WithServiceEnv("svc-pool", []platform.ServiceEnvVar{{Key: "API_TOKEN", Content: "test-bearer"}})
+				c := devservertest.NewSupervised(`{"version":1,"previewPortBase":9000,"servers":[{"name":"api","port":3001,"command":"run api"},{"name":"web","port":3000,"command":"run web","preview":true}]}`)
+				c.StableNumber = 3
+				if tc.initial == "starting" {
+					c.Servers["web"].Status = devsup.StatusStarting
+					c.WaitFinds = map[string]devsup.ServerState{"web": {Status: devsup.StatusRunning}}
+				} else if tc.initial != "running" {
+					c.Servers["web"].Status = devsup.StatusStopped
+				}
+				if tc.initial == "crashed" {
+					c.Crash = map[string]bool{"web": true}
+				}
+				if tc.legacy {
+					c.Capabilities = nil
+				}
+				d := ops.LeaseDeps{Client: client, ProjectID: "proj-1", StateDir: dir, SSH: c,
+					Swarm: func(string, string) ops.SwarmAPI { return mateCopySwarm{} }, Env: func(string) (string, bool) { return "", false }}
+				got := EnsureMatePreview(t.Context(), d, okHTTP, MatePreviewRequest{Lease: "devpool-3", AcquiredAt: "2026-10-23T12:00:00Z", Branch: "feat-x"})
+				if got.Status != tc.wantStatus || got.Reason != tc.wantReason {
+					t.Fatalf("answer = %+v, want %s / %s", got, tc.wantStatus, tc.wantReason)
+				}
+				if tc.wantStatus == "running" && got.URL != "https://devpool-abc1-9003.prg1.zerops.app" {
+					t.Errorf("address = %q, want the selected web server's preview address", got.URL)
+				}
+				if tc.wantStatus == "running" && c.Status("web") != devsup.StatusRunning {
+					t.Errorf("selected server = %s, want running", c.Status("web"))
+				}
+				if tc.wantStatus == "failed" && got.URL != "" {
+					t.Errorf("failed answer carries address %q", got.URL)
+				}
+			})
+		})
+	}
+}
+
+// witness: internal/tools/mate_copies.go | if branch != req.Branch { → if branch == req.Branch {
+func TestMateCopies_MCBranch_RefusesAClassicCopyOnAnotherBranch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ branch, want string }{{"feat-x", ""}, {"other", "draft ended"}} {
+		t.Run(tc.branch, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}}); err != nil {
+				t.Fatal(err)
+			}
+			ssh := &stubSSH{output: []byte("checkout-head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ncheckout-branch:" + tc.branch + "\ncheckout-clean\n")}
+			_, reason := previewCopy(t.Context(), ops.LeaseDeps{StateDir: dir, SSH: ssh}, MatePreviewRequest{Service: "appdev", Branch: "feat-x"}, "appdev", ops.DevRepoRoot)
+			if reason != tc.want {
+				t.Errorf("reason = %q, want %q", reason, tc.want)
+			}
+		})
+	}
+}
+
+// witness: internal/tools/mate_copies.go | return lease.AcquiredAt == req.AcquiredAt && lease.Branch == req.Branch → return true
+func TestMateCopies_MCEnded_RefusesAChangedOrMissingLease(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, acquired, branch string
+		record                 bool
+	}{
+		{"missing", "2026-10-23T12:00:00Z", "feat-x", false},
+		{"reacquired", "2026-10-22T12:00:00Z", "feat-x", true},
+		{"another branch", "2026-10-23T12:00:00Z", "other", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tc.record {
+				writeDevpoolLeaseFile(t, dir)
+			}
+			d := ops.LeaseDeps{StateDir: dir}
+			got := EnsureMatePreview(t.Context(), d, okHTTP, MatePreviewRequest{Lease: "devpool-3", AcquiredAt: tc.acquired, Branch: tc.branch})
+			if got.Status != "failed" || got.Reason != "draft ended" || got.URL != "" {
+				t.Errorf("answer = %+v, want draft ended without an address", got)
+			}
+		})
+	}
+}
 
 // witness: internal/tools/mate_copies.go | dev.Branch, dev.BranchReadAt = branch, branchAt.UTC().Format(time.RFC3339Nano) → dev.BranchReadAt = branchAt.UTC().Format(time.RFC3339Nano)
 func TestMateCopies_MCClassic_RecordsTheCheckedOutBranch(t *testing.T) {

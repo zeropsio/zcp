@@ -2,14 +2,17 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/zeropsio/zcp/internal/devsup"
 	"github.com/zeropsio/zcp/internal/hq"
 	"github.com/zeropsio/zcp/internal/mate"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -18,6 +21,203 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// MatePreviewRequest identifies the copy whose Draft is being opened.
+type MatePreviewRequest struct {
+	Lease, AcquiredAt, Service, Branch string
+}
+
+// MatePreviewAnswer is the on-demand answer to the Mate, not an observation
+// stored in its status file.
+type MatePreviewAnswer struct {
+	Status string `json:"status"`
+	URL    string `json:"url,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+const previewDraftEnded = "draft ended"
+
+func previewFailure(reason string) MatePreviewAnswer {
+	return MatePreviewAnswer{Status: "failed", Reason: reason}
+}
+
+// EnsureMatePreview starts the copy's preview server if needed and answers
+// only after the supervisor reports it running at a browser address.
+func EnsureMatePreview(ctx context.Context, d ops.LeaseDeps, httpClient ops.HTTPDoer, req MatePreviewRequest) MatePreviewAnswer {
+	if req.Branch == "" || (req.Lease == "") == (req.Service == "") || (req.Lease != "" && req.AcquiredAt == "") || (req.Service != "" && req.AcquiredAt != "") {
+		return previewFailure("invalid draft identity")
+	}
+	host := req.Service
+	if req.Lease != "" {
+		host = req.Lease
+	}
+	root := supervisorRoot(d.StateDir, host)
+	if root == "" {
+		root = ops.DevRepoRoot
+	}
+	lease, reason := previewCopy(ctx, d, req, host, root)
+	if reason != "" {
+		return previewFailure(reason)
+	}
+	ds, err := ops.ReadDevServers(ctx, d.SSH, host, root)
+	var noSupervisor *ops.NoSupervisorError
+	noSupervisorForLease := req.Lease != "" && ds != nil && errors.As(err, &noSupervisor)
+	if ds == nil || ds.DeclarationErr != nil || (err != nil && !noSupervisorForLease) {
+		return previewFailure("could not read the draft's preview server")
+	}
+	ds.Service = lease.Pool
+	server, ok := devsup.PreviewServer(ds.Servers())
+	if !ok {
+		return previewFailure("no preview server is declared for this draft")
+	}
+	state := ds.State.Servers[server.Name]
+	address := ""
+	started := false
+	result := &ops.DevServerResult{Hostname: host, Name: server.Name, Pool: lease.Pool, Port: server.Port,
+		PreviewPort: state.PreviewPort, Running: state.Status == devsup.StatusRunning, Read: ds}
+	if !result.Running {
+		if _, reason = previewCopy(ctx, d, req, host, root); reason != "" {
+			return previewFailure(reason)
+		}
+		started = true
+		if state.Status == devsup.StatusStarting && ds.Supervisor.Supports(devsup.CapabilityWait) {
+			started = false
+			result, reason, err = awaitPreviewServer(ctx, d, req, ds, server, lease.Pool, root)
+		} else {
+			result, err = ops.ExecuteDevServer(ctx, d.SSH, d.Client, d.ProjectID, ops.DevServerParams{
+				Action: "start", Hostname: host, Name: server.Name, Root: root, StateDir: d.StateDir,
+				WaitSeconds: int(devsup.ListenWait / time.Second),
+			})
+			if err == nil && !result.Running && result.Reason == string(devsup.StatusStarting) && result.Read != nil && result.Read.Supervisor.Supports(devsup.CapabilityWait) {
+				if _, reason = previewCopy(ctx, d, req, host, root); reason != "" {
+					return previewFailure(reason)
+				}
+				result, reason, err = awaitPreviewServer(ctx, d, req, result.Read, server, lease.Pool, root)
+			}
+		}
+		if reason != "" {
+			return previewFailure(reason)
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return previewFailure("preview server did not start in time")
+		}
+		if _, reason = previewCopy(ctx, d, req, host, root); reason != "" {
+			return previewFailure(reason)
+		}
+		if err != nil {
+			return previewFailure("could not start the draft's preview server")
+		}
+		if !result.Running {
+			if result.Reason == string(devsup.StatusStarting) {
+				return previewFailure("preview server did not start in time")
+			}
+			if result.Reason != "" {
+				return previewFailure("preview server: " + strings.Join(strings.Fields(strings.ReplaceAll(result.Reason, "_", " ")), " "))
+			}
+			return previewFailure("preview server did not start")
+		}
+		if result.Reason == ops.ReasonLoopbackOnly {
+			return previewFailure("preview server listens only on loopback")
+		}
+	}
+	current, ok := devsup.PreviewServer(result.Read.Servers())
+	if result.Read.DeclarationErr != nil || !ok || current.Name != server.Name || current.Port != server.Port {
+		return previewFailure("the draft's preview server changed while opening")
+	}
+	if result.Read.LoopbackOnly[current.Port] {
+		return previewFailure("preview server listens only on loopback")
+	}
+	if started {
+		access := ensureDevServerPublicAccess(ctx, d.Client, httpClient, d.ProjectID, d.StateDir, host, result)
+		result.PreviewURL = access.SubdomainURL
+		address = access.SubdomainURL
+	}
+	if address == "" {
+		for _, observed := range ops.DevServerStates(ctx, d.Client, d.ProjectID, result) {
+			if observed.Name == server.Name && observed.URL != "" {
+				address = observed.URL
+				break
+			}
+		}
+	}
+	if address == "" {
+		return previewFailure("the draft's preview address is unavailable")
+	}
+	if _, reason = previewCopy(ctx, d, req, host, root); reason != "" {
+		return previewFailure(reason)
+	}
+	return MatePreviewAnswer{Status: "running", URL: address}
+}
+
+// awaitPreviewServer uses the supervisor's existing start receipt, then reads
+// the listener and address facts that can have changed while it waited.
+func awaitPreviewServer(ctx context.Context, d ops.LeaseDeps, req MatePreviewRequest, ds *ops.DevServers, server devsup.Server, pool, root string) (*ops.DevServerResult, string, error) {
+	if err := ops.WaitDevServer(ctx, d.SSH, ds, server.Name, int(devsup.ListenWait/time.Second)); err != nil {
+		return nil, "", fmt.Errorf("wait for preview server: %w", err)
+	}
+	if _, reason := previewCopy(ctx, d, req, ds.Hostname, root); reason != "" {
+		return nil, reason, nil
+	}
+	ds, err := ops.ReadDevServers(ctx, d.SSH, ds.Hostname, root)
+	if err != nil {
+		return nil, "", fmt.Errorf("read waited preview server: %w", err)
+	}
+	ds.Service = pool
+	state := ds.State.Servers[server.Name]
+	reason := ""
+	if state.Status != devsup.StatusRunning {
+		reason = string(state.Status)
+	}
+	return &ops.DevServerResult{Hostname: ds.Hostname, Name: server.Name, Pool: pool, Port: server.Port,
+		PreviewPort: state.PreviewPort, Running: state.Status == devsup.StatusRunning, Reason: reason, Read: ds}, "", nil
+}
+
+func previewLeaseMatches(lease ops.LeaseTargetInfo, req MatePreviewRequest) bool {
+	return lease.AcquiredAt == req.AcquiredAt && lease.Branch == req.Branch
+}
+
+// previewCopy checks the identity at each boundary where the call could
+// reach a copy or hand its address back after a wait.
+func previewCopy(ctx context.Context, d ops.LeaseDeps, req MatePreviewRequest, host, root string) (ops.LeaseTargetInfo, string) {
+	if req.Lease != "" {
+		lease, ok, err := ops.LeaseTarget(d.StateDir, host)
+		if err != nil {
+			return lease, "could not read the draft's lease"
+		}
+		if !ok || !previewLeaseMatches(lease, req) {
+			return lease, previewDraftEnded
+		}
+		lease, ok, err = ops.LeaseTargetChecked(ctx, d, host, "opened")
+		if ops.IsLeaseLost(err) {
+			return lease, previewDraftEnded
+		}
+		if err != nil {
+			return lease, "could not verify the draft's lease"
+		}
+		if !ok || !previewLeaseMatches(lease, req) {
+			return lease, previewDraftEnded
+		}
+		if lease.Parked {
+			return lease, "the draft's container is stopped"
+		}
+		return lease, ""
+	}
+	meta, err := workflow.FindServiceMeta(d.StateDir, host)
+	if err != nil {
+		return ops.LeaseTargetInfo{}, "could not read the draft's service"
+	}
+	if meta == nil || !meta.HasStage() || meta.DevPool != nil {
+		return ops.LeaseTargetInfo{}, previewDraftEnded
+	}
+	_, branch, _, err := ops.ReadEditHead(ctx, d.SSH, host, root)
+	if err != nil {
+		return ops.LeaseTargetInfo{}, "could not read the draft's branch"
+	}
+	if branch != req.Branch {
+		return ops.LeaseTargetInfo{}, previewDraftEnded
+	}
+	return ops.LeaseTargetInfo{}, ""
+}
 
 // KeepMateCopies keeps the Mate-wide projection beside the supervised server.
 // File replacement is the event; there is no periodic liveness check.
@@ -172,7 +372,7 @@ func (o *mateCopyObserver) observe(ctx context.Context) {
 	for _, lease := range status.Copies.Leases {
 		if lease.DevServers != nil {
 			for _, server := range *lease.DevServers {
-				if server.Status == "starting" {
+				if server.Status == string(devsup.StatusStarting) {
 					start(ops.MateServerWait{Hostname: lease.Alias, Pool: lease.Pool, Branch: lease.Branch, AcquiredAt: lease.AcquiredAt, Name: server.Name, ReadAt: server.ReadAt})
 				}
 			}
@@ -181,7 +381,7 @@ func (o *mateCopyObserver) observe(ctx context.Context) {
 	for _, dev := range status.Copies.DevServices {
 		if dev.DevServers != nil {
 			for _, server := range *dev.DevServers {
-				if server.Status == "starting" {
+				if server.Status == string(devsup.StatusStarting) {
 					start(ops.MateServerWait{Hostname: dev.Hostname, Name: server.Name, ReadAt: server.ReadAt})
 				}
 			}

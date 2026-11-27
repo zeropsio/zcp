@@ -49,7 +49,8 @@ func main() {
 // run is the single entry point for both CLI subcommand dispatch and MCP
 // server mode. No arguments or a first argument `serve` start runServe
 // (telemetry: session_start/session_end); a recognized verb routes to runCLI
-// (telemetry: one cli_command event, spec §5.5), except the read-only where.
+// (telemetry: one cli_command event, spec §5.5), except the Mate's where and
+// preview requests, whose stdout must remain a single JSON answer.
 // Any other first argument is
 // refused with exit 2 before telemetry, the crash log or any credential, so a
 // launcher calling a verb this release does not know fails instead of
@@ -74,9 +75,8 @@ func run(args []string) int {
 		return runServe()
 	}
 	if dispatch, ok := cliDispatch()[args[0]]; ok {
-		// Orientation is a read-only input to each turn, so it must not
-		// create telemetry state or add a disclosure to its answer.
-		if args[0] == "where" {
+		// The Mate consumes these answers as one JSON document.
+		if args[0] == "where" || args[0] == "preview" {
 			return dispatch(args[1:], telemetry.Config{})
 		}
 		return runCLI(args, dispatch)
@@ -112,6 +112,7 @@ func cliDispatch() map[string]func(rest []string, cfg telemetry.Config) int {
 		"hq":        func(rest []string, _ telemetry.Config) int { return runHQCmd(rest) },
 		"lease":     func(rest []string, _ telemetry.Config) int { return runLeaseCmd(rest, os.Stdout, resolveLiveLeaseDeps) },
 		"where":     func(rest []string, _ telemetry.Config) int { return runWhereCmd(rest) },
+		"preview":   func(rest []string, _ telemetry.Config) int { return runPreviewCmd(rest) },
 		"self": func(rest []string, _ telemetry.Config) int {
 			return runSelfCmd(rest, os.Stdout, mate.LiveLookup(mate.LiveEnvStorePath), newSelfRestartClient)
 		},
