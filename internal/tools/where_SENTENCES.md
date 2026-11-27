@@ -19,5 +19,6 @@
 - WG-ACKHEAD — An acknowledgement for one commit cannot discard identical words kept for another commit.
 - WG-DESCRIBECOPY — Describing cannot choose arbitrarily between several addressed checkouts.
 - WG-REVIEWPROMISE — A handover promises an awaiting Review build only when HQ reports it for that commit.
+- WG-POOLADDRESS — A pool handover asks the agent to distinguish the temporary lease Preview from the part's stage address, so the person can keep and share an address that survives the lease.
 - WG-OPENREPLY — Opening with a description preserves the open's settled-change and lost-answer notes and whether it was created, alongside the description's answer or refusal.
 - WG-OPENSTEP — The open's reply asks for a description only when this call did not already supply it.

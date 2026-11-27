@@ -389,11 +389,60 @@ func TestDescribed_WGDescribedHead_OnlySameCommitHandedOver(t *testing.T) {
 			if got := describedAtHandedOverHead(7, head, tc.step); got != tc.want {
 				t.Fatalf("handed over = %v, want %v", got, tc.want)
 			}
-			answer := describedHandover(7, head, tc.step, nil, now)
+			answer := describedHandover(7, head, tc.step, nil, now, false)
 			if tc.step.Copy != "" && !strings.Contains(answer, tc.step.Copy) {
 				t.Fatalf("answer omitted the copy holding work: %s", answer)
 			}
 			t.Log(answer)
+		})
+	}
+}
+
+// witness: internal/tools/hq_change_description.go | if poolLease { → if !poolLease {
+func TestDescribed_WGPoolAddress_DistinguishesLeaseAndStage(t *testing.T) {
+	t.Parallel()
+	const head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		poolLease bool
+		step      workflow.EditStep
+		want      []string
+		absent    []string
+	}{
+		{
+			name: "pool handover", poolLease: true,
+			step: workflow.EditStep{Action: workflow.EditHandedOver, Head: head, Number: 7},
+			want: []string{"Live while I work: <lease Preview URL>", "ends at merge or when the lease ends",
+				"Your app: <the part's stage public address>", "bookmark and share", "last completed build",
+				"another handover may replace it", "After merge it keeps its last build until another build",
+				`zerops_discover service="<stage>"`, "Your app gets its address after the first handover",
+				"if the stage is private or its address cannot be read, say so", "If the lease has no Preview URL, say so", "End your turn."},
+		},
+		{
+			name:   "classic handover",
+			step:   workflow.EditStep{Action: workflow.EditHandedOver, Head: head, Number: 7},
+			absent: []string{"Live while I work:", "Your app:"},
+		},
+		{
+			name: "pool with work still to commit", poolLease: true,
+			step:   workflow.EditStep{Action: "commit", Copy: "pool-2"},
+			absent: []string{"Live while I work:", "Your app:"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			answer := describedHandover(7, head, tc.step, nil, now, tc.poolLease)
+			for _, want := range tc.want {
+				if !strings.Contains(answer, want) {
+					t.Errorf("answer omits %q: %s", want, answer)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(answer, absent) {
+					t.Errorf("answer includes %q: %s", absent, answer)
+				}
+			}
 		})
 	}
 }
@@ -417,7 +466,7 @@ func TestDescribed_WGReviewPromise_OnlyObservedHeadAwaits(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			answer := describedHandover(7, head, step, tc.current, now)
+			answer := describedHandover(7, head, step, tc.current, now, false)
 			if got := strings.Contains(answer, "awaits its Review build"); got != tc.wait {
 				t.Fatalf("awaiting promise = %v, want %v: %s", got, tc.wait, answer)
 			}

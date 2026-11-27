@@ -227,7 +227,7 @@ func describedAtHandedOverHead(number int, head string, step workflow.EditStep) 
 }
 
 // describedHandover never says a build is running without HQ's observation.
-func describedHandover(number int, head string, step workflow.EditStep, current *hq.Change, now time.Time) string {
+func describedHandover(number int, head string, step workflow.EditStep, current *hq.Change, now time.Time, poolLease bool) string {
 	prefix := fmt.Sprintf("Change #%d described at %s", number, workflow.ShortEditHead(head))
 	if describedAtHandedOverHead(number, head, step) {
 		message := fmt.Sprintf("Change #%d is handed over at %s", number, workflow.ShortEditHead(head))
@@ -242,7 +242,11 @@ func describedHandover(number int, head string, step workflow.EditStep, current 
 				}
 			}
 		}
-		return message + build + ". End your turn."
+		message += build + "."
+		if poolLease {
+			message += ` For each user-facing part, tell the person both: "Live while I work: <lease Preview URL> (ends at merge or when the lease ends)" and "Your app: <the part's stage public address>" — the address to bookmark and share. The stage shows its last completed build; a successful Review build of a handover updates it, and another handover may replace it. After merge it keeps its last build until another build. Read the part's stage from zerops_workflow action="status" and its publicAccess.url or publicAccess.domains with zerops_discover service="<stage>". If a public address will become available at the first handover, say "Your app gets its address after the first handover"; if the stage is private or its address cannot be read, say so. If the lease has no Preview URL, say so.`
+		}
+		return message + " End your turn."
 	}
 	if step.Action == "commit" && step.Copy != "" {
 		return fmt.Sprintf("%s, but %s holds uncommitted work: not handed over.", prefix, step.Copy)
@@ -409,7 +413,7 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 		return descriptionWriteFailure(stateDir, ref, result, text, workcopy.head, hqc.Address(), tries, away, err, keepErr, readStep), nil, nil
 	}
 	step, current := readHandoverStep(ctx, ssh, hqc, stateDir, target, workcopy)
-	message := describedHandover(number, workcopy.head, step, current, time.Now())
+	message := describedHandover(number, workcopy.head, step, current, time.Now(), workcopy.lease)
 	if extra := applicationReadyWords(state) + mergeLimitedNote(state.MergeLimited); extra != "" {
 		if prefix, found := strings.CutSuffix(message, " End your turn."); found {
 			message = prefix + extra + " End your turn."

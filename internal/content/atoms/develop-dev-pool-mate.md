@@ -57,6 +57,21 @@ its containers away from the app.
    `zerops_workflow action="describe-change" service="<alias>" description="…"`.
    Leave lease preview URLs out of the description: they last only while the
    lease is held.
+   When telling the person where to look, give both addresses for each
+   user-facing part:
+   - **Live while I work:** <lease Preview URL> (ends at merge or when the
+     lease ends).
+   - **Your app:** <the part's stage public address> (shows the last completed
+     stage build; a successful Review build of a handover updates it).
+     This is the address to bookmark and share: it survives merge. After a
+     merge the stage keeps its last build until another build replaces it;
+     another handover can have put a different version there.
+   Read the part's stage from `zerops_workflow action="status"` and its `publicAccess.url` or
+   `publicAccess.domains` with `zerops_discover service="<stage>"`. If a public
+   address will become available at the first handover, say "Your app gets its
+   address after the first handover". If the stage is private or its address
+   cannot be read, say so. If the lease has no Preview URL, say that instead
+   of inventing one.
    Pushing to the branch again moves its change,
    a draft until described again; to add work to it, lease the branch again
    if it was released.
@@ -157,8 +172,8 @@ leases are keyed by branch, so they never meet.
 - Each acquires its own group on its branch and pushes there. An
   independent piece opens and describes its own change (step 4); subagents
   on one piece open none: merge their branches into one and open its change.
-- Report each branch's change to the person using its link. While its lease is
-  held, the reply may name its Preview.
+- Report each branch's change by its link and give the two addresses as above;
+  the shared stage may show another branch's handover.
 - Once one change merges, the others are behind `main`. Bring one up to date
   only when the person asks or it no longer merges cleanly: in a lease of
   it, `zcp git <alias> fetch origin` then `zcp git <alias> merge origin/main`
