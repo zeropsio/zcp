@@ -214,7 +214,7 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-1", "bun + postgres", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-1", "bun + postgres", 0, EnvLocal, false)
 	if resp.SessionID != "sess-1" {
 		t.Errorf("SessionID: want sess-1, got %s", resp.SessionID)
 	}
@@ -246,7 +246,7 @@ func TestBuildResponse_MiddleStep(t *testing.T) {
 	bs.CurrentStep = 1
 	bs.Steps[1].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-2", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-2", "test", 0, EnvLocal, false)
 	if resp.Progress.Completed != 1 {
 		t.Errorf("Progress.Completed: want 1, got %d", resp.Progress.Completed)
 	}
@@ -270,7 +270,7 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	bs.CurrentStep = 3
 	bs.Active = false
 
-	resp := bs.BuildResponse("sess-3", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-3", "test", 0, EnvLocal, false)
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
@@ -294,7 +294,7 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 	bs.Steps[2].SkipReason = "managed-only"
 	bs.CurrentStep = 3
 
-	resp := bs.BuildResponse("sess-4", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-4", "test", 0, EnvLocal, false)
 	if resp.Progress.Completed != 3 {
 		t.Errorf("Progress.Completed: want 3 (2 complete + 1 skipped), got %d", resp.Progress.Completed)
 	}
@@ -375,7 +375,7 @@ func TestBuildResponse_PriorContext_Attestations(t *testing.T) {
 	bs.CurrentStep = 2
 	bs.Steps[2].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-ctx", "bun + postgres", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-ctx", "bun + postgres", 0, EnvLocal, false)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -415,7 +415,7 @@ func TestBuildResponse_PriorContext_WithPlan(t *testing.T) {
 		CreatedAt: "2026-02-27T00:00:00Z",
 	}
 
-	resp := bs.BuildResponse("sess-plan", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-plan", "test", 0, EnvLocal, false)
 	if resp.Current.PriorContext == nil {
 		t.Fatal("PriorContext should not be nil")
 	}
@@ -432,7 +432,7 @@ func TestBuildResponse_DetailedGuide_Populated(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-guide", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-guide", "test", 0, EnvLocal, false)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -446,7 +446,7 @@ func TestBuildResponse_PriorContext_FirstStep_Empty(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-first", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-first", "test", 0, EnvLocal, false)
 	if resp.Current.PriorContext != nil {
 		t.Error("PriorContext should be nil for first step (no prior attestations)")
 	}
@@ -569,7 +569,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 
 	// Before plan submission, PlanMode should be empty.
 	bs := NewBootstrapState()
-	resp := bs.BuildResponse("sess1", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess1", "test", 0, EnvLocal, false)
 	if resp.Current.PlanMode != "" {
 		t.Errorf("PlanMode before plan: want empty, got %q", resp.Current.PlanMode)
 	}
@@ -578,7 +578,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.3", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}}
-	resp = bs.BuildResponse("sess1", "test", 0, EnvLocal, nil)
+	resp = bs.BuildResponse("sess1", "test", 0, EnvLocal, false)
 	if resp.Current.PlanMode != "standard" {
 		t.Errorf("PlanMode after plan: want standard, got %q", resp.Current.PlanMode)
 	}
@@ -606,7 +606,7 @@ func TestBuildResponse_GuideAlwaysFresh(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp1 := bs.BuildResponse("sess-fresh", "test", 0, EnvLocal, nil)
+	resp1 := bs.BuildResponse("sess-fresh", "test", 0, EnvLocal, false)
 	if resp1.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -616,7 +616,7 @@ func TestBuildResponse_GuideAlwaysFresh(t *testing.T) {
 	}
 
 	// Second call should also return full guide (no gating).
-	resp2 := bs.BuildResponse("sess-fresh", "test", 0, EnvLocal, nil)
+	resp2 := bs.BuildResponse("sess-fresh", "test", 0, EnvLocal, false)
 	if resp2.Current.DetailedGuide != guide1 {
 		t.Error("repeat delivery should return same full guide (no gating)")
 	}
@@ -635,7 +635,7 @@ func TestBuildResponse_Iteration_YieldsHardStop(t *testing.T) {
 	bs.CurrentStep = 1
 	bs.Steps[1].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-iter", "test", 1, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-iter", "test", 1, EnvLocal, false)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}

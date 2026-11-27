@@ -8,7 +8,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -18,11 +17,7 @@ import (
 // Under Option A bootstrap never iterates — infra verification hard-stops and
 // escalates to the user on any retry. iteration>0 short-circuits atom synthesis
 // and returns the hard-stop message so the agent surfaces it cleanly.
-//
-// knowledge.Provider is accepted for signature stability with earlier callers
-// but no longer consulted: runtime briefings were redundant with the runtime
-// guide atoms and added 2x the token cost without new information.
-func (b *BootstrapState) buildGuide(step string, iteration int, env Environment, _ knowledge.Provider) string {
+func (b *BootstrapState) buildGuide(step string, iteration int, env Environment, inMate bool) string {
 	if iteration > 0 {
 		return buildBootstrapHardStop(step, b.lastAttestation())
 	}
@@ -113,7 +108,7 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 			// (BootstrapCompleteRecipePlan parsed the same YAML at discover);
 			// the verbatim fallback still surfaces something actionable.
 		}
-		composition.append("dynamic", "workflow.formatRecipeImportYAMLForGuide", formatRecipeImportYAMLForGuide(match, step))
+		composition.append("dynamic", "workflow.formatRecipeImportYAMLForGuide", formatRecipeImportYAMLForGuide(match, step, inMate))
 	}
 
 	// Recipe close/ownership guidance: surface the recipe's GUI detail-page
@@ -348,7 +343,11 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 // splitRecipeProjectBlock and rendered as executable `zerops_env` pre-steps
 // (key AND value) ahead of the import instruction, so a recipe-generated
 // secret (e.g. Laravel's APP_KEY) is never lost.
-func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
+// mateRecipeStageNote says in a Mate what the recipe YAML's stage is, whatever
+// the recipe author's comments call it; the YAML itself is upstream text.
+const mateRecipeStageNote = "In a Mate, the stage service in this YAML is where the Review build builds a change when the person adds it (**Add to your app**). Work in progress is the person's **draft**, opened in Mate, never the stage, whatever a comment in the YAML calls it."
+
+func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string, inMate bool) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Recipe — %q\n\n", match.Slug)
 
@@ -402,6 +401,9 @@ func formatRecipeImportYAMLForGuide(match *RecipeMatch, step string) string {
 		}
 	}
 
+	if inMate {
+		sb.WriteString(mateRecipeStageNote + "\n\n")
+	}
 	sb.WriteString("```yaml\n")
 	sb.WriteString(yamlToRender)
 	if !strings.HasSuffix(yamlToRender, "\n") {

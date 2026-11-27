@@ -23,7 +23,7 @@ func TestBuildGuide_Iteration_ShortCircuitsToHardStop(t *testing.T) {
 	// iteration > 0 must produce the hard-stop message, not atom synthesis.
 	// Bootstrap doesn't iterate under Option A — infra verification escalates
 	// to the user rather than retry.
-	guide := bs.buildGuide(StepProvision, 1, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 1, EnvContainer, false)
 	if !strings.Contains(guide, "STOP") {
 		t.Errorf("iteration > 0 should yield hard-stop output, got:\n%s", guide)
 	}
@@ -45,12 +45,12 @@ func TestBuildGuide_CaptureProvenanceDoesNotChangeModelVisibleBytes(t *testing.T
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}}}}
 	t.Setenv(capture.EnvSessionID, "")
 	t.Setenv(capture.EnvSessionDir, "")
-	withoutCapture := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	withoutCapture := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 
 	sessionDir := t.TempDir()
 	t.Setenv(capture.EnvSessionID, "capture-guide")
 	t.Setenv(capture.EnvSessionDir, sessionDir)
-	withCapture := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	withCapture := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 	if withCapture != withoutCapture {
 		t.Fatal("capture changed model-visible bootstrap guide bytes")
 	}
@@ -112,7 +112,7 @@ func TestBuildGuide_Recipe_ProvisionInjectsImportYAML(t *testing.T) {
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 	if !strings.Contains(guide, "Recipe — \"laravel-minimal\"") {
 		t.Error("provision guide should contain the recipe header for recipe route")
 	}
@@ -138,7 +138,7 @@ func TestBuildGuide_Recipe_DiscoverPresentsDeriveAndConfirm(t *testing.T) {
 		Mode:       topology.PlanModeStandard,
 		ImportYAML: "project:\n  name: nextjs-agent\nservices:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n",
 	}
-	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, false)
 	if !strings.Contains(guide, "Recipe — \"nextjs-ssr-hello-world\"") {
 		t.Error("discover guide should name the matched recipe")
 	}
@@ -171,7 +171,7 @@ func TestBuildGuide_Recipe_ProvisionRewritesYAMLWithOverrides(t *testing.T) {
 	bs.RecipeOverrides = &RecipeShapeOverrides{
 		RuntimeHostnameByOriginal: map[string]string{"appdev": "uploaddev", "appstage": "uploadstage"},
 	}
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 	if !strings.Contains(guide, "hostname: uploaddev") {
 		t.Errorf("provision YAML must carry plan's dev hostname, got:\n%s", guide)
 	}
@@ -205,7 +205,7 @@ func TestBuildGuide_Recipe_ProvisionExistsResolutionDropsManaged(t *testing.T) {
 	bs.RecipeOverrides = &RecipeShapeOverrides{
 		ManagedResolutionByHost: map[string]string{"db": ResolutionExists},
 	}
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 	if strings.Contains(guide, "hostname: db") {
 		t.Errorf("EXISTS resolution must drop the managed service from provision YAML, got:\n%s", guide)
 	}
@@ -227,7 +227,7 @@ func TestBuildGuide_Recipe_DiscoverStaysVerbatim(t *testing.T) {
 		ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n",
 	}
 	// Plan is nil at discover (agent hasn't submitted it yet).
-	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, false)
 	if !strings.Contains(guide, "hostname: appdev") {
 		t.Errorf("discover guide should surface recipe hostnames verbatim, got:\n%s", guide)
 	}
@@ -246,7 +246,7 @@ func TestBuildGuide_Recipe_CloseDoesNotInjectYAML(t *testing.T) {
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
-	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepClose, 0, EnvContainer, false)
 	if strings.Contains(guide, "## Recipe — ") {
 		t.Error("close guide should NOT contain the recipe block (discover+provision only)")
 	}
@@ -276,7 +276,7 @@ func TestBootstrapGuide_OwnershipLink_UsesGUISlug(t *testing.T) {
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
-	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepClose, 0, EnvContainer, false)
 	if !strings.Contains(guide, "https://app.zerops.io/recipes/node-js-hello-world") {
 		t.Errorf("close guide should contain the GUI URL built from GUISlug, got:\n%s", guide)
 	}
@@ -310,7 +310,7 @@ func TestBuildGuide_Close_InjectsDiscoveredEnvVars(t *testing.T) {
 	}
 	// Env var catalog is injected at close so the develop handoff carries
 	// the authoritative key list across compaction.
-	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepClose, 0, EnvContainer, false)
 	if !strings.Contains(guide, "Discovered Managed-Service Env Var Catalog") {
 		t.Error("close guide should contain the dynamic env var catalog when DiscoveredEnvVars is populated")
 	}
@@ -328,7 +328,7 @@ func TestBuildGuide_Provision_NoEnvVarCatalog(t *testing.T) {
 	bs.DiscoveredEnvVars = map[string][]string{
 		"cache": {"connectionString"},
 	}
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 	// Env var catalog is injected only at close — provision is before discovery completes.
 	if strings.Contains(guide, "${cache_connectionString}") {
 		t.Error("provision guide should NOT contain env var catalog (close-only injection)")
@@ -340,7 +340,7 @@ func TestBuildGuide_Close_EmptyPlan_ReturnsStaticMessage(t *testing.T) {
 	bs := NewBootstrapState()
 	// Managed-only bootstrap: plan has no runtime targets.
 	bs.Plan = &ServicePlan{}
-	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepClose, 0, EnvContainer, false)
 	if !strings.Contains(guide, "Bootstrap is complete") {
 		t.Error("close step with empty plan should return static closeGuidance")
 	}
@@ -353,7 +353,7 @@ func TestBuildGuide_Adopt_RouteFiltersAtoms(t *testing.T) {
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true}},
 	}}
-	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, false)
 	// Either an adopt-route discover atom fires or nothing does. Either way
 	// classic-only wording must not surface.
 	if guide == "" {
@@ -397,7 +397,7 @@ func TestBuildGuide_SynthesisErrorPropagates(t *testing.T) {
 	// The discover step against the production corpus should NOT error —
 	// this is the success path. Empty string would indicate a regression
 	// (silent swallow returning "" because of an upstream issue).
-	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, false)
 	if guide == "" {
 		t.Fatal("buildGuide returned empty string — possible silent error swallow regression")
 	}
@@ -425,7 +425,7 @@ func TestBootstrapGuide_ProvisionYAML_ServicesOnly(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
 
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 
 	for _, block := range fencedBlocks(guide) {
 		if strings.Contains(block, "project:") {
@@ -457,7 +457,7 @@ func TestBootstrapGuide_ProvisionEnvPresteps_ExecutableKV(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
 
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 
 	if !strings.Contains(guide, `key="APP_KEY"`) {
 		t.Errorf("provision guide should render the pre-step with the real key, got:\n%s", guide)
@@ -488,7 +488,7 @@ func TestBootstrapGuide_ProvisionEnvPresteps_ReadTheProjectVault(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
 
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, false)
 
 	for _, want := range []string{
 		`key="APP_KEY" value="<@generateRandomString(<32>)>" sensitive=true`,
@@ -621,7 +621,7 @@ func TestBootstrapResponse_RuntimeURLs_StructPresence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			bs := newStandardBootstrapStateAt(tt.stepIndex)
-			resp := bs.BuildResponse("sess-1", "test intent", 0, EnvContainer, nil)
+			resp := bs.BuildResponse("sess-1", "test intent", 0, EnvContainer, false)
 			if tt.setURLs {
 				resp.RuntimeURLs = populated
 			}

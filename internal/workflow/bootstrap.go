@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -331,8 +330,8 @@ func (b *BootstrapState) SkipStep(name, reason string) error {
 }
 
 // BuildResponse constructs a BootstrapResponse from the current state.
-// iteration is the parent workflow iteration counter. env and kp enable knowledge injection.
-func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int, env Environment, kp knowledge.Provider) *BootstrapResponse {
+// iteration is the parent workflow iteration counter.
+func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int, env Environment, inMate bool) *BootstrapResponse {
 	completed := 0
 	summaries := make([]BootstrapStepSummary, len(b.Steps))
 	for i, s := range b.Steps {
@@ -363,7 +362,7 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int, 
 			PriorContext: b.buildPriorContext(),
 			PlanMode:     b.PlanMode(),
 		}
-		resp.Current.DetailedGuide = b.buildGuide(detail.Name, iteration, env, kp)
+		resp.Current.DetailedGuide = b.buildGuide(detail.Name, iteration, env, inMate)
 		resp.Message = fmt.Sprintf("Step %d/%d: %s", b.CurrentStep+1, len(b.Steps), detail.Name)
 	} else {
 		resp.Message = "Bootstrap complete. All steps finished."

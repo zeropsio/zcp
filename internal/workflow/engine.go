@@ -416,7 +416,7 @@ func (e *Engine) BootstrapStartWithRoute(projectID, intent string, route Bootstr
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap start save: %w", err)
 	}
-	return bs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge), nil
+	return bs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.mate), nil
 }
 
 // resolveRecipeMatch looks up the canonical import YAML for the slug the LLM
@@ -504,7 +504,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 			if err != nil {
 				return nil, fmt.Errorf("bootstrap complete reload: %w", err)
 			}
-			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.mate)
 			resp.CheckResult = result
 			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", stepName, result.Summary)
 			return resp, nil
@@ -551,7 +551,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	} else if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
-	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.mate)
 	resp.CheckResult = checkResult
 	if cleanupErr != nil {
 		resp.Message += "\n\nWarning: session cleanup failed: " + cleanupErr.Error()
@@ -728,7 +728,7 @@ func (e *Engine) completePlanWithTargets(state *WorkflowState, targets []Bootstr
 		return nil, fmt.Errorf("bootstrap complete plan save: %w", err)
 	}
 
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.mate), nil
 }
 
 // BootstrapSkip skips the current step and returns the next.
@@ -749,7 +749,7 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap skip save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.mate), nil
 }
 
 // StoreDiscoveredEnvVars saves discovered env var names for a service hostname.
@@ -824,7 +824,7 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	if state.Bootstrap == nil {
 		return nil, fmt.Errorf("bootstrap status: no bootstrap state")
 	}
-	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.mate)
 	// §5.3: surface a coexisting OPEN develop work session as backgrounded so a
 	// develop→bootstrap excursion doesn't hide in-flight develop work (SPINE-1).
 	if ws, _ := CurrentWorkSession(e.stateDir); IsOpen(e.stateDir, ws) {

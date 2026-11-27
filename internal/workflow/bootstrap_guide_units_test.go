@@ -1,6 +1,11 @@
 package workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
+)
 
 // witness: internal/workflow/bootstrap_guide_assembly.go | stage: runs what was added to main; the Review build builds a change on it → stage: preview
 func TestBootstrapGuide_BGURLs_LabelsStageByEnvironment(t *testing.T) {
@@ -36,6 +41,36 @@ func TestBootstrapGuide_BGURLs_LabelsStageByEnvironment(t *testing.T) {
 			t.Parallel()
 			if got := FormatRuntimeURLsForGuide(tc.urls, tc.mate, draft); got != tc.want {
 				t.Errorf("guide = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// witness: internal/workflow/bootstrap_guide_assembly.go | sb.WriteString(mateRecipeStageNote + "\n\n") →
+func TestBootstrapGuide_BGRecipe_MateNamesTheRecipeStage(t *testing.T) {
+	t.Parallel()
+	const yaml = "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  # appstage: production-mode container for staging previews.\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n"
+	for _, tc := range []struct {
+		name string
+		step string
+		plan *ServicePlan
+	}{
+		{"discover", StepDiscover, nil},
+		{"provision", StepProvision, &ServicePlan{Targets: []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bs := NewBootstrapState()
+			bs.Route = BootstrapRouteRecipe
+			bs.RecipeMatch = &RecipeMatch{Slug: "analog-ssr-hello-world", Confidence: 0.97, Mode: topology.PlanModeStandard, ImportYAML: yaml}
+			bs.Plan = tc.plan
+			standalone := bs.buildGuide(tc.step, 0, EnvContainer, false)
+			mate := bs.buildGuide(tc.step, 0, EnvContainer, true)
+			if strings.Count(mate, mateRecipeStageNote) != 1 || !strings.Contains(mate, mateRecipeStageNote+"\n\n```yaml\n") {
+				t.Fatalf("Mate guide lacks the stage note once before the YAML:\n%s", mate)
+			}
+			if strings.Contains(standalone, mateRecipeStageNote) || strings.Replace(mate, mateRecipeStageNote+"\n\n", "", 1) != standalone {
+				t.Fatalf("standalone guide differs from the Mate guide beyond the note:\n%s", standalone)
 			}
 		})
 	}
