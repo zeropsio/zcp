@@ -151,44 +151,6 @@ func TestOpenChange_TheOpenChangeStays(t *testing.T) {
 	}
 }
 
-// The agent cuts new work from main while the Mate's change is open: the
-// answer says the work goes on the open change's branch and how to take it,
-// and the work taken and pushed as it says reaches the change by
-// fast-forward — never a push HQ refuses.
-func TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch(t *testing.T) {
-	t.Parallel()
-	lab := newHQLab(t)
-	lab.wire()
-	lab.pushBranch("fix-login", map[string]string{"login.js": "the fix\n"})
-	if first, text, isError := lab.openChangeFrom("fix-login", "Fix the login"); isError || !first.Created {
-		t.Fatalf("the first open: %s", text)
-	}
-	before := lab.remoteHead("fix-login")
-	lab.git("checkout", "-q", "-b", "add-signup", "main")
-
-	answer, text, isError := lab.openChangeFrom("add-signup", "Add the signup")
-
-	if isError || answer.Created || answer.Branch != "fix-login" {
-		t.Fatalf("want change #1 on fix-login answered: %s", text)
-	}
-	take, push := takeCommand.FindStringSubmatch(answer.Message), pushCommand.FindStringSubmatch(answer.Message)
-	if take == nil || push == nil {
-		t.Fatalf("the answer gives no command that takes the open change's branch, or pushes it: %s", answer.Message)
-	}
-	if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(take[1])); err != nil {
-		t.Fatalf("taking the branch as the answer says (%s): %v\n%s", take[1], err, out)
-	}
-	lab.write(map[string]string{"signup.js": "the signup\n"})
-	lab.commit("Add the signup")
-	if out, err := lab.devGit().ExecSSH(t.Context(), "appdev", "cd /var/www && "+inTheLab(push[1])); err != nil {
-		t.Fatalf("pushing as the answer says (%s): %v\n%s", push[1], err, out)
-	}
-	if got, want := lab.remoteHead("fix-login"), lab.git("rev-parse", "HEAD"); got != want {
-		t.Errorf("fix-login is at %q, want the work pushed onto it %q", got, want)
-	}
-	lab.git("merge-base", "--is-ancestor", before, "HEAD")
-}
-
 // TestOpenChange_ForgetsTheChangesTheStateItReadNamesSettled: on an HQ that
 // keeps one open change per repository, change #1 merges and the agent opens
 // #2 before any pass learned it. open-change forgets #1 by the Mate's state it

@@ -76,7 +76,7 @@ func TestLearnChangeLanding_ReadsAMissingChangeByTheStatesWindow(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			words := learnChangeLanding(stateDir, targetHQ, c, tt.state)
+			words := learnChangeLanding(stateDir, targetHQ, c, tt.state, repoRoute{})
 
 			if tt.wantWords == "" && words != "" || !strings.Contains(words, tt.wantWords) {
 				t.Errorf("said %q, want %q", words, tt.wantWords)

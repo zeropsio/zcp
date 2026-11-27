@@ -350,7 +350,8 @@ func describeChange(ctx context.Context, httpClient ops.HTTPDoer, ssh ops.SSHDep
 	if stateErr == nil {
 		fresh = &state
 		if openedPick == nil {
-			if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state); learned != "" {
+			place := repoDevHost(stateDir, target.AppID, target.Repo).readingCopy(classicCopyRead(ctx, ssh, rt, stateDir), target.Repo)
+			if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state, place); learned != "" {
 				return jsonResult(changeDescriptionResult{
 					Service: service, Parts: parts,
 					Message: learned + " The description was not written: the change it was for is no longer open, " +
@@ -509,14 +510,15 @@ func describedWhere(target changeTarget) string {
 // describe could mean — the one on its branch, or, no branch named, any of
 // the repository's — and says it of those no longer open (learnChangeLanding);
 // "" when every one is open. Words are never put on another change then:
-// with no branch named, which one they were for is the Mate's to say.
-func learnDescribedLandings(stateDir, address string, target changeTarget, kept []workflow.HQChange, state hq.MateState) string {
+// with no branch named, which one they were for is the Mate's to say. place
+// is where the repository's git runs.
+func learnDescribedLandings(stateDir, address string, target changeTarget, kept []workflow.HQChange, state hq.MateState, place repoRoute) string {
 	var learned []string
 	for _, c := range kept {
 		if target.Branch != "" && c.Branch != target.Branch {
 			continue
 		}
-		if line := learnChangeLanding(stateDir, address, c, state); line != "" {
+		if line := learnChangeLanding(stateDir, address, c, state, place); line != "" {
 			learned = append(learned, sentenceOf(line))
 		}
 	}

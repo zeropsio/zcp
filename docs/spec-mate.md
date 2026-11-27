@@ -5107,9 +5107,8 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   `TestOpenChange_PairsSharingARepositoryOpenAChangePerBranch`). An older HQ — no `openPerBranch` —
   answers its one open change whatever branch is named: zcp keeps that change on its own branch,
   records nothing for the branch asked for, and says the work goes onto the open one, how to take its
-  branch and bring the work onto it (work cut from `main` is no fast-forward of it)
-  (`TestOpenChange_OldHQAnswersTheOpenOne_RecordsNothingForTheAskedBranch`,
-  `TestOpenChange_AnOpenChangeTakesTheWorkOntoItsBranch`). An HQ from before changes were bound to
+  branch and bring the work onto it (work cut from `main` is no fast-forward of it), where the
+  classic copy may move (below). An HQ from before changes were bound to
   a named branch ignores `branch` and opens the change on `mate/<mateId>/<n>`, naming none: zcp
   names and keeps that branch and says to push the work there.
   The Mate's state open-change
@@ -5136,8 +5135,7 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   pairs share its repository, and are cleared (`TestHQChangeLedger_MigrationFromPairsDedupsAcrossPairs`);
   released zcp recorded the Mate's local branch `mate/<mateId>` under the same key, which moves in
   as its change's `mate/<mateId>/<n>`, and the take step renames that local branch, which git
-  cannot keep beside the change's
-  (`TestUpgrade_AnOpenChangeTheReleasedZcpRecordedKeepsStatusAndPushWorking`). In a
+  cannot keep beside the change's, only where it may check that branch out. In a
   repository whose code is kept on GitHub (`origin.mode` `github`, read from the Mate's state (§2.8)
   at the call and recorded, the pair's record when no state was heard) the branch is pushed to
   origin, HQ, like any other, and the answer adds that HQ alone pushes to GitHub: it puts the
@@ -5299,6 +5297,11 @@ through `confirmGitPushSetupContainer`, and a remote of the user's own stays the
   over ssh), so the line is said once even where the branch was fast-forwarded already — a
   fast-forward there is a no-op (`TestHQChangeStanding_CorePushAtHead_SaidOnce`,
   `TestHQPass_CorePushAtHead_ToldOnce`).
+  Every develop line that puts a branch in a plain pair's dev service — taking an open or a handed
+  change, cutting a branch, new work from `main`, a merged change's `main` brought up to date —
+  gives its git commands only where W-2's answer for the classic copy, read in this call, is
+  checkout; otherwise it gives that answer, `occupied by <branch>: ask the person` or the unknown
+  words naming the read it lacks, and no command. In a dev pool these lines acquire a lease.
   Develop's start, on an HQ that keeps an open change per branch, lists each repository's open
   changes by number and branch with their standing and last update, a handed one labelled handed, and says new
   work goes onto an open change of the Mate's only where *What one change holds* (above) says so,

@@ -21,7 +21,7 @@ import (
 // closeChange is zerops_workflow action="close-change" in the lab.
 func (l *hqLab) closeChange(service, branch string) (changeCloseResult, string, bool) {
 	l.t.Helper()
-	res, typed, err := handleCloseChange(context.Background(), l.hq.srv.Client(), l.rt, l.stateDir, WorkflowInput{Service: service, Branch: branch})
+	res, typed, err := handleCloseChange(context.Background(), l.hq.srv.Client(), nil, l.rt, l.stateDir, WorkflowInput{Service: service, Branch: branch})
 	if err != nil {
 		l.t.Fatalf("handleCloseChange: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestCloseChange_RefusedKey_SaysSoAndNoRetry(t *testing.T) {
 	rt := runtime.Info{OrgID: labOrg, HQ: &runtime.HQLink{Origin: "https://hq.example.invalid", ProjectID: labMate, Key: labKey, StatePath: statePath}}
 	refusing := refusingDoer{status: http.StatusUnauthorized, body: `{"code":"key_refused"}`}
 
-	res, _, err := handleCloseChange(context.Background(), refusing, rt, stateDir, WorkflowInput{Branch: "fix-login"})
+	res, _, err := handleCloseChange(context.Background(), refusing, nil, rt, stateDir, WorkflowInput{Branch: "fix-login"})
 	if err != nil {
 		t.Fatalf("handleCloseChange: %v", err)
 	}

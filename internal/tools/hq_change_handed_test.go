@@ -28,6 +28,13 @@ func (l *hqLab) status() string {
 // in the pair's dev service through zcp git.
 var takeCommand = regexp.MustCompile("`(zcp git appdev fetch [^`]*)`")
 
+// inTheLab is a command the words give through `zcp git appdev` as git runs
+// it in the lab's dev service, appdev's checkout: each `zcp git appdev `
+// stripped back to git.
+func inTheLab(command string) string {
+	return strings.ReplaceAll(command, "zcp git appdev ", "git ")
+}
+
 // TestHandedChange_IsThePairsAndTheWorkGoesOnItsBranch: a change a person
 // hands this Mate is its repository's change from the next pass on — kept in
 // the ledger with its branch and said once with how to take that branch. Its

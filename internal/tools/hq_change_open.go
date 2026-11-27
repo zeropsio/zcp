@@ -98,7 +98,8 @@ func handleOpenChange(
 		}
 	}
 	branch := target.Branch
-	route := changeRoute(stateDir, target)
+	place := repoDevHost(stateDir, target.AppID, target.Repo).readingCopy(classicCopyRead(ctx, ssh, rt, stateDir), target.Repo)
+	route := changeRoute(stateDir, target, place)
 	var result changeOpenResult
 	result.Service, result.Parts = changeService(stateDir, hqc.Address(), target, input.Service, branch)
 
@@ -115,7 +116,7 @@ func handleOpenChange(
 	state, stateErr := hqc.ReadMateState()
 	learnSettled := func() {
 		if stateErr == nil {
-			result.Landed = learnRepoLandings(ctx, stateDir, hqc.Address(), target.AppID, keptBefore, state)
+			result.Landed = learnRepoLandings(ctx, stateDir, hqc.Address(), target.AppID, keptBefore, state, place)
 		}
 	}
 	origin := ""
@@ -368,8 +369,8 @@ func openedIn(state hq.MateState, target changeTarget, branch string) (hq.Change
 // changes of appID's repository — each held with no wait, forgetting each no
 // longer open and saying it once (learnChangeLanding); "" when every one is
 // open, or state is of another application. A change another step holds (a
-// describe) is left to it.
-func learnRepoLandings(ctx context.Context, stateDir, address, appID string, kept []workflow.HQChange, state hq.MateState) string {
+// describe) is left to it. place is where the repository's git runs.
+func learnRepoLandings(ctx context.Context, stateDir, address, appID string, kept []workflow.HQChange, state hq.MateState, place repoRoute) string {
 	if state.AppID == nil || *state.AppID != appID {
 		return ""
 	}
@@ -379,7 +380,7 @@ func learnRepoLandings(ctx context.Context, stateDir, address, appID string, kep
 		if err != nil {
 			continue
 		}
-		line := learnChangeLanding(stateDir, address, c, state)
+		line := learnChangeLanding(stateDir, address, c, state, place)
 		release()
 		if line != "" {
 			learned = append(learned, sentenceOf(line))

@@ -175,7 +175,7 @@ func hqLaunchProductionNextStep(httpClient ops.HTTPDoer, rt runtime.Info, stateD
 			}
 			limited = state.MergeLimited
 			for _, c := range changesIn(hqChanges(stateDir), repo.AppID, repo.Repo) {
-				learnChangeLanding(stateDir, address, c, state)
+				learnChangeLanding(stateDir, address, c, state, repoDevHost(stateDir, c.AppID, c.Repo))
 			}
 			// HQ keeps the merged history: read it there, rather than keeping
 			// a second last-merge record.

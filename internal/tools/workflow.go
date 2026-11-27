@@ -743,7 +743,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "close-change":
 		// The Mate's own abandoned or folded change, closed by its branch
 		// (hq_change_close.go).
-		return handleCloseChange(ctx, httpClient, rt, stateDir, input)
+		return handleCloseChange(ctx, httpClient, sshDeployer, rt, stateDir, input)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

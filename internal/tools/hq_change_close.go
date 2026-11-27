@@ -38,6 +38,7 @@ type changeCloseResult struct {
 func handleCloseChange(
 	ctx context.Context,
 	httpClient ops.HTTPDoer,
+	ssh ops.SSHDeployer,
 	rt runtime.Info,
 	stateDir string,
 	input WorkflowInput,
@@ -72,7 +73,8 @@ func handleCloseChange(
 			`Call zerops_workflow action="close-change" again once HQ answers.`), WithRecoveryStatus()), nil, nil
 	}
 	kept := changesIn(hqChanges(stateDir), target.AppID, target.Repo)
-	if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state); learned != "" {
+	place := repoDevHost(stateDir, target.AppID, target.Repo).readingCopy(classicCopyRead(ctx, ssh, rt, stateDir), target.Repo)
+	if learned := learnDescribedLandings(stateDir, hqc.Address(), target, kept, state, place); learned != "" {
 		result.Message = learned + " Nothing else was closed."
 		return jsonResult(result), nil, nil
 	}

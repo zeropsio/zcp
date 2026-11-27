@@ -80,10 +80,14 @@ func hqReleasedBranch(hqc hq.Client) string { return "mate/" + hqc.ProjectID() }
 // where route runs the repository's git. A checkout an older zcp kept the
 // change's work on holds it as the Mate's own branch (hqReleasedBranch),
 // which git cannot keep beside the change's branch beneath it: that one is
-// renamed instead. A lease checks its branch out afresh, so a dev pool has
-// nothing to rename.
+// renamed instead — and only where the checkout may move (mayMove), as the
+// rename checks the branch out. A lease checks its branch out afresh, so a
+// dev pool has nothing to rename.
 func takeChangeBranch(route repoRoute, hqc hq.Client, branch string) string {
 	take := fmt.Sprintf("%s take it (%s)", route.where(), route.take(branch))
+	if _, free := route.mayMove(branch); !free {
+		return take
+	}
 	if released := hqReleasedBranch(hqc); strings.HasPrefix(branch, released+"/") && route.pool == "" {
 		take += fmt.Sprintf(" — or, where the checkout still has the branch %q an older zcp kept this work on, which git cannot keep beside it, rename that one instead (%s)",
 			released, route.git("branch -m "+released+" "+branch, "checkout "+branch))
@@ -143,8 +147,9 @@ func handedWork(route repoRoute, change hq.MateChange, repo, branch string, oneP
 // hqTakeHanded keeps every change a person handed this Mate in appID's repo,
 // from a Mate that is gone, in the ledger on the branch it was on, and says
 // each once: the Mate's own state in HQ is the only word of a hand-over. A
-// change the ledger keeps already is said no more.
-func hqTakeHanded(stateDir string, state hq.MateState, appID, repo string, kept []workflow.HQChange) []string {
+// change the ledger keeps already is said no more. route is where the
+// repository's git runs.
+func hqTakeHanded(stateDir string, state hq.MateState, appID, repo string, kept []workflow.HQChange, route repoRoute) []string {
 	var lines []string
 	for _, handed := range handedChangesIn(state, appID, repo) {
 		if slices.ContainsFunc(kept, func(c workflow.HQChange) bool { return c.Number == handed.Number }) {
@@ -152,7 +157,7 @@ func hqTakeHanded(stateDir string, state hq.MateState, appID, repo string, kept 
 		}
 		branch := handed.Branch
 		_ = recordHQChange(stateDir, appID, repo, handed.Number, branch, titleOf(handed), workflow.HQChangeFromHanded, 0)
-		lines = append(lines, handedWork(repoDevHost(stateDir, appID, repo), handed, repo, branch, !state.OpenPerBranch))
+		lines = append(lines, handedWork(route, handed, repo, branch, !state.OpenPerBranch))
 	}
 	return lines
 }
@@ -248,8 +253,9 @@ func outcomeOf(state hq.MateState, c workflow.HQChange) (changeOutcome, *hq.Mate
 // — a Mate told nothing of it is on main does the work again — and takes the
 // merged change's note, none of which reads a squash of the change's own.
 // The change is forgotten as soon as it is no longer open. "" while it is
-// open, which is the ordinary state and worth no words — or unknown.
-func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.MateState) string {
+// open, which is the ordinary state and worth no words — or unknown. route is
+// where c's repository's git runs (repoDevHost).
+func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.MateState, route repoRoute) string {
 	outcome, s := outcomeOf(state, c)
 	if outcome == changeStillOpen || outcome == changeUnknown {
 		return ""
@@ -260,12 +266,12 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 	}
 	switch outcome {
 	case changeMerged:
-		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
+		return fmt.Sprintf("change #%d is merged — this Mate's work is on %q now; %s", c.Number, hqBase, mainTakesTheMerge(route)) +
 			mergedLeases(stateDir, address, c) + applicationMergedWords(state)
 	case changeLandedWith:
 		with := s.CarriedBy()
 		return fmt.Sprintf("change #%d was merged as part of #%d — #%d was built on it and merged first, so its merge carried every commit of this one and HQ closed it with nothing lost and nothing to do again: all of its work is on %q now; %s",
-			c.Number, with, with, hqBase, mainTakesTheMerge(repoDevHost(stateDir, c.AppID, c.Repo))) +
+			c.Number, with, with, hqBase, mainTakesTheMerge(route)) +
 			mergedLeases(stateDir, address, c) + applicationMergedWords(state)
 	case changeUnlisted:
 		return fmt.Sprintf("change #%d is no longer open — HQ lists it among this Mate's changes no more, so whether it merged is its review's to say (%s)", c.Number, changeBranchWords(c))
@@ -277,15 +283,15 @@ func learnChangeLanding(stateDir, address string, c workflow.HQChange, state hq.
 // mainTakesTheMerge says how the repository's main takes a merged change —
 // or one another change's merge carried — where route runs its git, and that
 // the next work's branch is cut from it:
-// main fast-forwarded in a dev service; in a dev pool a lease acquired on a
-// new branch cuts it from main as HQ has it.
+// main fast-forwarded in a dev service whose checkout may move (moved); in a
+// dev pool a lease acquired on a new branch cuts it from main as HQ has it.
 func mainTakesTheMerge(route repoRoute) string {
 	if route.pool != "" {
 		return fmt.Sprintf("cut the next work's branch from it in a lease of the dev pool %s (%s cuts a new branch from %q)",
 			route.pool, leaseAcquire(route.pool, "<branch>"), hqBase)
 	}
 	return fmt.Sprintf("bring it up to date %s (%s), and cut the next work's branch from it",
-		route.where(), route.git("checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase))
+		route.where(), route.moved(hqBase, "checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase))
 }
 
 // mergedLeases names the leases zcp still holds on the branch of a change
@@ -473,8 +479,10 @@ func changeBranchWords(c workflow.HQChange) string {
 // (hqOpenChangeWork). A change another step holds (a describe) is left to the
 // next pass. Changes of another application than the one HQ holds the Mate
 // in stay there, said once. Develop's start ends with how work is cut where
-// other Mates work or a production is attached (applicationStartWords).
-func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.MateState, atStart bool) []string {
+// other Mates work or a production is attached (applicationStartWords). read
+// reads a plain pair's checkout, once per repository of the pass, for words
+// that would switch its branch (repoRoute.readingCopy).
+func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq.MateState, atStart bool, read copyReader) []string {
 	if state.AppID == nil {
 		return nil
 	}
@@ -489,15 +497,15 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 		}
 	}
 	for _, repo := range hqChangeRepos(stateDir, hqc.Address(), app, changes) {
-		route := repoDevHost(stateDir, app, repo)
+		route := repoDevHost(stateDir, app, repo).readingCopy(read, repo)
 		var said []string
 		for _, c := range changesIn(changes, app, repo) {
-			if line := passChange(ctx, stateDir, hqc.Address(), c, state); line != "" {
+			if line := passChange(ctx, stateDir, hqc.Address(), c, state, route); line != "" {
 				said = append(said, line)
 			}
 		}
 		kept := changesIn(hqChanges(stateDir), app, repo)
-		handed := hqTakeHanded(stateDir, state, app, repo, kept)
+		handed := hqTakeHanded(stateDir, state, app, repo, kept, route)
 		said = append(said, handed...)
 		switch {
 		case !atStart || len(handed) > 0:
@@ -525,8 +533,8 @@ func hqChangesPass(ctx context.Context, stateDir string, hqc hq.Client, state hq
 // passChange is one change's turn of a pass, holding it with no wait: what
 // became of it, or — still open — its standing when it differs from what was
 // told, kept as told. "" when there is nothing to say, or another step holds
-// it.
-func passChange(ctx context.Context, stateDir, address string, c workflow.HQChange, state hq.MateState) string {
+// it. route is where c's repository's git runs.
+func passChange(ctx context.Context, stateDir, address string, c workflow.HQChange, state hq.MateState, route repoRoute) string {
 	release, err := workflow.HoldHQChange(ctx, stateDir, c.AppID, c.Repo, c.Number, 0)
 	if err != nil {
 		return ""
@@ -537,14 +545,14 @@ func passChange(ctx context.Context, stateDir, address string, c workflow.HQChan
 		return ""
 	}
 	c = current
-	if line := learnChangeLanding(stateDir, address, c, state); line != "" {
+	if line := learnChangeLanding(stateDir, address, c, state, route); line != "" {
 		return line
 	}
 	outcome, s := outcomeOf(state, c)
 	if outcome != changeStillOpen {
 		return ""
 	}
-	words, now := hqChangeStanding(c, *s, repoDevHost(stateDir, c.AppID, c.Repo), leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch), state.MergeLimited)
+	words, now := hqChangeStanding(c, *s, route, leasesOnBranch(stateDir, address, c.AppID, c.Repo, c.Branch), state.MergeLimited)
 	if c.Told == nil || *c.Told != now {
 		_ = workflow.UpsertHQChange(stateDir, c.AppID, c.Repo, c.Number, func(kept *workflow.HQChange, existed bool) error {
 			if !existed || kept.StateRev > state.Rev {

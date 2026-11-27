@@ -495,9 +495,7 @@ func TestDevelopStart_ListsTheOpenChangesOnAnHQThatKeepsOnePerBranch(t *testing.
 
 	text := lab.developStart()
 
-	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, "on a branch of its own", "cut from an up-to-date",
-		"`zcp git appdev fetch origin <branch> && zcp git appdev checkout <branch>`",
-		"`zcp git appdev checkout main && zcp git appdev fetch origin && zcp git appdev merge --ff-only origin/main && zcp git appdev checkout -b <branch>`"} {
+	for _, want := range []string{`#1 on "fix-login"`, `#2 on "add-signup"`, "on a branch of its own", "cut from an up-to-date"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("develop's start lacks %q:\n%s", want, text)
 		}

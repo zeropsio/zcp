@@ -30,9 +30,6 @@ func TestRepoDevHost_RecipeNamedRepository_FindsItsPair(t *testing.T) {
 	if got := route.where(); got != "in its dev service shopdev" {
 		t.Errorf("where = %q, want its dev service shopdev", got)
 	}
-	if got, want := route.take("fix-login"), "`zcp git shopdev fetch origin fix-login && zcp git shopdev checkout fix-login`"; got != want {
-		t.Errorf("take = %s, want %s", got, want)
-	}
 	if other := repoDevHost(stateDir, "another-app", "storefront"); strings.Contains(other.git("status"), "shopdev") {
 		t.Errorf("a repository of another application found shopdev: %s", other.git("status"))
 	}

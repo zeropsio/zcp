@@ -25,6 +25,74 @@ type repoRoute struct {
 	pool string
 	// lease is the lease the words are about, "" for none known.
 	lease string
+	// copy is the dev service's checkout of a plain pair as this call reads
+	// it (readingCopy); nil when the call reads none.
+	copy *copyPlan
+}
+
+// copyReader reads the checkout of repo in host, a plain pair's dev service,
+// for this call (classicCopyRead).
+type copyReader func(host, repo string) workflow.WhereCopy
+
+// copyPlan is a plain pair's dev-service checkout as one call reads it: read
+// the first time words would switch its branch, and that read answers every
+// word of the call after it.
+type copyPlan struct {
+	read func() workflow.WhereCopy
+	got  *workflow.WhereCopy
+}
+
+func (p *copyPlan) plan() *workflow.WhereCopy {
+	if p.got == nil {
+		read := p.read()
+		p.got = &read
+	}
+	return p.got
+}
+
+// readingCopy is r with its dev service's checkout of repo read by read, once,
+// when words first would switch its branch (mayMove). A lease, a dev pool and
+// a repository no pair here is wired to have no such checkout.
+func (r repoRoute) readingCopy(read copyReader, repo string) repoRoute {
+	if read == nil || r.host == "" || r.leased() {
+		return r
+	}
+	host := r.host
+	r.copy = &copyPlan{read: func() workflow.WhereCopy { return read(host, repo) }}
+	return r
+}
+
+// mayMove is whether words may give the git that switches r's checkout to
+// branch, and the planner's words when they may not. A plain pair's dev
+// service checkout is shared by every conversation of the Mate: its branch
+// moves only when workflow.MissingEditCopyStep answers checkout over this
+// call's read of it (readingCopy), a checkout this call did not read being
+// unknown. A lease is the caller's own, and a repository no pair here is
+// wired to goes into a checkout the agent fetches it into: their git moves
+// no one else's work.
+func (r repoRoute) mayMove(branch string) (string, bool) {
+	if r.host == "" || r.leased() {
+		return "", true
+	}
+	classic := &workflow.WhereCopy{Name: r.host, WorkUnread: "checkout was not read"}
+	if r.copy != nil {
+		classic = r.copy.plan()
+	}
+	step := workflow.MissingEditCopyStep(branch, classic)
+	if step.Action == "checkout "+branch {
+		return "", true
+	}
+	return step.Words(), false
+}
+
+// moved is cmds, git that switches r's checkout to branch, run where r runs
+// git (git) — or the planner's words when that checkout may not move
+// (mayMove).
+func (r repoRoute) moved(branch string, cmds ...string) string {
+	if words, ok := r.mayMove(branch); !ok {
+		return words
+	}
+	return r.git(cmds...)
 }
 
 // repoDevHost is where the agent runs git for appID's repo, by the records'
@@ -58,13 +126,12 @@ func repoDevHost(stateDir, appID, repo string) repoRoute {
 }
 
 // changeRoute is where git runs for a change call's target: the lease it
-// named, else its repository's place (repoDevHost).
-func changeRoute(stateDir string, target changeTarget) repoRoute {
-	route := repoDevHost(stateDir, target.AppID, target.Repo)
+// named, else place, its repository's (repoDevHost).
+func changeRoute(stateDir string, target changeTarget, place repoRoute) repoRoute {
 	if target.Lease == "" {
-		return route
+		return place
 	}
-	pool := route.pool
+	pool := place.pool
 	if leases, err := ops.LeaseBranches(stateDir); err == nil {
 		for _, l := range leases {
 			if l.Alias == target.Lease {
@@ -127,32 +194,33 @@ func (r repoRoute) checkedOut(branch string) string {
 }
 
 // take is how branch, already on origin, is put in hand: fetched and checked
-// out in a dev service; in a dev pool, a lease acquired on it checks it out.
+// out in a dev service whose checkout may move (moved); in a dev pool, a
+// lease acquired on it checks it out.
 func (r repoRoute) take(branch string) string {
 	if r.pool != "" {
 		return leaseAcquire(r.pool, branch)
 	}
-	return r.git("fetch origin "+branch, "checkout "+branch)
+	return r.moved(branch, "fetch origin "+branch, "checkout "+branch)
 }
 
 // cut is how branch, which origin does not hold yet, is cut from origin's
-// main: in a dev pool, a lease acquired on a branch that does not exist cuts
-// it from main.
+// main, in a dev service whose checkout may move (moved): in a dev pool, a
+// lease acquired on a branch that does not exist cuts it from main.
 func (r repoRoute) cut(branch string) string {
 	if r.pool != "" {
 		return leaseAcquire(r.pool, branch)
 	}
-	return r.git("fetch origin "+hqBase, "checkout -b "+branch+" origin/"+hqBase)
+	return r.moved(branch, "fetch origin "+hqBase, "checkout -b "+branch+" origin/"+hqBase)
 }
 
 // fromMain is how new work's branch is cut from an up-to-date main: main
-// fast-forwarded first in a dev service; in a dev pool, by a lease acquired
-// on it.
+// fast-forwarded first in a dev service whose checkout may move (moved); in
+// a dev pool, by a lease acquired on it.
 func (r repoRoute) fromMain(branch string) string {
 	if r.pool != "" {
 		return leaseAcquire(r.pool, branch)
 	}
-	return r.git("checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase, "checkout -b "+branch)
+	return r.moved(branch, "checkout "+hqBase, "fetch origin", "merge --ff-only origin/"+hqBase, "checkout -b "+branch)
 }
 
 // plainGit is cmds — each a git command's arguments — as a project without a

@@ -25,6 +25,9 @@ type ActiveVersionReader func(context.Context, string, string) (string, error)
 const (
 	whereVersionEvent = "version"
 	whereNoAnswer     = "no answer in 3 s"
+	// whereReadBound bounds a checkout's read outside a where call, as long
+	// as where waits (whereNoAnswer).
+	whereReadBound = 3 * time.Second
 )
 
 type whereEvent struct {
@@ -270,11 +273,38 @@ func (g *whereGatherer) startDev(ctx context.Context, host, repo string) {
 		return
 	}
 	g.startStatus(ctx, host, false)
-	root := supervisorRoot(g.deps.StateDir, host)
-	if root == "" {
-		root = ops.DevRepoRoot
+	g.startHead(ctx, host, devCheckoutRoot(g.deps.StateDir, host), repo)
+}
+
+// devCheckoutRoot is the checkout a plain pair's dev service host works in.
+func devCheckoutRoot(stateDir, host string) string {
+	if root := supervisorRoot(stateDir, host); root != "" {
+		return root
 	}
-	g.startHead(ctx, host, root, repo)
+	return ops.DevRepoRoot
+}
+
+// classicCopyRead reads a plain pair's dev-service checkout as where reads
+// it, for words that would switch its branch (repoRoute.mayMove): its branch
+// and work, then main's unpushed commits or its branch's remote ref and HQ's
+// open change on it, planned as where plans them (planWhereEdits). Each read
+// still unanswered at whereReadBound stays unread.
+func classicCopyRead(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, stateDir string) copyReader {
+	return func(host, repo string) workflow.WhereCopy {
+		ctx, cancel := context.WithTimeout(ctx, whereReadBound)
+		defer cancel()
+		g := &whereGatherer{
+			deps: ops.LeaseDeps{SSH: ssh, StateDir: stateDir}, rt: rt, havePreview: true,
+			events: make(chan whereEvent, 4), branches: map[string]whereEvent{},
+			refs: map[string]whereEvent{}, hqReads: map[string]whereEvent{},
+		}
+		g.startHead(ctx, host, devCheckoutRoot(stateDir, host), repo)
+		_ = g.receive(ctx) // A read unanswered at the bound stays unread.
+		got, read := g.branches[host]
+		facts := workflow.WhereFacts{Copies: []workflow.WhereCopy{classicWhereCopy(host, "", repo != "", got, read)}}
+		planWhereEdits(&facts, map[string]string{host: repo}, g.branches, g.refs, g.hqReads, time.Now())
+		return facts.Copies[0]
+	}
 }
 
 // startHead reads the actual root checkout, including its branch and commit.
@@ -445,20 +475,8 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 		if service.HQRepo != "" && (classicDevs[service.HQRepo] == "" || service.Hostname < classicDevs[service.HQRepo]) {
 			classicDevs[service.HQRepo] = service.Hostname
 		}
-		workingCopy := workflow.WhereCopy{Name: service.Hostname, Part: service.WireStages[0].Part, Branch: "not read", HasHQ: service.HQRepo != ""}
-		if got, ok := branches[service.Hostname]; ok {
-			workingCopy.Path = editCheckoutPath(service.Hostname, got.root)
-			if got.err != nil {
-				workingCopy.WorkUnread = "checkout did not answer"
-				if errors.Is(got.err, context.DeadlineExceeded) || errors.Is(got.err, context.Canceled) {
-					workingCopy.WorkUnread = whereNoAnswer
-				}
-			} else {
-				workingCopy.Branch, workingCopy.Dirty = got.value, got.dirty
-			}
-		} else {
-			workingCopy.WorkUnread = whereNoAnswer
-		}
+		got, read := branches[service.Hostname]
+		workingCopy := classicWhereCopy(service.Hostname, service.WireStages[0].Part, service.HQRepo != "", got, read)
 		if workingCopy.WorkUnread != "" && service.HQRepo != "" && (unreadClassic[service.HQRepo] == "" || service.Hostname < unreadClassic[service.HQRepo]) {
 			unreadClassic[service.HQRepo] = service.Hostname
 		}
@@ -521,6 +539,26 @@ func whereFacts(env workflow.StateEnvelope, versions, branches map[string]whereE
 		}
 	}
 	return facts
+}
+
+// classicWhereCopy is the dev half host of a plain pair, part, as the read of
+// its checkout (got, read: whether one answered) found it.
+func classicWhereCopy(host, part string, hasHQ bool, got whereEvent, read bool) workflow.WhereCopy {
+	workingCopy := workflow.WhereCopy{Name: host, Part: part, Branch: "not read", HasHQ: hasHQ}
+	switch {
+	case !read:
+		workingCopy.WorkUnread = whereNoAnswer
+	case got.err != nil:
+		workingCopy.Path = editCheckoutPath(host, got.root)
+		workingCopy.WorkUnread = "checkout did not answer"
+		if errors.Is(got.err, context.DeadlineExceeded) || errors.Is(got.err, context.Canceled) {
+			workingCopy.WorkUnread = whereNoAnswer
+		}
+	default:
+		workingCopy.Path = editCheckoutPath(host, got.root)
+		workingCopy.Branch, workingCopy.Dirty = got.value, got.dirty
+	}
+	return workingCopy
 }
 
 // editCheckoutPath translates a remote checkout root to its service mount.
