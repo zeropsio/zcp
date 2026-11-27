@@ -582,7 +582,7 @@ func handleEngineFreeAction(ctx context.Context, projectID string, client platfo
 	// less — runs without an active session because external deployers may
 	// have happened before any develop session existed.
 	if input.Action == "record-deploy" {
-		return handleRecordDeploy(ctx, client, httpClient, projectID, stateDir, input)
+		return handleRecordDeploy(ctx, client, httpClient, projectID, stateDir, input, rt)
 	}
 	// mac-pair is stateless: every call re-reads the Mate's `mac status`
 	// (workflow_mac_pair.go), so it needs no engine.
@@ -716,7 +716,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "route":
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "close-mode":
-		return handleCloseMode(input, stateDir)
+		return handleCloseMode(input, stateDir, rt)
 	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, httpClient, sshDeployer, projectID, input, stateDir, rt)
 	case "release":

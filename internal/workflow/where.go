@@ -135,16 +135,20 @@ func (step EditStep) Words() string {
 		return "unknown: " + step.Reason
 	}
 	if step.Action == EditHandedOver {
-		head := step.Head
-		if len(head) > 7 {
-			head = head[:7]
-		}
-		return fmt.Sprintf("handed over at %s (change #%d)", head, step.Number)
+		return fmt.Sprintf("handed over at %s (change #%d)", ShortEditHead(step.Head), step.Number)
 	}
 	if step.Copy != "" {
 		return step.Action + " in " + step.Copy
 	}
 	return step.Action
+}
+
+// ShortEditHead is the commit identifier shown in edit handover replies.
+func ShortEditHead(head string) string {
+	if len(head) > 7 {
+		head = head[:7]
+	}
+	return head
 }
 
 // WhereStage is a stage's active version, or the reason it was not read.

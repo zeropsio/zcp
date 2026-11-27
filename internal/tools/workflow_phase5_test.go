@@ -29,7 +29,7 @@ func TestHandleCloseMode_Update(t *testing.T) {
 
 	result, _, err := handleCloseMode(WorkflowInput{
 		CloseModes: map[string]string{"appdev": string(topology.CloseModeAuto)},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleCloseMode: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestHandleCloseMode_GitPushChainsSetup(t *testing.T) {
 
 	result, _, err := handleCloseMode(WorkflowInput{
 		CloseModes: map[string]string{"appdev": string(topology.CloseModeGitPush)},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil || result.IsError {
 		t.Fatalf("expected success, got: %s", getTextContent(t, result))
 	}
@@ -106,7 +106,7 @@ func TestHandleCloseMode_GitPushFold_MessageReadsAsConfirmationNotRejection(t *t
 
 	result, _, err := handleCloseMode(WorkflowInput{
 		CloseModes: map[string]string{"appdev": string(topology.CloseModeGitPush)},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil || result.IsError {
 		t.Fatalf("expected success, got: %s", getTextContent(t, result))
 	}
@@ -148,7 +148,7 @@ func TestHandleCloseMode_GitPushRejectsNonPushSourceMode(t *testing.T) {
 
 	result, _, err := handleCloseMode(WorkflowInput{
 		CloseModes: map[string]string{"appdev": string(topology.CloseModeGitPush)},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleCloseMode: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestHandleCloseMode_InvalidValue(t *testing.T) {
 	stateDir := t.TempDir()
 	result, _, _ := handleCloseMode(WorkflowInput{
 		CloseModes: map[string]string{"appdev": "auto-close"},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if !result.IsError {
 		t.Fatal("expected error for invalid closeMode value")
 	}
@@ -904,7 +904,7 @@ func TestHandleCloseMode_FiresAutoCloseWhenScopeReady(t *testing.T) {
 			"appdev":   string(topology.CloseModeAuto),
 			"appstage": string(topology.CloseModeAuto),
 		},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleCloseMode: %v", err)
 	}
@@ -983,7 +983,7 @@ func TestHandleCloseMode_StaysOpenWhenManualBlocks(t *testing.T) {
 			"appdev":   string(topology.CloseModeAuto),
 			"appstage": string(topology.CloseModeManual),
 		},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil || result.IsError {
 		t.Fatalf("handleCloseMode: %v / %s", err, getTextContent(t, result))
 	}
@@ -1124,7 +1124,7 @@ func TestHandleCloseMode_DivergentDualHalves_Rejected(t *testing.T) {
 			"appdev":   string(topology.CloseModeAuto),
 			"appstage": string(topology.CloseModeManual),
 		},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleCloseMode: %v", err)
 	}
@@ -1170,7 +1170,7 @@ func TestHandleCloseMode_SameValueDualHalves_Accepted(t *testing.T) {
 			"appdev":   string(topology.CloseModeManual),
 			"appstage": string(topology.CloseModeManual),
 		},
-	}, stateDir)
+	}, stateDir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("handleCloseMode: %v", err)
 	}

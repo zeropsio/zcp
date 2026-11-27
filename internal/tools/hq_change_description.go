@@ -183,22 +183,15 @@ func readHandoverStep(ctx context.Context, ssh ops.SSHDeployer, hqc hq.Client, s
 	return workflow.PlanEdit(copies, change, err == nil), current
 }
 
-func handoverHead(head string) string {
-	if len(head) > 7 {
-		return head[:7]
-	}
-	return head
-}
-
 func describedAtHandedOverHead(number int, head string, step workflow.EditStep) bool {
 	return step.Action == workflow.EditHandedOver && step.Head == head && step.Number == number
 }
 
 // describedHandover never says a build is running without HQ's observation.
 func describedHandover(number int, head string, step workflow.EditStep, current *hq.Change, now time.Time) string {
-	prefix := fmt.Sprintf("Change #%d described at %s", number, handoverHead(head))
+	prefix := fmt.Sprintf("Change #%d described at %s", number, workflow.ShortEditHead(head))
 	if describedAtHandedOverHead(number, head, step) {
-		message := fmt.Sprintf("Change #%d is handed over at %s", number, handoverHead(head))
+		message := fmt.Sprintf("Change #%d is handed over at %s", number, workflow.ShortEditHead(head))
 		build := ""
 		if current != nil && current.ReviewBuild != nil && current.ReviewBuild.Head == head {
 			for _, label := range describedLabels(*current, now) {

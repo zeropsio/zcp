@@ -72,7 +72,7 @@ func TestErrAdoptRequiredCarriesAdoptRecovery(t *testing.T) {
 				// workflow_close_mode.go:90.
 				result, _, err := handleCloseMode(WorkflowInput{
 					CloseModes: map[string]string{"appdev": string(topology.CloseModeAuto)},
-				}, dir)
+				}, dir, runtime.Info{})
 				if err != nil {
 					t.Fatalf("handleCloseMode: %v", err)
 				}

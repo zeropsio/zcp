@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -129,7 +130,7 @@ type closeModeListResponse struct {
 //     GitPushConfigured, the response carries a guidance pointer at
 //     action=git-push-setup (per §3.4 Scenario B — close-mode write
 //     succeeds, capability setup is a separate explicit action).
-func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult, any, error) {
+func handleCloseMode(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	if len(input.CloseModes) == 0 {
 		return handleCloseModeList(stateDir)
 	}
@@ -266,7 +267,7 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 	// close state and the response carries status="auto-closed" instead of
 	// leaving the agent to learn via a follow-up action="status" call. Spec
 	// §1.3 invariant: every state transition observable in the next MCP response.
-	return jsonResult(attachWorkSessionState(result, stateDir)), nil, nil
+	return jsonResult(attachWorkSessionStateForRuntime(result, stateDir, rt)), nil, nil
 }
 
 // handleCloseModeList returns the per-pair close-mode state + the other

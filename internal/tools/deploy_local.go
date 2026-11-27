@@ -350,6 +350,18 @@ const sessionStatusNone = "none"
 //
 // The annotation is derived only from the local work session.
 func sessionAnnotations(stateDir string) *WorkSessionState {
+	return sessionAnnotationsForRuntime(stateDir, runtime.Info{})
+}
+
+func sessionAnnotationsForRuntime(stateDir string, rt runtime.Info) *WorkSessionState {
+	state := readSessionAnnotations(stateDir, rt)
+	if rt.MateEnabled && state.Status == sessionStatusNone {
+		state.Note += " " + mateStageRule
+	}
+	return state
+}
+
+func readSessionAnnotations(stateDir string, rt runtime.Info) *WorkSessionState {
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
 		return &WorkSessionState{
@@ -358,11 +370,15 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 		}
 	}
 	if closed, closedAt, reason := workflow.DeriveCloseState(stateDir, ws); closed {
+		note := closedSessionNote(closedAt, reason)
+		if sessionHandsOverAChange(stateDir, ws, rt) {
+			note += " " + hqHandoffNote(mergeLimitedHeard(hqIdentity(rt)))
+		}
 		return &WorkSessionState{
 			Status:      "auto-closed",
 			ClosedAt:    closedAt,
 			CloseReason: reason,
-			Note:        closedSessionNote(closedAt, reason),
+			Note:        note,
 		}
 	}
 	progress := workflow.AutoCloseProgressOf(stateDir, ws)
@@ -375,6 +391,42 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 		Note:     note,
 		Progress: progress,
 	}
+}
+
+// sessionHandsOverAChange reports whether the session deployed a pair's stage
+// and the change ledger still keeps a change in that pair's repository.
+func sessionHandsOverAChange(stateDir string, ws *workflow.WorkSession, rt runtime.Info) bool {
+	if rt.MateEnabled {
+		return false
+	}
+	var changes []workflow.HQChange
+	read := false
+	for _, host := range ws.Services {
+		if !workflow.HasSuccessfulDeployFor(ws, host) {
+			continue
+		}
+		meta, err := workflow.FindServiceMeta(stateDir, host)
+		if err != nil || meta == nil || !isStageOf(meta, host) || !hqPairWired(meta) {
+			continue
+		}
+		if !read {
+			changes, read = hqChanges(stateDir), true
+		}
+		if len(changesIn(changes, meta.HQ.AppID, meta.HQ.Repo)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// hqHandoffNote points the person to Review, or to the merge request when
+// the application limits who may merge.
+func hqHandoffNote(limited bool) string {
+	change := "the change to review, by its link, and that they can press Review to look it over and merge it."
+	if limited {
+		change = "the change, by its link." + mergeLimitedNote(true)
+	}
+	return "In your closing message tell the person: " + change + " Production setup belongs to the project's card; Mate shows the available release actions. Once Mate has told you production runs a release, that address is the app: give it for anything real, and yours only as their preview."
 }
 
 const autoCompleteSessionNote = "All declared services deployed + verified — scope is green. Keep deploying into this session for more changes (nothing is lost). Call zerops_workflow action=\"close\" workflow=\"develop\" when this task is done, or action=\"start\" to begin a different task."
@@ -390,14 +442,6 @@ const mateStageRule = `In a Mate, build the stage in your own turn only for an a
 
 const noActiveSessionNote = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."
 
-func sessionAnnotationsForRuntime(stateDir string, rt runtime.Info) *WorkSessionState {
-	state := sessionAnnotations(stateDir)
-	if rt.MateEnabled && state.Status == sessionStatusNone {
-		state.Note += " " + mateStageRule
-	}
-	return state
-}
-
 // attachWorkSessionState writes the canonical lifecycle annotation into
 // the response body. Used by handlers whose response shape is a
 // map[string]any (close-mode, git-push-setup, build-integration) to
@@ -407,7 +451,11 @@ func sessionAnnotationsForRuntime(stateDir string, rt runtime.Info) *WorkSession
 // across mutation handlers means the agent reads one lifecycle signal,
 // not three different ones.
 func attachWorkSessionState(body map[string]any, stateDir string) map[string]any {
-	if state := sessionAnnotations(stateDir); state != nil {
+	return attachWorkSessionStateForRuntime(body, stateDir, runtime.Info{})
+}
+
+func attachWorkSessionStateForRuntime(body map[string]any, stateDir string, rt runtime.Info) map[string]any {
+	if state := sessionAnnotationsForRuntime(stateDir, rt); state != nil {
 		body["workSessionState"] = state
 	}
 	return body

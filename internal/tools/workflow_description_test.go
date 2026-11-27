@@ -3,11 +3,15 @@
 package tools
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // WD-1 — zerops_workflow's description offers git-push-setup and
@@ -50,6 +54,71 @@ func TestWorkflowDescription_WD1_CICDOfferedExactlyWhereAccepted(t *testing.T) {
 				if strings.Contains(desc, s) {
 					t.Errorf("description holds %q", s)
 				}
+			}
+		})
+	}
+}
+
+// witness: internal/tools/deploy_local.go | if rt.MateEnabled { → if !rt.MateEnabled {
+func TestSessionAnnotation_WDHandoff_OnlyStandaloneStageChange(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		mate   bool
+		stage  bool
+		wired  bool
+		change string
+		closed bool
+		want   bool
+	}{
+		{name: "standalone stage and change", stage: true, wired: true, change: "appdev", closed: true, want: true},
+		{name: "Mate stage and change", mate: true, stage: true, wired: true, change: "appdev", closed: true},
+		{name: "stage not deployed", wired: true, change: "appdev", closed: true},
+		{name: "no open change", stage: true, wired: true, closed: true},
+		{name: "another repository's change", stage: true, wired: true, change: "other", closed: true},
+		{name: "stage has no HQ repository", stage: true, change: "appdev", closed: true},
+		{name: "session still open", stage: true, wired: true, change: "appdev"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			meta := &workflow.ServiceMeta{Hostname: "appdev", Stages: []topology.StageRef{{Hostname: "appstage"}}}
+			if tc.wired {
+				meta.HQ = &workflow.HQRepoRef{AppID: "app", Repo: "appdev"}
+			}
+			if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+				t.Fatal(err)
+			}
+			if tc.change != "" {
+				ledger := filepath.Join(dir, "hq", "changes", "app", tc.change)
+				if err := os.MkdirAll(ledger, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				body := `{"appId":"app","repo":"` + tc.change + `","number":7,"branch":"feature","recordedAt":"2026-01-01T00:00:00Z"}`
+				if err := os.WriteFile(filepath.Join(ledger, "7.json"), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ws := &workflow.WorkSession{PID: os.Getpid(), Services: []string{"appdev", "appstage"},
+				Deploys: map[string][]workflow.DeployAttempt{"appdev": {{SucceededAt: "2026-01-01T00:00:00Z"}}}}
+			if tc.stage {
+				ws.Deploys["appstage"] = []workflow.DeployAttempt{{SucceededAt: "2026-01-01T00:00:00Z"}}
+			}
+			if tc.closed {
+				ws.ClosedAt, ws.CloseReason = "2026-01-01T00:00:00Z", workflow.CloseReasonAutoComplete
+			}
+			if err := workflow.SaveWorkSession(dir, ws); err != nil {
+				t.Fatal(err)
+			}
+			rt := runtime.Info{MateEnabled: tc.mate, HQ: &runtime.HQLink{StatePath: filepath.Join(dir, "state.json")}}
+			if tc.closed {
+				if got := sessionHandsOverAChange(dir, ws, rt); got != tc.want {
+					t.Errorf("stage change handoff = %v, want %v", got, tc.want)
+				}
+			}
+			annotation := sessionAnnotationsForRuntime(dir, rt)
+			if got := strings.Contains(annotation.Note, "Review"); got != tc.want {
+				t.Errorf("closing annotation points to Review = %v, want %v", got, tc.want)
 			}
 		})
 	}
