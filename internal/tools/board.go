@@ -26,9 +26,9 @@ type BoardProposeInput struct {
 
 // BoardPlanTaskInput is one task of a proposed plan.
 type BoardPlanTaskInput struct {
-	Key   string   `json:"key" jsonschema:"The task's key within this plan: 1-40 characters of a-z, 0-9 and -."`
-	Title string   `json:"title" jsonschema:"The task in one line, at most 120 characters."`
-	Brief string   `json:"brief" jsonschema:"The whole task, at most 8000 characters, self-contained for whoever takes it: they have seen neither this conversation nor the plan's other briefs. No secret, value or excerpt of this conversation."`
+	Key   string   `json:"key"             jsonschema:"The task's key within this plan: 1-40 characters of a-z, 0-9 and -."`
+	Title string   `json:"title"           jsonschema:"The task in one line, at most 120 characters."`
+	Brief string   `json:"brief"           jsonschema:"The whole task, at most 8000 characters, self-contained for whoever takes it: they have seen neither this conversation nor the plan's other briefs. No secret, value or excerpt of this conversation."`
 	Needs []string `json:"needs,omitempty" jsonschema:"The keys of this plan's tasks whose changes this one builds on: it waits until they are done and merged."`
 }
 
@@ -205,7 +205,10 @@ func boardListOf(tasks []hq.Task, own string) boardListAnswer {
 // taskNeeds is what a task needs, each named by its title: HQ's own, else
 // the title of the open task of that id; nil for a task that needs nothing.
 func taskNeeds(t hq.Task, titles map[string]string) []boardNeed {
-	var needs []boardNeed
+	if len(t.Needs) == 0 {
+		return nil
+	}
+	needs := make([]boardNeed, 0, len(t.Needs))
 	for _, need := range t.Needs {
 		title := need.Title
 		if title == "" {
