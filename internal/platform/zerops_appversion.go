@@ -170,8 +170,7 @@ func (z *ZeropsClient) GetAppVersionZeropsYaml(ctx context.Context, appVersionID
 // platform emits `list` in — callers key off index 0 as "the newest".
 func (z *ZeropsClient) ListServiceAppVersions(ctx context.Context, serviceID string) ([]AppVersionEvent, error) {
 	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
-	var events []AppVersionEvent
-	for offset := 0; ; {
+	versions, err := readAppVersionPages(func(offset int) ([]output.GetAppVersion, error) {
 		resp, err := z.handler.GetServiceStackAppVersion(ctx, pathParam, query.ListServiceStackAppVersions{
 			Limit: types.NewIntNull(directListLimit), Offset: types.NewIntNull(offset),
 		})
@@ -182,22 +181,34 @@ func (z *ZeropsClient) ListServiceAppVersions(ctx context.Context, serviceID str
 		if err != nil {
 			return nil, mapSDKError(err, "appVersion")
 		}
-		if out.TotalCount.Native() < offset+len(out.List) {
-			return nil, fmt.Errorf("list service app versions: inconsistent total")
-		}
-		for _, av := range out.List {
-			events = append(events, mapDirectAppVersion(av))
-		}
-		offset += len(out.List)
-		if offset >= out.TotalCount.Native() {
-			break
-		}
-		if len(out.List) == 0 {
-			return nil, fmt.Errorf("list service app versions: incomplete page at %d", offset)
-		}
+		return out.List, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list service app versions: %w", err)
+	}
+	var events []AppVersionEvent
+	for _, av := range versions {
+		events = append(events, mapDirectAppVersion(av))
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].Sequence > events[j].Sequence })
 	return events, nil
+}
+
+// readAppVersionPages takes page boundaries from the returned rows. Platform
+// totals can lag or be absent, so neither version reader uses them to stop.
+func readAppVersionPages[T any](read func(offset int) ([]T, error)) ([]T, error) {
+	var all []T
+	for offset := 0; ; {
+		page, err := read(offset)
+		if err != nil {
+			return nil, fmt.Errorf("read app version page: %w", err)
+		}
+		all = append(all, page...)
+		if len(page) < directListLimit {
+			return all, nil
+		}
+		offset += len(page)
+	}
 }
 
 // ListServiceAppVersionNames reads the search-only names, without using its
@@ -216,8 +227,11 @@ func (z *ZeropsClient) ListServiceAppVersionNames(ctx context.Context, projectID
 		Sort:  body.EsFilterSort{{Name: types.NewString("created"), Ascending: types.NewBoolNull(false)}},
 		Limit: types.NewIntNull(directListLimit),
 	}
-	names := make(map[string]string)
-	for offset := 0; ; {
+	type nameHit struct {
+		ID   string          `json:"id"`
+		Name json.RawMessage `json:"name"`
+	}
+	items, err := readAppVersionPages(func(offset int) ([]nameHit, error) {
 		filter.Offset = types.NewIntNull(offset)
 		resp := sdkBase.Post(ctx, z.env, "/api/rest/public/app-version/search", filter)
 		if resp.Err != nil {
@@ -228,33 +242,28 @@ func (z *ZeropsClient) ListServiceAppVersionNames(ctx context.Context, projectID
 			return nil, appVersionAnswerError(status, raw)
 		}
 		var result struct {
-			Total int `json:"totalHits"`
-			Items []struct {
-				ID   string          `json:"id"`
-				Name json.RawMessage `json:"name"`
-			} `json:"items"`
+			Items []nameHit `json:"items"`
 		}
 		if err := json.Unmarshal(raw, &result); err != nil {
 			return nil, fmt.Errorf("decode app version names: %w", err)
 		}
-		for _, item := range result.Items {
-			if item.ID == "" || len(item.Name) == 0 {
-				return nil, fmt.Errorf("decode app version names: id or name missing")
-			}
-			var name string
-			if err := json.Unmarshal(item.Name, &name); err != nil {
-				return nil, fmt.Errorf("decode app version name: %w", err)
-			}
-			names[item.ID] = name
-		}
-		offset += len(result.Items)
-		if offset >= result.Total {
-			return names, nil
-		}
-		if len(result.Items) == 0 {
-			return nil, fmt.Errorf("list app version names: incomplete page at %d", offset)
-		}
+		return result.Items, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list app version names: %w", err)
 	}
+	names := make(map[string]string)
+	for _, item := range items {
+		if item.ID == "" || len(item.Name) == 0 {
+			return nil, fmt.Errorf("decode app version names: id or name missing")
+		}
+		var name string
+		if err := json.Unmarshal(item.Name, &name); err != nil {
+			return nil, fmt.Errorf("decode app version name: %w", err)
+		}
+		names[item.ID] = name
+	}
+	return names, nil
 }
 
 // mapDirectAppVersion projects the SDK's GetAppVersion (as returned by the
