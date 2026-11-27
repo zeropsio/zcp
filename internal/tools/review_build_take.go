@@ -118,14 +118,16 @@ func reviewCurrent(state *hq.MateState, repo string, number int) (*hq.MateChange
 // reviewCandidateName is the key a Review build names its candidate's version
 // by (ops.AppVersionName): "review" and a hash of main and the change head.
 // The marker keeps it from ever being a commit id, so a stage running the
-// candidate shows no commit (topology.AppVersionCommit).
+// candidate shows no commit (topology.AppVersionCommit); the hash's 32 digits
+// keep the version's name no longer than a SHA-1 commit deploy's, which Zerops
+// takes for every stage and pool build.
 func reviewCandidateName(main *string, head string) string {
 	base := ""
 	if main != nil {
 		base = *main
 	}
 	sum := sha256.Sum256([]byte(base + "\x00" + head))
-	return fmt.Sprintf("review %x", sum[:20])
+	return fmt.Sprintf("review %x", sum[:16])
 }
 
 // An unanswered result may have claimed the merge. Repeat only when the HQ
