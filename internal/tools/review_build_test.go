@@ -480,11 +480,9 @@ npm notice
 // witness: internal/tools/review_build_run.go | part.Outcome, part.Reason = reviewUnavailable, reviewReason(step, err.Error()) → part.Outcome, part.Reason = reviewOutcomeFailed, reviewReason(step, err.Error())
 func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.T) {
 	t.Parallel()
-	for _, step := range []string{"lock stage", "wait for build"} {
-		part := reviewUnavailablePart(hq.ReviewBuildPart{Setup: "api", Stage: "apistage"}, step, errors.New("first line\nlast error"))
-		if part.Outcome != "unavailable" || part.Phase != "" || part.Reason != step+": last error" {
-			t.Fatalf("%s: got %+v", step, part)
-		}
+	part := reviewUnavailablePart(hq.ReviewBuildPart{Setup: "api", Stage: "apistage"}, "wait for build", errors.New("first line\nlast error"))
+	if part.Outcome != "unavailable" || part.Phase != "" || part.Reason != "wait for build: last error" {
+		t.Fatalf("wait for build: got %+v", part)
 	}
 	if n := len([]rune(reviewReason("build", strings.Repeat("x", 400)))); n != 300 {
 		t.Fatalf("reason length = %d, want 300", n)
@@ -513,9 +511,29 @@ func TestReviewUnavailable_RBUnavailable_WaitOrLock_ReportsNoVerdict(t *testing.
 				d := devGitDeps{client: client, stateDir: dir, rt: runtime.Info{ProjectID: "project"}}
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 				defer cancel()
-				part := reviewBuildStage(ctx, d, nil, topology.StageRef{Hostname: "apistage", SetupName: "api"})
-				if part.Outcome != "unavailable" || part.Phase != "" || part.Stage != "apistage-example.test" || !strings.HasPrefix(part.Reason, tc.step+": ") || tc.busyLock && !strings.Contains(part.Reason, "wait for stage lock") {
-					t.Fatalf("%s: got %+v", tc.step, part)
+				stage := topology.StageRef{Hostname: "apistage", SetupName: "api"}
+				if tc.busyLock {
+					waiting := make(chan string, 1)
+					unavailable, updated, err := executeReviewBuild(ctx, d, hq.Client{}, "app", hq.MateChange{Repo: "code"}, nil, []topology.StageRef{stage}, func() (hq.MateStateDocument, error) {
+						t.Fatal("read HQ state before obtaining the stage lock")
+						return hq.MateStateDocument{}, nil
+					}, func(line string) { waiting <- line })
+					if !unavailable || updated != "" || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "lock stages: lock apistage:") {
+						t.Fatalf("lock stage: unavailable=%t updated=%q err=%v", unavailable, updated, err)
+					}
+					select {
+					case line := <-waiting:
+						if !strings.Contains(line, "apistage-example.test") {
+							t.Fatalf("waiting message names the wrong stage: %q", line)
+						}
+					default:
+						t.Fatal("no waiting message")
+					}
+					return
+				}
+				part := reviewBuildStage(ctx, d, nil, stage)
+				if part.Outcome != "unavailable" || part.Phase != "" || part.Stage != "apistage-example.test" || !strings.HasPrefix(part.Reason, "wait for build: ") {
+					t.Fatalf("wait for build: got %+v", part)
 				}
 			})
 		})
