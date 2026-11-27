@@ -323,7 +323,7 @@ not.
 
 ### 1.7 The version a stage runs
 
-On a Mate's envelope (`"mate": true`) the services[] entry of each pair's stage carries `"version": {"id": …, "commit": …, "at": …}`, the stage's ACTIVE Zerops app version only, never a building, waiting or failed one: `id` the app version id, `at` its created time as Zerops gives it (RFC 3339), `commit` the whole commit a zcp commit deploy named it by (§2.8b B-1), absent when its name holds none; the key is omitted when the stage has no ACTIVE version holding code, when Zerops does not answer or refuses the read, and on every envelope that is not a Mate's; it is additive and needs no version gate.
+On a Mate's envelope (`"mate": true`) the services[] entry of each pair's stage carries `"version": {"id": …, "commit": …, "at": …}`, the stage's ACTIVE Zerops app version only, never a building, waiting or failed one: `id` the app version id, `at` its created time as Zerops gives it (RFC 3339), `commit` only ever a real git commit, the whole commit a zcp commit deploy built it from (§2.8b B-1): absent on a version a Review build built from its candidate (§2.8a.6) and on every version zcp did not commit-deploy; the key is omitted when the stage has no ACTIVE version holding code, when Zerops does not answer or refuses the read, and on every envelope that is not a Mate's; it is additive and needs no version gate.
 
 Each envelope reads the version afresh. A version the Zerops search has not indexed yet reads as
 unanswered, so its key appears on a later envelope.
