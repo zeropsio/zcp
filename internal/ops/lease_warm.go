@@ -617,6 +617,25 @@ func (w *LeaseWarm) topUpRead(ctx context.Context, d LeaseDeps, rp *resolvedPool
 	return note
 }
 
+// prepareWarmSupervisor uses the warm container by ID, just as the clone
+// does. The SSH update also takes the checkout's lock, because a reservation
+// can take the container between this read and the SSH call.
+func (w *LeaseWarm) prepareWarmSupervisor(ctx context.Context, d LeaseDeps, rp *resolvedPool, id string) {
+	c, err := d.containerByID(ctx, rp, id)
+	if err != nil || !isWarm(c) || platform.ValidateContainerHostname(c.Hostname) != nil {
+		return
+	}
+	out, err := w.runLaunch(ctx, d.SSH, c.Hostname, leaseSupervisorVersionRead, false)
+	if err == nil {
+		err = d.SupervisorRelease.swap(ctx, d.SSH, c.Hostname, out, true, func() ([]byte, error) {
+			return d.SupervisorRelease.load(ctx, false)
+		})
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] warm container %s: %s\n", c.Hostname, scrubSecrets(leaseSupervisorSwapNote(err), leaseSecrets(d, rp.svc.Name)))
+	}
+}
+
 // topUp creates the pool's shortfall — min(target − warm, maximum − total),
 // containers in every state counted — through the orchestrator's create, in
 // the background, and records what it did. read is the pool as read under the

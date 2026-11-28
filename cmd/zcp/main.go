@@ -199,7 +199,12 @@ func runInitCmd(args []string) int {
 		log.Printf("init: record guided preference: %v", err)
 		return 1
 	}
-	if err := zcpinit.Run(".", rt, initOptions()...); err != nil {
+	opts := initOptions()
+	if rt.InContainer && update.IsRelease(server.Version) {
+		release := ops.NewLeaseSupervisorRelease(server.Version)
+		opts = append(opts, zcpinit.WithLeaseSupervisor(func() error { return release.Hold(context.Background()) }))
+	}
+	if err := zcpinit.Run(".", rt, opts...); err != nil {
 		log.Printf("init: %v", err)
 		return 1
 	}

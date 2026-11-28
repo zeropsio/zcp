@@ -141,6 +141,10 @@ jobs:
           pattern: zcp-*
           merge-multiple: true
 
+      - name: Checksum the lease supervisor
+        working-directory: ./builds
+        run: sha256sum zcp-devsup-linux-amd64 > zcp-devsup-linux-amd64.sha256
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

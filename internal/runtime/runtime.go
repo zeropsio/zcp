@@ -15,6 +15,9 @@ type Info struct {
 	ServiceID   string // Zerops service ID (only in container)
 	ProjectID   string // Zerops project ID (only in container)
 
+	// ZCPVersion is the version of this zcp, set by the entry point.
+	ZCPVersion string
+
 	// StateDir is where zcp keeps the project's records in a container:
 	// ContainerStateDir, whatever directory the agent started zcp in, so
 	// every zcp of the container reads one set of records

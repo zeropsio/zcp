@@ -399,15 +399,20 @@ func (w *LeaseWarm) cloneLater(ctx context.Context, d LeaseDeps, rp *resolvedPoo
 	w.spawn(func() { w.cloneInto(context.WithoutCancel(ctx), d, rp, ids) })
 }
 
-// cloneInto starts, in each container of ids still free, the clone of the
-// pool's recorded repository, each within warmCloneBound, and records what it
-// did. It does nothing for a pool that records none. A repository on the
+// cloneInto prepares each container of ids still free. It delivers the
+// supervisor, then starts the clone of the pool's recorded repository, each
+// within warmCloneBound, and records the clone outcome. A repository on the
 // Mate's HQ it hands, container by container, to a zcp process of its own
 // (LeaseDeps.HoldWarmClone, which runs LeaseWarmCloneHeld), and records a
 // skip when none can answer its git (warmCloneHQSkip).
 func (w *LeaseWarm) cloneInto(ctx context.Context, d LeaseDeps, rp *resolvedPool, ids []string) {
 	if d.SSH == nil || len(ids) == 0 {
 		return
+	}
+	if d.SupervisorRelease.checker != nil {
+		for _, id := range ids {
+			w.prepareWarmSupervisor(ctx, d, rp, id)
+		}
 	}
 	pool := rp.svc.Name
 	repo := warmCloneRepo(d, pool)

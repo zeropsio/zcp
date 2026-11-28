@@ -57,11 +57,16 @@ type step struct {
 // Option configures Run and RunSSHFS.
 type Option func(*options)
 
-// options are what the command layer hands init: WithLeaseCheck,
-// WithEnvAdmission.
+// options are what the command layer hands init.
 type options struct {
-	leaseCheck   LeaseCheck
-	envAdmission EnvAdmission
+	leaseCheck     LeaseCheck
+	envAdmission   EnvAdmission
+	holdSupervisor func() error
+}
+
+// WithLeaseSupervisor holds the booting zcp release's verified companion.
+func WithLeaseSupervisor(hold func() error) Option {
+	return func(o *options) { o.holdSupervisor = hold }
 }
 
 func buildOptions(opts []Option) options {
@@ -95,6 +100,11 @@ func Run(baseDir string, rt runtime.Info, opts ...Option) error {
 		{"Trusted domains (code-server)", generateTrustedDomains, "code-server asks for confirmation on links to zerops.io"},
 	}
 	if rt.InContainer {
+		if o.holdSupervisor != nil {
+			steps = append(steps, step{"Lease supervisor", func(string, runtime.Info) error {
+				return o.holdSupervisor()
+			}, "a fresh lease will try to fetch its supervisor when it needs it"})
+		}
 		// Container: SSH config + per-agent adapter dispatch.
 		steps = append(steps, step{"SSH config", generateSSHConfig, "SSH into project services needs a hand-written config entry"})
 		// A redeploy replaces the container: the lease aliases and mounts

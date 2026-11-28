@@ -150,8 +150,8 @@ read and none. A lease entry carries `alias`, `pool`, `containerHostname`, `bran
 Each held copy carries `state` and `stateAt`, the time zcp emitted that state. State is of the
 copy's declared preview server (§2.8a.1): `parked`, `starting`, `running`, `stopped`, `failed` or
 `unknown`. A copy declaring no preview server is `stopped`. `unknown` means the link to its writer
-was lost. A supervisor without the `copy-state` capability (pool images pin older ones) is
-reported from its `status` answer: the status of the preview server it runs, `stopped` where it
+was lost. An older supervisor can remain on a held lease or a classic dev service. One without the
+`copy-state` capability is reported from its `status` answer: the status of the preview server it runs, `stopped` where it
 declares none; it holds no transition wait, so its copy keeps the state its last read gave until
 zcp reads it again (an acquire, a dev-server call, `zcp preview`, an unpark, boot). On zcp's own
 boot every
@@ -1584,7 +1584,15 @@ A `zerops_dev_server` start that moved the host onto the supervisor and redeploy
 
 **Binary and delivery.** `zcp-devsup` is built from the zcp repository (`cmd/zcp-devsup`) and
 published on every zcp release as the asset `zcp-devsup-linux-amd64`, same version as zcp. zcp
-writes the dev setup's two lines, pinned to the **newest published zcp
+holds the asset of its own release, verified against `zcp-devsup-linux-amd64.sha256`. It fetches
+it at container boot with `zcp init` and keeps it with its release files. A missing asset is
+fetched once when needed by an acquire or unpark. A dev build skips this delivery. Fresh leases
+and unparked containers run the acquiring zcp's release (DP-13 in docs/spec-workflows.md), with
+the image binary as the fallback when delivery fails. The pool's pin supplies `run.start` at its
+first boot and marks the image as a dev pool.
+An already-held lease keeps its supervisor until unpark or a fresh acquire of its branch.
+
+For a classic dev service, zcp writes the dev setup's two lines, pinned to the **newest published zcp
 release whose supervisor `formats` include the declaration's `version`** — never to the release of
 the zcp that writes them (a dev build has no asset). A release never drops a format, so this is the
 newest release zcp's update check sees (`internal/update`, `releases/latest`); when no published

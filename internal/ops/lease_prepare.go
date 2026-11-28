@@ -74,6 +74,7 @@ func afterLeaseCheckout(ctx context.Context, d LeaseDeps, alias string, v *Lease
 	}
 	supervisorBegun := d.now()
 	r, err := ensureLeaseSupervisor(ctx, d.SSH, alias)
+	v.SupervisorVersion = r.version
 	r.log = scrubSecrets(r.log, secrets)
 	supervised := err == nil && (r.outcome == leaseSupervisorRunning || r.outcome == leaseSupervisorStarted)
 	var wireNote, refused string
@@ -188,7 +189,7 @@ type leaseCheckoutRead struct {
 // above it, 1 when there is none.
 func leaseDeclarationCommand(workDir string) string {
 	f := shellQuote(devDeclarationFile(workDir))
-	return `if command -v zcp-devsup >/dev/null 2>&1; then zcp-devsup ctl version --json 2>/dev/null; c=$?; echo; echo "@@zcp-devsup version $c"; else echo '@@zcp-devsup version 127'; fi; ` +
+	return leaseSupervisorVersionRead + "; " +
 		`if [ -f ` + f + ` ]; then cat ` + f + `; echo; echo '@@zcp-devsup declaration 0'; else echo '@@zcp-devsup declaration 1'; fi`
 }
 

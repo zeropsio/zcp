@@ -267,6 +267,7 @@ func LeaseAcquireGroupChangeFrom(ctx context.Context, d LeaseDeps, pools []strin
 	if failed() {
 		return LeaseChange{}, groupRefusal(ctx, d, members)
 	}
+	deliverGroupSupervisors(ctx, d, fresh)
 	// Every member holds the branch: a concurrent acquire of these keys now
 	// finds them, while the prepare and the supervisor run.
 	unlock()
@@ -553,7 +554,7 @@ func leaseKeyLockPath(stateDir, repo, branch, pool string) string {
 // lockLeaseKeys holds the key of every pool (lockLeaseKey) — taken in the
 // pools' sorted order, so two group acquires naming the same pools never wait
 // on each other crosswise — and returns the release of them all. The locks
-// span the held-lease check, the reservation, the record and the checkout:
+// span the held-lease check, the reservation, the record, the checkout and the supervisor swap:
 // two acquires of one key cannot both reserve, and the one that waited finds
 // the other's outcome, while acquires of other keys run on.
 func lockLeaseKeys(ctx context.Context, stateDir, repo, branch string, pools []string) (func(), error) {
@@ -870,6 +871,22 @@ func runMembers[M any](members []M, fn func(M)) {
 		wg.Go(func() { fn(m) })
 	}
 	wg.Wait()
+}
+
+// deliverGroupSupervisors runs while the key locks still exclude another
+// acquire of these leases. A resumed checkout already held its lease.
+func deliverGroupSupervisors(ctx context.Context, d LeaseDeps, fresh []*groupMember) {
+	if d.SSH == nil || d.SupervisorRelease.checker == nil {
+		return
+	}
+	asset := sync.OnceValues(func() ([]byte, error) { return d.SupervisorRelease.load(ctx, true) })
+	runMembers(fresh, func(m *groupMember) {
+		if !m.checkedOut {
+			if err := swapLeaseSupervisor(ctx, d, m.rec.alias(), asset); err != nil {
+				m.view.Note = joinNotes(m.view.Note, scrubSecrets(leaseSupervisorSwapNote(err), leaseSecrets(d, m.pool)))
+			}
+		}
+	})
 }
 
 // reserveMember reserves the member's container (DP-3: a clean, started

@@ -294,13 +294,18 @@ func LeaseUnpark(ctx context.Context, d LeaseDeps, alias string) (LeaseView, err
 			v.Note = joinNotes(notes...)
 			return v, nil
 		}
+		if restarted && d.SupervisorRelease.checker != nil {
+			if err := swapLeaseSupervisor(ctx, d, alias, func() ([]byte, error) { return d.SupervisorRelease.load(ctx, true) }); err != nil {
+				notes = append(notes, scrubSecrets(leaseSupervisorSwapNote(err), leaseSecrets(d, rec.PoolHostname)))
+			}
+		}
 	}
 	if note := d.Host.mountLease(ctx, rec); note != "" {
 		v.State = LeaseStateUnmounted
 		notes = append(notes, note)
 	}
 	if d.SSH != nil {
-		notes = append(notes, superviseUnparked(ctx, d, alias))
+		notes = append(notes, superviseUnparked(ctx, d, alias, &v))
 	}
 	if restarted {
 		notes = append(notes, rerouteUnparked(ctx, d, rp, rec))
@@ -343,9 +348,10 @@ func waitStartedLease(ctx context.Context, d LeaseDeps, alias string) error {
 // parked. A declaration zcp cannot read sends no overlay, so the supervisor
 // keeps the one it kept in its state. It answers a note, "" when all went
 // well; nothing in it fails the unpark.
-func superviseUnparked(ctx context.Context, d LeaseDeps, alias string) string {
+func superviseUnparked(ctx context.Context, d LeaseDeps, alias string, v *LeaseView) string {
 	read, note := readLeaseCheckout(ctx, d.SSH, alias, "so zcp sent its supervisor no sibling overlay (it keeps the one it had)")
 	r, err := ensureLeaseSupervisor(ctx, d.SSH, alias)
+	v.SupervisorVersion = r.version
 	var wireNote, refused string
 	switch {
 	case note != "":

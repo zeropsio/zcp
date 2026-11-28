@@ -62,6 +62,8 @@ type LeaseDeps struct {
 	// SSH runs git inside a leased container by its alias; nil means no
 	// checkout and no release guard (zcp outside a container).
 	SSH SSHDeployer
+	// SupervisorRelease supplies this zcp's own supervisor to new leases.
+	SupervisorRelease LeaseSupervisorRelease
 	// Env reads one key of the container's current env; nil means the live
 	// env (LiveContainerEnv).
 	Env func(key string) (string, bool)
@@ -258,6 +260,9 @@ type LeaseView struct {
 	Reused     bool   `json:"reused,omitempty"`
 	AcquiredAt string `json:"acquiredAt,omitempty"`
 	Note       string `json:"note,omitempty"`
+	// SupervisorVersion is the version the running supervisor reported when
+	// this acquire or unpark made sure it was answering.
+	SupervisorVersion string `json:"supervisorVersion,omitempty"`
 	// Error is why a release of the lease's branch could not release this
 	// lease, which stays held and recorded (DP-23); "" on every other view.
 	Error string `json:"error,omitempty"`

@@ -226,11 +226,9 @@ func (w LeaseSiblingEnv) sentence(alias string) string {
 	return out + "."
 }
 
-// olderSupervisorRecovery is how a lease's pool gets a supervisor that takes
-// the overlay.
+// olderSupervisorRecovery is how a held lease gets zcp's current supervisor.
 func olderSupervisorRecovery(lease LeaseTargetInfo) string {
-	return fmt.Sprintf("Point the zcp-devsup line in run.prepareCommands of pool %s's zerops.yaml at a release whose `zcp-devsup ctl version` lists env (the one this zcp ships), deploy the pool, release this lease (zerops_lease action=release lease=%q), roll the pool out (zerops_lease action=rollout pool=%q), then acquire again.",
-		lease.Pool, lease.Alias, lease.Pool)
+	return fmt.Sprintf("When the lease can be released safely, release it (zerops_lease action=release lease=%q) and acquire the branch again with a zcp release whose zcp-devsup supports env.", lease.Alias)
 }
 
 // olderSupervisorText names a supervisor without the env capability and the

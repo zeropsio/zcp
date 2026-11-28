@@ -146,6 +146,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	rtInfo.ProjectName = authInfo.ProjectName
+	rtInfo.ZCPVersion = Version
 	refreshAgentContext(stateDir, rtInfo, logger)
 	rtInfo.OrgID = authInfo.ClientID
 

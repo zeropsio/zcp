@@ -50,6 +50,9 @@ func LeaseDepsFor(client platform.Client, projectID, stateDir string, swarm ops.
 // recognised on and, inside a Mate, zcp's git against it in a leased
 // container run relayed (DP-12, DP-16).
 func leaseDepsIn(deps ops.LeaseDeps, rt runtime.Info) ops.LeaseDeps {
+	if rt.InContainer {
+		deps.SupervisorRelease = ops.NewLeaseSupervisorRelease(rt.ZCPVersion)
+	}
 	// The HQ a repository is recognised on is the one the container rt
 	// presents itself to, read at each acquire, as the wiring reads it for a
 	// dev service.

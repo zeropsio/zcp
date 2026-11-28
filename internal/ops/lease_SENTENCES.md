@@ -1,4 +1,4 @@
-# Lease and pool decisions (`lease_ownership.go`, `lease_group.go`, `lease_park.go`, `pool_preview_ports.go`, `lease_warm_clone.go`, `lease_checkout.go`)
+# Lease and pool decisions (`lease_ownership.go`, `lease_group.go`, `lease_park.go`, `pool_preview_ports.go`, `lease_warm_clone.go`, `lease_checkout.go`, `lease_supervisor.go`)
 
 - LP-MATE-ACQUIRE — A lease record adds its alias and branch to the Mate status file without exposing its credential, while retaining the other held leases.
 - LP-MATE-RELEASE — Dropping a lease record replaces the Mate's lease set without the released lease and retains the other held leases.
@@ -18,3 +18,12 @@
 - LP-WARM-HELD — A held clone's process records what the clone did: done once it finished, skipped when it left the work dir alone (a checkout took it, or it held a repository), failed naming the clone's exit status, and failed — never tried again into a skip — when the session ended while the clone ran.
 - LP-WARM-LOST — A held clone that still reads running past its bound never reported back (the process holding its session ended first, as at a restart): status says it failed, never that it runs and an acquire waits for it.
 - LP-BRANCHREF — A checkout's branch is compared with its ref on origin, read through the git relay: no ref is unpublished, a ref at the checkout's head is current, one elsewhere counts what the checkout is ahead and behind or says its history is unknown, and a ref the relay does not answer, or answers for another branch, is not read. Breaks: an unpushed branch reads published and its copy is handed over or moved.
+- LP-SUP-ACQUIRE — A fresh acquire with an older, idle supervisor ends it, installs the acquiring zcp's release binary, and starts and reports that version.
+- LP-SUP-SAME — A fresh acquire whose supervisor is already on the acquiring zcp's version sends no binary and leaves the running supervisor in place.
+- LP-SUP-HELD — A branch acquires its held lease again, even to finish an interrupted checkout, without delivering a supervisor or stopping the one that runs.
+- LP-SUP-UNPARK — Unpark installs the acquiring zcp's supervisor before starting it on a parked lease and leaves an already running lease on its version.
+- LP-SUP-WARM — An acquire's warm top-up leaves its new free container with the acquiring zcp's release binary.
+- LP-SUP-FALLBACK — A missing release asset or a failed copy leaves a fresh lease held with its image supervisor and a note naming the failure.
+- LP-SUP-ACTIVE — An answering supervisor with running declared servers is left in place, and the lease reports its version and why it was kept.
+- LP-SUP-DEV — A development build leaves a new lease on its image supervisor without a version probe for delivery or a binary copy.
+- LP-SUP-CHECKSUM — zcp holds only a companion binary verified by its exact release checksum, and an acquire can use those held bytes without fetching them again.

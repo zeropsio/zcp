@@ -488,7 +488,7 @@ func TestDevServer_SupervisorWithoutEnvCapability_NonEmptyOverlay_RefusedWithRec
 					t.Errorf("message %q lacks %q", pe.Message, want)
 				}
 			}
-			for _, want := range []string{"zcp-devsup", "run.prepareCommands", `zerops_lease action=release lease="webpool-3"`, `zerops_lease action=rollout pool="webpool"`, "acquire"} {
+			for _, want := range []string{"zcp-devsup", `zerops_lease action=release lease="webpool-3"`, "acquire"} {
 				if !strings.Contains(pe.Suggestion, want) {
 					t.Errorf("suggestion %q lacks %q", pe.Suggestion, want)
 				}

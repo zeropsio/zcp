@@ -8,13 +8,360 @@ package ops
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops/devservertest"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+const (
+	imageSupervisorVersion   = "v9.300.0"
+	releaseSupervisorVersion = "v9.301.0"
+	releaseSupervisorBytes   = "verified release executable"
+)
+
+type releaseLeaseContainer struct {
+	installed string
+	running   string
+	pid       int
+	busy      bool
+	copyErr   error
+	received  string
+	probed    bool
+	resumed   bool
+}
+
+// releaseLeaseSSH answers the executable's version separately from the
+// running supervisor's. Only the stream sent over SSH can replace the former.
+type releaseLeaseSSH struct {
+	leaseSSH
+	mu    sync.Mutex
+	hosts map[string]*releaseLeaseContainer
+}
+
+func newReleaseLeaseSSH(hosts map[string]*releaseLeaseContainer) *releaseLeaseSSH {
+	ssh := &releaseLeaseSSH{hosts: hosts}
+	ssh.setHandler(ssh.answer)
+	return ssh
+}
+
+func (c *releaseLeaseContainer) status(marker string) []byte {
+	if c.running == "" {
+		return []byte("@@zcp-devsup " + marker + " 2\n")
+	}
+	servers := "{}"
+	if c.busy {
+		servers = `{"web":{"status":"running","desired":"running","pid":42,"pgid":42,"source":"declared"}}`
+	}
+	return fmt.Appendf(nil, "{\"supervisor\":{\"version\":%q,\"pid\":%d},\"servers\":%s}\n@@zcp-devsup %s 0\n", c.running, c.pid, servers, marker)
+}
+
+func (s *releaseLeaseSSH) answer(host, command string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.hosts[host]
+	if c == nil {
+		return nil, fmt.Errorf("unknown container %s", host)
+	}
+	switch {
+	case command == leaseSupervisorVersionRead:
+		c.probed = true
+		return fmt.Appendf(nil, "{\"version\":%q}\n@@zcp-devsup version 0\n", c.installed), nil
+	case command == leaseSupervisorStatusRead:
+		return c.status("status"), nil
+	case strings.Contains(command, "@@zcp-devsup declaration"):
+		return []byte("@@zcp-devsup declaration 1\n"), nil
+	case strings.Contains(command, "zcp-devsup run"):
+		if c.running != "" {
+			return c.status("check"), nil
+		}
+		c.running, c.pid = c.installed, 21
+		return append([]byte("@@zcp-devsup check 2\n"), c.status("started")...), nil
+	case strings.Contains(command, ctlCall):
+		return c.status("ctl"), nil
+	case c.resumed && strings.Contains(command, leaseResumedMarker):
+		return []byte(leaseResumedMarker + "\n"), nil
+	}
+	return nil, nil
+}
+
+func (s *releaseLeaseSSH) ExecSSHStdin(_ context.Context, host, command string, stdin []byte) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.hosts[host]
+	if c == nil {
+		return nil, fmt.Errorf("unknown container %s", host)
+	}
+	c.received = string(stdin)
+	if c.copyErr != nil {
+		return nil, c.copyErr
+	}
+	if c.received != releaseSupervisorBytes || !strings.Contains(command, `mv -f "$tmp" "$bin"`) {
+		return nil, errors.New("release bytes were not installed at the image path")
+	}
+	if c.running != "" {
+		if !strings.Contains(command, `kill -TERM "$pid"`) {
+			return nil, errors.New("image supervisor still answers")
+		}
+		c.running, c.pid = "", 0
+	}
+	c.installed = releaseSupervisorVersion
+	return []byte(c.installed + "\n"), nil
+}
+
+func releaseSupervisorFixture(t *testing.T, cached bool) LeaseSupervisorRelease {
+	t.Helper()
+	r := NewLeaseSupervisorRelease(releaseSupervisorVersion)
+	r.dir = t.TempDir()
+	if cached {
+		if err := os.WriteFile(r.path(), []byte(releaseSupervisorBytes), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return r
+}
+
+func acquireWithReleaseSupervisor(t *testing.T, release LeaseSupervisorRelease, c *releaseLeaseContainer) LeaseView {
+	t.Helper()
+	fx := newLeaseFixture(t)
+	fx.swarm.acquired = acquiredAs(3)
+	fx.deps.SSH = newReleaseLeaseSSH(map[string]*releaseLeaseContainer{"devpool-3": c})
+	fx.deps.SupervisorRelease = release
+	view, err := LeaseAcquire(t.Context(), fx.deps, testPoolHost, testRepo, "feature")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	return view
+}
+
+// witness: internal/ops/lease_supervisor.go | `kill -TERM "$pid" || refuse 'cannot end the idle image supervisor'`, → `: || refuse 'cannot end the idle image supervisor'`,
+func TestLeaseAcquire_LPSupAcquire_StartsReleaseSupervisor(t *testing.T) {
+	t.Parallel()
+	c := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 11}
+	view := acquireWithReleaseSupervisor(t, releaseSupervisorFixture(t, true), c)
+	if view.State != LeaseStateHeld || view.SupervisorVersion != releaseSupervisorVersion || c.running != releaseSupervisorVersion || c.pid == 11 {
+		t.Errorf("acquire left %s reporting %q, running %s (pid %d), note %q; want the release running in a new process",
+			view.State, view.SupervisorVersion, c.running, c.pid, view.Note)
+	}
+}
+
+// witness: internal/ops/lease_supervisor.go | if installed.Version == want { → if installed.Version == "" {
+func TestLeaseAcquire_LPSupSame_KeepsCurrentSupervisor(t *testing.T) {
+	t.Parallel()
+	c := &releaseLeaseContainer{installed: releaseSupervisorVersion, running: releaseSupervisorVersion, pid: 11}
+	view := acquireWithReleaseSupervisor(t, releaseSupervisorFixture(t, true), c)
+	if view.SupervisorVersion != releaseSupervisorVersion || c.received != "" || c.pid != 11 {
+		t.Errorf("acquire reported %q, transferred %q and left pid %d; want the same release and process without a transfer",
+			view.SupervisorVersion, c.received, c.pid)
+	}
+}
+
+// witness: internal/ops/lease_group.go | if !m.checkedOut { → if m.reserved {
+func TestLeaseAcquire_LPSupHeld_KeepsHeldSupervisor(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		resumed bool
+	}{{name: "reused checkout", resumed: true}, {name: "cut short checkout"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newLeaseFixture(t)
+			fx.swarm.containers = []platform.SwarmContainer{reservedContainer("c-3", 3)}
+			recordLeaseAt(t, fx.stateDir, testPoolHost, "svc-pool", 3, "feature", testRepo, parkNow)
+			c := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 11, resumed: tc.resumed}
+			fx.deps.SSH = newReleaseLeaseSSH(map[string]*releaseLeaseContainer{"devpool-3": c})
+			fx.deps.SupervisorRelease = releaseSupervisorFixture(t, true)
+
+			view, err := LeaseAcquire(t.Context(), fx.deps, testPoolHost, testRepo, "feature")
+			if err != nil || view.State != LeaseStateHeld || view.Alias != "devpool-3" || view.Reused != tc.resumed {
+				t.Fatalf("acquire of the held lease = %+v, %v", view, err)
+			}
+			if c.installed != imageSupervisorVersion || c.pid != 11 || c.received != "" || c.probed {
+				t.Errorf("held container changed: %+v", c)
+			}
+		})
+	}
+}
+
+// witness: internal/ops/lease_park.go | if restarted && d.SupervisorRelease.checker != nil { → if !restarted && d.SupervisorRelease.checker != nil {
+func TestLeaseUnpark_LPSupUnpark_StartsReleaseSupervisor(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		parked bool
+		want   string
+	}{
+		{name: "parked", parked: true, want: releaseSupervisorVersion},
+		{name: "already running", want: imageSupervisorVersion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pf := newParkFixture(t, tc.parked)
+			c := &releaseLeaseContainer{installed: imageSupervisorVersion}
+			if !tc.parked {
+				c.running, c.pid = imageSupervisorVersion, 11
+			}
+			pf.deps.SSH = newReleaseLeaseSSH(map[string]*releaseLeaseContainer{"devpool-3": c})
+			pf.deps.SupervisorRelease = releaseSupervisorFixture(t, true)
+
+			view, err := pf.unpark(t)
+			if err != nil || view.State != LeaseStateHeld || view.SupervisorVersion != tc.want || c.running != tc.want || c.installed != tc.want {
+				t.Errorf("unpark left %s reporting %q and container %+v; want %s running, note %q, err %v",
+					view.State, view.SupervisorVersion, c, tc.want, view.Note, err)
+			}
+		})
+	}
+}
+
+// witness: internal/ops/lease_warm_clone.go | if d.SupervisorRelease.checker != nil { → if d.SupervisorRelease.checker == nil {
+func TestLeaseAcquire_LPSupWarm_DeliversToWarmTopUp(t *testing.T) {
+	t.Parallel()
+	orch := newWarmOrch(4)
+	orch.add(3, "", true, false, 1)
+	wf := newWarmFixture(t, orch)
+	wf.collect = true
+	warmHost := nodeHostname(4)
+	warm := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 12}
+	wf.deps.SSH = newReleaseLeaseSSH(map[string]*releaseLeaseContainer{
+		"devpool-3": {installed: imageSupervisorVersion},
+		warmHost:    warm,
+	})
+	wf.deps.SupervisorRelease = releaseSupervisorFixture(t, true)
+
+	wf.acquire(t, "feature")
+	wf.runSpawned()
+
+	free, err := orch.Container(t.Context(), "c-4")
+	if err != nil || !isWarm(free) || warm.installed != releaseSupervisorVersion || warm.running != "" {
+		t.Errorf("new warm container = %+v, %v, executable and process = %+v; want a free warm container with the release binary", free, err, warm)
+	}
+}
+
+type releaseAssetTransport func(*http.Request) (*http.Response, error)
+
+func (f releaseAssetTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+// witness: internal/ops/lease_group.go | m.view.Note = joinNotes(m.view.Note, scrubSecrets(leaseSupervisorSwapNote(err), leaseSecrets(d, m.pool))) → m.view.Note = joinNotes(m.view.Note, scrubSecrets(leaseSupervisorSwapNote(nil), leaseSecrets(d, m.pool)))
+func TestLeaseAcquire_LPSupFallback_KeepsImageAndExplainsFailure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		cached bool
+		want   string
+	}{
+		{name: "missing asset", want: "release asset answered HTTP 404"},
+		{name: "copy failure", cached: true, want: "cannot copy the release binary"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			release := releaseSupervisorFixture(t, tc.cached)
+			release.checker.HTTPClient.Transport = releaseAssetTransport(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}, nil
+			})
+			c := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 11}
+			if tc.cached {
+				c.copyErr = errors.New(tc.want)
+			}
+			view := acquireWithReleaseSupervisor(t, release, c)
+			if view.State != LeaseStateHeld || view.SupervisorVersion != imageSupervisorVersion || c.installed != imageSupervisorVersion || c.pid != 11 ||
+				!strings.Contains(view.Note, tc.want) {
+				t.Errorf("acquire left %s reporting %q with image process %+v, note %q; want held on the image with %q",
+					view.State, view.SupervisorVersion, c, view.Note, tc.want)
+			}
+		})
+	}
+}
+
+// witness: internal/ops/lease_supervisor.go | if server.Status != devsup.StatusStopped || server.Desired != devsup.DesiredStopped || server.Pid != 0 || server.Pgid != 0 { → if server.Status == devsup.StatusStopped && server.Pgid != 0 {
+func TestLeaseAcquire_LPSupActive_LeavesDeclaredServersRunning(t *testing.T) {
+	t.Parallel()
+	c := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 11, busy: true}
+	view := acquireWithReleaseSupervisor(t, releaseSupervisorFixture(t, true), c)
+	if view.State != LeaseStateHeld || view.SupervisorVersion != imageSupervisorVersion || c.pid != 11 || c.received != "" ||
+		!strings.Contains(view.Note, "existing supervisor has active dev servers") {
+		t.Errorf("acquire left %s reporting %q with image process %+v and note %q; want its declared server left running",
+			view.State, view.SupervisorVersion, c, view.Note)
+	}
+}
+
+// witness: internal/ops/lease_supervisor.go | if !update.IsRelease(version) { → if version == "" {
+func TestLeaseAcquire_LPSupDev_SkipsReleaseDelivery(t *testing.T) {
+	t.Parallel()
+	c := &releaseLeaseContainer{installed: imageSupervisorVersion}
+	release := NewLeaseSupervisorRelease("v9.301.0-1-gabcdef")
+	release.dir = t.TempDir()
+	if err := os.WriteFile(release.path(), []byte(releaseSupervisorBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	view := acquireWithReleaseSupervisor(t, release, c)
+	if view.State != LeaseStateHeld || view.SupervisorVersion != imageSupervisorVersion || c.probed || c.received != "" {
+		t.Errorf("development acquire left %s reporting %q with image process %+v; want the image without a delivery probe",
+			view.State, view.SupervisorVersion, c)
+	}
+}
+
+// witness: internal/update/asset.go | if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), sum) { → if strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), sum) {
+func TestLeaseAcquire_LPSupChecksum_HoldsOnlyVerifiedReleaseBytes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		valid bool
+	}{{name: "valid", valid: true}, {name: "corrupt"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			release := releaseSupervisorFixture(t, false)
+			release.checker.ReleasesURL = "https://releases.example.test"
+			assetPath := "/download/" + releaseSupervisorVersion + "/" + DevsupAsset
+			digest := sha256.Sum256([]byte(releaseSupervisorBytes))
+			if !tc.valid {
+				digest[0] ^= 0xff
+			}
+			release.checker.HTTPClient.Transport = releaseAssetTransport(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.Path {
+				case assetPath + ".sha256":
+					checksum := fmt.Sprintf("%x  %s\n", digest, DevsupAsset)
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(checksum))}, nil
+				case assetPath:
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(releaseSupervisorBytes))}, nil
+				}
+				return nil, fmt.Errorf("unexpected release request %s", req.URL.Path)
+			})
+
+			err := release.Hold(t.Context())
+			if !tc.valid {
+				if err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
+					t.Fatalf("hold corrupt release = %v; want checksum failure", err)
+				}
+				if _, err := os.Stat(release.path()); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("corrupt release left a held asset: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("hold verified release: %v", err)
+			}
+			release.checker.HTTPClient.Transport = releaseAssetTransport(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("release source offline after boot")
+			})
+			c := &releaseLeaseContainer{installed: imageSupervisorVersion}
+			view := acquireWithReleaseSupervisor(t, release, c)
+			if view.SupervisorVersion != releaseSupervisorVersion || c.received != releaseSupervisorBytes {
+				t.Errorf("acquire after boot reported %q with %q transferred, note %q; want the held release",
+					view.SupervisorVersion, c.received, view.Note)
+			}
+		})
+	}
+}
 
 // supervisorAnswer is a leaseSSH handler: the start of the supervisor answers
 // answer (or fails with err), the declaration read finds no file, and every

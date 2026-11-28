@@ -20,6 +20,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/server"
 	"github.com/zeropsio/zcp/internal/tools"
 )
 
@@ -245,6 +246,7 @@ func printLeaseJSON(stdout io.Writer, answer any) {
 func resolveLiveLeaseDeps(ctx context.Context) (ops.LeaseDeps, error) {
 	lookup := mate.LiveLookup(mate.LiveEnvStorePath)
 	rt := runtime.DetectFrom(lookup)
+	rt.ZCPVersion = server.Version
 	if !rt.InContainer {
 		return ops.LeaseDeps{}, errLeaseOutsideContainer
 	}
