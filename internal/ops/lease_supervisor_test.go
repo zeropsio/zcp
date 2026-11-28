@@ -29,14 +29,15 @@ const (
 )
 
 type releaseLeaseContainer struct {
-	installed string
-	running   string
-	pid       int
-	busy      bool
-	copyErr   error
-	received  string
-	probed    bool
-	resumed   bool
+	installed      string
+	running        string
+	pid            int
+	busy           bool
+	restartsOnExit bool
+	copyErr        error
+	received       string
+	probed         bool
+	resumed        bool
 }
 
 // releaseLeaseSSH answers the executable's version separately from the
@@ -110,14 +111,23 @@ func (s *releaseLeaseSSH) ExecSSHStdin(_ context.Context, host, command string, 
 	if strings.Contains(command, "flock -w ") {
 		return nil, errors.New("flock: unrecognized option: w")
 	}
-	if c.received != releaseSupervisorBytes || !strings.Contains(command, `mv -f "$tmp" "$bin"`) {
+	publish := strings.Index(command, `mv -f "$tmp" "$bin"`)
+	if c.received != releaseSupervisorBytes || publish < 0 {
 		return nil, errors.New("release bytes were not installed at the image path")
 	}
 	if c.running != "" {
-		if !strings.Contains(command, `kill -TERM "$pid"`) {
+		stop := strings.Index(command, `kill -TERM "$pid"`)
+		if stop < 0 {
 			return nil, errors.New("image supervisor still answers")
 		}
-		c.running, c.pid = "", 0
+		if c.restartsOnExit {
+			c.running, c.pid = c.installed, c.pid+1
+			if publish < stop {
+				c.running = releaseSupervisorVersion
+			}
+		} else {
+			c.running, c.pid = "", 0
+		}
 	}
 	c.installed = releaseSupervisorVersion
 	return []byte(c.installed + "\n"), nil
@@ -148,14 +158,14 @@ func acquireWithReleaseSupervisor(t *testing.T, release LeaseSupervisorRelease, 
 	return view
 }
 
-// witness: internal/ops/lease_warm_clone.go | return "{ if command -v timeout >/dev/null 2>&1; then timeout " + strconv.Itoa(seconds) + " flock " + fd + "; else flock -n " + fd + "; fi; }" → return "flock -w " + strconv.Itoa(seconds) + " " + fd
+// witness: internal/ops/lease_supervisor.go | steps = append(append(steps, publish), stop...) → steps = append(append(steps, stop...), publish)
 func TestLeaseAcquire_LPSupAcquire_StartsReleaseSupervisor(t *testing.T) {
 	t.Parallel()
-	c := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 11}
+	c := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 11, restartsOnExit: true}
 	view := acquireWithReleaseSupervisor(t, releaseSupervisorFixture(t, true), c)
-	if view.State != LeaseStateHeld || view.SupervisorVersion != releaseSupervisorVersion || c.running != releaseSupervisorVersion || c.pid == 11 {
-		t.Errorf("acquire left %s reporting %q, running %s (pid %d), note %q; want the release running in a new process",
-			view.State, view.SupervisorVersion, c.running, c.pid, view.Note)
+	if view.State != LeaseStateHeld || view.SupervisorVersion != releaseSupervisorVersion || c.installed != releaseSupervisorVersion || c.running != releaseSupervisorVersion || c.pid != 12 {
+		t.Errorf("acquire left %s reporting %q, installed %s, running %s (pid %d), note %q; want the platform restart to run the release",
+			view.State, view.SupervisorVersion, c.installed, c.running, c.pid, view.Note)
 	}
 }
 

@@ -214,9 +214,11 @@ func leaseSupervisorLock(seconds int) string {
 // leaseSupervisorSwapCommand stages stdin beside the image executable, so a
 // failed transfer leaves the image file available and publishing is atomic.
 // The remote warm checkout lock excludes a completed or concurrent checkout.
-// A platform-started supervisor is not the SSH shell's child, and ctl
-// exposes no shutdown receipt. After TERM, only this call checks its exit,
-// for up to five seconds. A timeout leaves the image executable in place.
+// Publish before TERM because zenv can rerun run.start as soon as the old
+// process exits. Keep its executable open so the signal and exit check still
+// identify it after the rename. The process is not the SSH shell's child
+// and ctl exposes no shutdown receipt, so this call checks its exit for up to
+// five seconds.
 func leaseSupervisorSwapCommand(installed, want string, idle idleSupervisor, warm bool) string {
 	q := shellQuote
 	steps := []string{
@@ -244,22 +246,28 @@ func leaseSupervisorSwapCommand(installed, want string, idle idleSupervisor, war
 		`[ "$("$tmp" ctl version)" = `+q(want)+` ] || refuse 'the copied binary did not report the acquiring zcp version'`,
 		`state=$(`+leaseSupervisorStatus+`); code=$?`,
 	)
+	var stop []string
 	if idle.pid == 0 {
 		steps = append(steps, `[ "$code" -eq 2 ] || refuse 'a supervisor appeared during delivery'`)
 	} else {
 		steps = append(steps,
 			`[ "$code" -eq 0 ] && [ "$state" = `+q(idle.status)+` ] || refuse 'the supervisor changed or started servers during delivery'`,
 			"pid="+strconv.Itoa(idle.pid),
-			`[ "/proc/$pid/exe" -ef "$bin" ] || refuse 'the reported supervisor is no longer the image process'`,
-			`kill -TERM "$pid" || refuse 'cannot end the idle image supervisor'`,
-			`end=$(( $(date +%s) + 5 ))`,
-			`while [ "/proc/$pid/exe" -ef "$bin" ]; do [ "$(date +%s)" -lt "$end" ] || refuse 'the idle image supervisor did not exit'; sleep 0.1; done`,
+			`exec 8<"$bin" || refuse 'cannot open the image supervisor executable'`,
+			`imageExe=/proc/$$/fd/8`,
+			`[ "/proc/$pid/exe" -ef "$imageExe" ] || refuse 'the reported supervisor is no longer the image process'`,
 		)
+		stop = []string{
+			`if [ "/proc/$pid/exe" -ef "$imageExe" ]; then`,
+			`  kill -TERM "$pid" || refuse 'cannot end the idle image supervisor'`,
+			`  end=$(( $(date +%s) + 5 ))`,
+			`  while [ "/proc/$pid/exe" -ef "$imageExe" ]; do [ "$(date +%s)" -lt "$end" ] || refuse 'the idle image supervisor did not exit'; sleep 0.1; done`,
+			`fi`,
+		}
 	}
-	steps = append(steps,
-		`sudo -n mv -f "$tmp" "$bin" || refuse 'cannot activate the release supervisor'`,
-		`printf '%s\n' `+q(want),
-	)
+	publish := `sudo -n mv -f "$tmp" "$bin" || refuse 'cannot activate the release supervisor'`
+	steps = append(append(steps, publish), stop...)
+	steps = append(steps, `printf '%s\n' `+q(want))
 	return strings.Join(steps, "\n")
 }
 
