@@ -207,6 +207,10 @@ func idleLeaseSupervisor(ctx context.Context, ssh SSHDeployer, host string) (idl
 	return idleSupervisor{pid: state.Supervisor.Pid, status: status.body}, nil
 }
 
+func leaseSupervisorLock(seconds int) string {
+	return `exec 9>>"$d/ensure.lock" || exit 1; ` + leaseFlockWait("9", seconds)
+}
+
 // leaseSupervisorSwapCommand stages stdin beside the image executable, so a
 // failed transfer leaves the image file available and publishing is atomic.
 // The remote warm checkout lock excludes a completed or concurrent checkout.
@@ -230,7 +234,7 @@ func leaseSupervisorSwapCommand(installed, want string, idle idleSupervisor, war
 	}
 	steps = append(steps,
 		`d="$HOME/.zcp/devsup"; mkdir -p "$d" || exit 1`,
-		`exec 9>>"$d/ensure.lock" || exit 1; flock -w 5 9 || refuse 'the supervisor lock is busy'`,
+		leaseSupervisorLock(5)+` || refuse 'the supervisor lock is busy'`,
 		`current=$(zcp-devsup ctl version) || exit 1`,
 		`if [ "$current" = `+q(want)+` ]; then cat >/dev/null; printf '%s\n' "$current"; exit 0; fi`,
 		`[ "$current" = `+q(installed)+` ] || refuse 'the installed supervisor changed during delivery'`,
@@ -293,7 +297,7 @@ func leaseSupervisorCommand(workDir string, waitSeconds int) string {
 		`if ! command -v zcp-devsup >/dev/null 2>&1; then echo '@@zcp-devsup check 127'; exit 0; fi`,
 		`d="$HOME/.zcp/devsup"`,
 		`mkdir -p "$d" || exit 1`,
-		`if command -v flock >/dev/null 2>&1; then exec 9>>"$d/ensure.lock" || exit 1; flock -w 60 9 || exit 1; fi`,
+		`if command -v flock >/dev/null 2>&1; then ` + leaseSupervisorLock(60) + ` || exit 1; fi`,
 		status,
 		report,
 		`echo "@@zcp-devsup check $c"`,

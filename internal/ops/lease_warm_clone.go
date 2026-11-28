@@ -226,6 +226,12 @@ func leaseWarmCloneCommand(workDir, repo, hqURL, tokenScope string, held bool) s
 // on: one a relayed session leaves free.
 const leaseCheckoutLockFD = "7"
 
+// BusyBox flock takes an inherited file descriptor but has no timed wait.
+// Bound the kernel wait with timeout. Without timeout, take only a free lock.
+func leaseFlockWait(fd string, seconds int) string {
+	return "{ if command -v timeout >/dev/null 2>&1; then timeout " + strconv.Itoa(seconds) + " flock " + fd + "; else flock -n " + fd + "; fi; }"
+}
+
 // leaseWarmCheckoutSteps are the two steps a checkout of repo runs in the work
 // dir before anything else. lock holds the work dir's flock for the rest of
 // the checkout — waiting for a running clone of repo up to leaseWarmCloneWait,
@@ -247,7 +253,7 @@ func leaseWarmCheckoutSteps(repo string) (lock, settle string) {
 		"while ! flock -n " + leaseCheckoutLockFD + "; do " +
 		"if { [ -f " + state + " ] && ! grep -qx " + mine + " " + state + "; } || [ \"$(date +%s)\" -ge \"$end\" ]; then " +
 		"p=$(sed -n 's/^pid //p' " + state + " 2>/dev/null); if [ -n \"$p\" ]; then kill -s TERM -- \"-$p\" 2>/dev/null; fi; " +
-		"flock -w 10 " + leaseCheckoutLockFD + " || { echo " + q(leaseWarmBusy) + " >&2; exit 4; }; break; fi; " +
+		leaseFlockWait(leaseCheckoutLockFD, 10) + " || { echo " + q(leaseWarmBusy) + " >&2; exit 4; }; break; fi; " +
 		"sleep 0.2 2>/dev/null || sleep 1; done; fi; }"
 	settle = "{ if [ ! -f " + state + " ]; then :; " +
 		"elif grep -qx " + mine + " " + state + " && grep -qx done " + state + "; then " +

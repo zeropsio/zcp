@@ -80,6 +80,9 @@ func (s *releaseLeaseSSH) answer(host, command string) ([]byte, error) {
 	case strings.Contains(command, "@@zcp-devsup declaration"):
 		return []byte("@@zcp-devsup declaration 1\n"), nil
 	case strings.Contains(command, "zcp-devsup run"):
+		if strings.Contains(command, "flock -w ") {
+			return nil, errors.New("flock: unrecognized option: w")
+		}
 		if c.running != "" {
 			return c.status("check"), nil
 		}
@@ -103,6 +106,9 @@ func (s *releaseLeaseSSH) ExecSSHStdin(_ context.Context, host, command string, 
 	c.received = string(stdin)
 	if c.copyErr != nil {
 		return nil, c.copyErr
+	}
+	if strings.Contains(command, "flock -w ") {
+		return nil, errors.New("flock: unrecognized option: w")
 	}
 	if c.received != releaseSupervisorBytes || !strings.Contains(command, `mv -f "$tmp" "$bin"`) {
 		return nil, errors.New("release bytes were not installed at the image path")
@@ -142,7 +148,7 @@ func acquireWithReleaseSupervisor(t *testing.T, release LeaseSupervisorRelease, 
 	return view
 }
 
-// witness: internal/ops/lease_supervisor.go | `kill -TERM "$pid" || refuse 'cannot end the idle image supervisor'`, → `: || refuse 'cannot end the idle image supervisor'`,
+// witness: internal/ops/lease_warm_clone.go | return "{ if command -v timeout >/dev/null 2>&1; then timeout " + strconv.Itoa(seconds) + " flock " + fd + "; else flock -n " + fd + "; fi; }" → return "flock -w " + strconv.Itoa(seconds) + " " + fd
 func TestLeaseAcquire_LPSupAcquire_StartsReleaseSupervisor(t *testing.T) {
 	t.Parallel()
 	c := &releaseLeaseContainer{installed: imageSupervisorVersion, running: imageSupervisorVersion, pid: 11}
